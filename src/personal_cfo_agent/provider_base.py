@@ -66,7 +66,7 @@ class ProviderBase(ABC):
     def disconnect(self) -> None:
         """Release provider resources."""
 
-    def status(self) -> ProviderStatus:
+    def _status(self) -> ProviderStatus:
         return ProviderStatus(
             provider_name=self.provider_name,
             provider_level=self.provider_level,
@@ -81,7 +81,7 @@ class ProviderBase(ABC):
             normalized_positions=self.normalized_positions,
         )
 
-    def sync(self) -> RawProviderSnapshot:
+    def _sync(self) -> RawProviderSnapshot:
         self.warning_codes = _dedupe_codes([*self.warning_codes, *self.validate_config()])
         if WarningCode.PROVIDER_CONFIG_MISSING in self.warning_codes:
             return self._empty_snapshot()
@@ -98,7 +98,7 @@ class ProviderBase(ABC):
             self.last_sync_time = datetime.now(timezone.utc).isoformat()
             return RawProviderSnapshot(
                 provider_name=self.provider_name,
-                status=self.status(),
+                status=self._status(),
                 accounts=accounts,
                 cash=cash,
                 positions=positions,
@@ -108,7 +108,7 @@ class ProviderBase(ABC):
             self.disconnect()
 
     def _empty_snapshot(self) -> RawProviderSnapshot:
-        return RawProviderSnapshot(provider_name=self.provider_name, status=self.status())
+        return RawProviderSnapshot(provider_name=self.provider_name, status=self._status())
 
 
 class ReadinessOnlyProvider(ProviderBase):

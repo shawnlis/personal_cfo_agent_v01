@@ -20,7 +20,7 @@ FULL_ACCOUNT_IDS = [
 
 def test_manual_snapshot_provider_loads_fixture_data() -> None:
     provider = ManualSnapshotProvider(load_manual_config({}, FIXTURE))
-    snapshot = provider.sync()
+    snapshot = provider._sync()
     assert snapshot.has_data()
     assert len(snapshot.accounts) == 2
     assert len(snapshot.cash) == 1
@@ -30,7 +30,7 @@ def test_manual_snapshot_provider_loads_fixture_data() -> None:
 
 def test_normalizer_produces_stable_ledger_schema(tmp_path) -> None:
     provider = ManualSnapshotProvider(load_manual_config({}, FIXTURE))
-    rows = normalize_snapshot(provider.sync())
+    rows = normalize_snapshot(provider._sync())
     assert len(rows) == 4
     assert all(row.account_id_hash.startswith("acct_") for row in rows)
     assert all(WarningCode.ACCOUNT_ID_HASHED in row.warning_codes for row in rows)
@@ -46,7 +46,7 @@ def test_normalizer_produces_stable_ledger_schema(tmp_path) -> None:
 
 def test_full_account_ids_do_not_appear_in_ledger_outputs(tmp_path) -> None:
     provider = ManualSnapshotProvider(load_manual_config({}, FIXTURE))
-    rows = normalize_snapshot(provider.sync())
+    rows = normalize_snapshot(provider._sync())
     output_path = tmp_path / "normalized_asset_ledger.csv"
     write_normalized_asset_ledger(output_path, rows)
     output_text = output_path.read_text(encoding="utf-8")

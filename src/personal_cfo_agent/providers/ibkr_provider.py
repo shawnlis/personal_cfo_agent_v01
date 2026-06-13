@@ -43,7 +43,7 @@ class IBKRProvider(ProviderBase):
             return [WarningCode.PROVIDER_CONFIG_MISSING]
         return []
 
-    def readiness_status(self) -> list[WarningCode]:
+    def readiness_check(self) -> list[WarningCode]:
         self.warning_codes = _dedupe([*self.warning_codes, *self.validate_config()])
         return self.warning_codes
 
@@ -70,6 +70,9 @@ class IBKRProvider(ProviderBase):
             )
             return False
         except IBKRFetchError:
+            self.warning_codes = _dedupe([*self.warning_codes, WarningCode.PROVIDER_FETCH_FAILED])
+            return False
+        except Exception:
             self.warning_codes = _dedupe([*self.warning_codes, WarningCode.PROVIDER_FETCH_FAILED])
             return False
 

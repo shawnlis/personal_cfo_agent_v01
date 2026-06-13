@@ -74,8 +74,8 @@ def run_readiness_check(config: RuntimeConfig) -> RunnerResult:
     if config.provider != "ibkr":
         return RunnerResult(exit_code=0, statuses=[], normalized_assets=[])
     provider = IBKRProvider(load_ibkr_config(config.env), allow_live_read=False)
-    provider.readiness_status()
-    return RunnerResult(exit_code=0, statuses=[provider.status()], normalized_assets=[])
+    provider.readiness_check()
+    return RunnerResult(exit_code=0, statuses=[provider._status()], normalized_assets=[])
 
 
 def collect_provider_snapshots(config: RuntimeConfig) -> list[RawProviderSnapshot]:
@@ -108,7 +108,7 @@ def collect_provider_snapshots(config: RuntimeConfig) -> list[RawProviderSnapsho
                 allow_live_read=False,
             )
         )
-    return [provider.sync() for provider in providers]
+    return [provider._sync() for provider in providers]
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
