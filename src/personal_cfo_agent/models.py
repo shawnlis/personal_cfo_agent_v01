@@ -1,0 +1,220 @@
+"""Core data models for Personal CFO Agent v0.1."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
+
+
+class ProviderLevel(str, Enum):
+    LEVEL_0 = "level_0_fixture_manual_snapshot"
+    LEVEL_1 = "level_1_api_contract_stub"
+    LEVEL_2 = "level_2_read_only_live_connector"
+
+
+class ConnectionMode(str, Enum):
+    FIXTURE = "fixture_manual_snapshot"
+    API_STUB = "api_contract_stub"
+    LIVE_READINESS = "live_readiness_check_only"
+
+
+class WarningCode(str, Enum):
+    PROVIDER_DISABLED = "PROVIDER_DISABLED"
+    PROVIDER_CONFIG_MISSING = "PROVIDER_CONFIG_MISSING"
+    LIVE_READ_NOT_ALLOWED = "LIVE_READ_NOT_ALLOWED"
+    PROVIDER_CONNECTION_FAILED = "PROVIDER_CONNECTION_FAILED"
+    PROVIDER_FETCH_FAILED = "PROVIDER_FETCH_FAILED"
+    UNSUPPORTED_PROVIDER = "UNSUPPORTED_PROVIDER"
+    MANUAL_SNAPSHOT_REQUIRED = "MANUAL_SNAPSHOT_REQUIRED"
+    STALE_SOURCE_DATA = "STALE_SOURCE_DATA"
+    MISSING_MARKET_VALUE = "MISSING_MARKET_VALUE"
+    MISSING_CURRENCY = "MISSING_CURRENCY"
+    ACCOUNT_ID_HASHED = "ACCOUNT_ID_HASHED"
+    NEEDS_REVIEW = "NEEDS_REVIEW"
+    SECRET_DETECTED = "SECRET_DETECTED"
+    FORBIDDEN_METHOD_EXPOSED = "FORBIDDEN_METHOD_EXPOSED"
+    UNOFFICIAL_API_BLOCKED = "UNOFFICIAL_API_BLOCKED"
+
+
+LEDGER_FIELDNAMES = [
+    "provider",
+    "account_id_hash",
+    "asset_id",
+    "asset_type",
+    "symbol",
+    "name",
+    "quantity",
+    "currency",
+    "market_value",
+    "cost_basis",
+    "unrealized_pnl",
+    "liquidity_bucket",
+    "risk_bucket",
+    "source_timestamp",
+    "source_confidence",
+    "needs_review",
+    "warning_codes",
+    "notes",
+]
+
+
+@dataclass(frozen=True)
+class ProviderStatus:
+    provider_name: str
+    provider_level: ProviderLevel
+    connection_mode: ConnectionMode
+    read_only: bool = True
+    trading_enabled: bool = False
+    order_placement_enabled: bool = False
+    credentials_source: str = "environment_variables"
+    last_sync_time: str | None = None
+    warning_codes: list[WarningCode] = field(default_factory=list)
+    raw_snapshot_path: str | None = None
+    normalized_positions: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider_name": self.provider_name,
+            "provider_level": self.provider_level.value,
+            "connection_mode": self.connection_mode.value,
+            "read_only": self.read_only,
+            "trading_enabled": self.trading_enabled,
+            "order_placement_enabled": self.order_placement_enabled,
+            "credentials_source": self.credentials_source,
+            "last_sync_time": self.last_sync_time,
+            "warning_codes": [code.value for code in self.warning_codes],
+            "raw_snapshot_path": self.raw_snapshot_path,
+            "normalized_positions": self.normalized_positions,
+        }
+
+
+@dataclass(frozen=True)
+class RawAccount:
+    account_id: str
+    account_type: str = "unknown"
+    currency: str | None = None
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class RawCash:
+    account_id: str
+    currency: str
+    amount: float
+    source_timestamp: str
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class RawPosition:
+    account_id: str
+    asset_id: str
+    asset_type: str
+    symbol: str
+    name: str
+    quantity: float
+    currency: str | None
+    market_value: float | None
+    cost_basis: float | None = None
+    unrealized_pnl: float | None = None
+    liquidity_bucket: str = "unknown"
+    risk_bucket: str = "unknown"
+    source_timestamp: str = ""
+    source_confidence: str = "manual"
+    needs_review: bool = False
+    warning_codes: list[WarningCode] = field(default_factory=list)
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class RawBalance:
+    account_id: str
+    asset_id: str
+    asset_type: str
+    name: str
+    currency: str | None
+    amount: float | None
+    source_timestamp: str
+    liquidity_bucket: str = "liability"
+    risk_bucket: str = "liability"
+    source_confidence: str = "manual"
+    needs_review: bool = False
+    warning_codes: list[WarningCode] = field(default_factory=list)
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class RawProviderSnapshot:
+    provider_name: str
+    status: ProviderStatus
+    accounts: list[RawAccount] = field(default_factory=list)
+    cash: list[RawCash] = field(default_factory=list)
+    positions: list[RawPosition] = field(default_factory=list)
+    balances: list[RawBalance] = field(default_factory=list)
+
+    def has_data(self) -> bool:
+        return bool(self.accounts or self.cash or self.positions or self.balances)
+
+
+@dataclass(frozen=True)
+class NormalizedAsset:
+    provider: str
+    account_id_hash: str
+    asset_id: str
+    asset_type: str
+    symbol: str
+    name: str
+    quantity: float | None
+    currency: str | None
+    market_value: float | None
+    cost_basis: float | None
+    unrealized_pnl: float | None
+    liquidity_bucket: str
+    risk_bucket: str
+    source_timestamp: str
+    source_confidence: str
+    needs_review: bool
+    warning_codes: list[WarningCode]
+    notes: str = ""
+
+    def to_csv_row(self) -> dict[str, str]:
+        return {
+            "provider": self.provider,
+            "account_id_hash": self.account_id_hash,
+            "asset_id": self.asset_id,
+            "asset_type": self.asset_type,
+            "symbol": self.symbol,
+            "name": self.name,
+            "quantity": _stringify_number(self.quantity),
+            "currency": self.currency or "",
+            "market_value": _stringify_number(self.market_value),
+            "cost_basis": _stringify_number(self.cost_basis),
+            "unrealized_pnl": _stringify_number(self.unrealized_pnl),
+            "liquidity_bucket": self.liquidity_bucket,
+            "risk_bucket": self.risk_bucket,
+            "source_timestamp": self.source_timestamp,
+            "source_confidence": self.source_confidence,
+            "needs_review": str(self.needs_review).lower(),
+            "warning_codes": ";".join(code.value for code in self.warning_codes),
+            "notes": self.notes,
+        }
+
+
+@dataclass(frozen=True)
+class RiskSummary:
+    total_assets: float
+    total_liabilities: float
+    net_worth: float
+    liquid_assets: float
+    investable_assets: float
+    provider_coverage_ratio: float
+    manual_asset_share: float
+    currency_exposure: dict[str, float]
+    warning_codes: list[WarningCode]
+
+
+def _stringify_number(value: float | None) -> str:
+    if value is None:
+        return ""
+    return f"{value:.2f}"
