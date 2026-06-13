@@ -16,6 +16,8 @@ TRUE_VALUES = {"1", "true", "yes", "y", "on"}
 @dataclass(frozen=True)
 class RuntimeConfig:
     allow_live_read: bool = False
+    provider: str = "all"
+    readiness_check: bool = False
     manual_snapshot_path: Path | None = None
     output_root: Path = Path("reports/personal_cfo_agent/v01")
     output_dir: Path | None = None
@@ -40,13 +42,13 @@ class ProviderConfig:
 
 CONNECTOR_STATUS_MATRIX: dict[str, dict[str, object]] = {
     "ibkr": {
-        "status": "supported_candidate",
-        "method": "TWS API / IB Gateway / Client Portal later",
+        "status": "read_only_live_proof_candidate",
+        "method": "TWS API / IB Gateway through supervised local session",
         "asset_read": True,
         "position_read": True,
         "cash_read": True,
         "implementation_priority": 1,
-        "notes": "read-only wrapper required",
+        "notes": "v0.1.1 guarded read-only proof; TWS or IB Gateway must be started manually",
     },
     "moomoo": {
         "status": "supported_candidate",
@@ -108,13 +110,20 @@ def load_ibkr_config(env: Mapping[str, str]) -> ProviderConfig:
         "CFO_IBKR_HOST",
         "CFO_IBKR_PORT",
         "CFO_IBKR_CLIENT_ID",
-        "CFO_IBKR_ACCOUNT",
     )
     return ProviderConfig(
         provider_name="ibkr",
         enabled=env_bool(env, "CFO_IBKR_ENABLED"),
         required_env_vars=required,
-        settings={key: env.get(key, "") for key in ("CFO_IBKR_ENABLED", *required)},
+        settings={
+            key: env.get(key, "")
+            for key in (
+                "CFO_IBKR_ENABLED",
+                *required,
+                "CFO_IBKR_ACCOUNT",
+                "CFO_ACCOUNT_HASH_SALT",
+            )
+        },
     )
 
 

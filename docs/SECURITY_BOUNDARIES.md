@@ -27,4 +27,4 @@ All connector configuration must come from environment variables. The applicatio
 
 ## Live Connector Rule
 
-v0.1 does not connect to live providers. `--allow-live-read` is a gate for future read-only connector proofs and currently performs readiness/config validation only.
+IBKR v0.1.1 is the first supervised read-only proof harness. It requires `--provider ibkr --allow-live-read`, complete environment configuration, and a manually started TWS or IB Gateway session. Other providers remain non-live. Generated live outputs must stay under ignored `reports/` paths.

@@ -1,0 +1,22 @@
+{
+  "source_timestamp": "2026-06-14T00:00:00+00:00",
+  "account_id": "DU1234567",
+  "cash": [
+    {
+      "currency": "USD",
+      "amount": 12345.67
+    }
+  ],
+  "positions": [
+    {
+      "asset_id": "IBKR-STK-VT",
+      "asset_type": "stk",
+      "symbol": "VT",
+      "name": "VT",
+      "quantity": 10.0,
+      "currency": "USD",
+      "market_value": null,
+      "cost_basis": 1000.0
+    }
+  ]
+}
