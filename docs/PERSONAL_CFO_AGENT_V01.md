@@ -9,6 +9,7 @@ Personal CFO Agent v0.1 is a standalone, API-first asset aggregation foundation.
 - Defines a read-only provider contract for asset, cash, position, and balance reads.
 - Implements IBKR, Moomoo, and Tiger as Level 1 API contract stubs with guarded Level 2 readiness skeletons.
 - Implements a Level 0 manual snapshot provider for fixtures, unsupported platforms, property values, and mortgage balances.
+- Provides a structured JSON manual snapshot workflow for unsupported assets and manually entered liabilities.
 - Normalizes provider data into a stable asset ledger with hashed account IDs.
 - Writes a dated report bundle under `reports/personal_cfo_agent/v01/<YYYYMMDD>/`.
 
@@ -22,6 +23,8 @@ Personal CFO Agent v0.1 is a standalone, API-first asset aggregation foundation.
 
 ```powershell
 python scripts/personal_cfo_agent.py
+python scripts/personal_cfo_agent.py --write-manual-template manual_snapshots/manual_snapshot_template.json
+python scripts/personal_cfo_agent.py --validate-manual-snapshot manual_snapshots/my_snapshot.json
 python scripts/personal_cfo_agent.py --manual-snapshot tests/fixtures/manual_snapshot_sample.json --as-of-date 20260614
 python scripts/personal_cfo_agent.py --manual-snapshot tests/fixtures/manual_snapshot/sample_manual_assets_v010.json --out-dir reports/personal_cfo_agent/v010_final_smoke
 python scripts/personal_cfo_agent.py --allow-live-read
@@ -47,5 +50,6 @@ Generated outputs are ignored by Git:
 - v0.1.1: IBKR read-only live proof.
 - v0.1.2: Moomoo read-only live proof.
 - v0.1.3: Tiger read-only live proof.
+- v0.1.4: Structured manual snapshot workflow.
 
 Each proof should be added independently, guarded by `--allow-live-read`, and covered by tests that confirm account-write methods are not exposed.
