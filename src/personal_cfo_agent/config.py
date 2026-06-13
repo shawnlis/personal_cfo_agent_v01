@@ -19,6 +19,8 @@ class RuntimeConfig:
     provider: str = "all"
     readiness_check: bool = False
     manual_snapshot_path: Path | None = None
+    dashboard: bool = False
+    dashboard_assumptions_path: Path | None = None
     output_root: Path = Path("reports/personal_cfo_agent/v01")
     output_dir: Path | None = None
     as_of_date: str | None = None

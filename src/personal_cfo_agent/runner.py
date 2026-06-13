@@ -15,6 +15,7 @@ from personal_cfo_agent.config import (
     load_moomoo_config,
     load_tiger_config,
 )
+from personal_cfo_agent.dashboard import write_dashboard
 from personal_cfo_agent.manual_snapshot import (
     ManualSnapshotReadError,
     ManualSnapshotValidationError,
@@ -60,13 +61,22 @@ def run(config: RuntimeConfig) -> RunnerResult:
             output_paths={},
         )
 
-    risk_summary = calculate_risk_summary(
-        normalized_assets,
-        expected_provider_count=len(snapshots),
-        as_of_date=as_of_date,
-    )
     output_dir = config.output_dir or config.output_root / as_of_date
-    output_paths = write_report_bundle(output_dir, statuses, normalized_assets, risk_summary)
+    if config.dashboard:
+        output_paths = write_dashboard(
+            output_dir,
+            normalized_assets,
+            statuses,
+            config.dashboard_assumptions_path,
+            as_of_date=as_of_date,
+        )
+    else:
+        risk_summary = calculate_risk_summary(
+            normalized_assets,
+            expected_provider_count=len(snapshots),
+            as_of_date=as_of_date,
+        )
+        output_paths = write_report_bundle(output_dir, statuses, normalized_assets, risk_summary)
     return RunnerResult(
         exit_code=0,
         statuses=statuses,
@@ -159,6 +169,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Validate a structured manual snapshot JSON file without writing reports.",
     )
     parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Write the v0.2.0 dashboard bundle from normalized provider/manual data.",
+    )
+    parser.add_argument(
+        "--dashboard-assumptions",
+        type=Path,
+        default=None,
+        help="Optional JSON assumptions file for the v0.2.0 dashboard.",
+    )
+    parser.add_argument(
         "--output-root",
         type=Path,
         default=Path("reports/personal_cfo_agent/v01"),
@@ -207,6 +228,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             provider=args.provider,
             readiness_check=args.readiness_check,
             manual_snapshot_path=args.manual_snapshot,
+            dashboard=args.dashboard,
+            dashboard_assumptions_path=args.dashboard_assumptions,
             output_root=args.output_root,
             output_dir=args.out_dir,
             as_of_date=args.as_of_date,
@@ -218,7 +241,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if result.output_dir is None:
         print("No provider produced data; no reports generated.")
     else:
-        print(f"Report bundle written to {result.output_dir}")
+        bundle_name = "Dashboard bundle" if args.dashboard else "Report bundle"
+        print(f"{bundle_name} written to {result.output_dir}")
         print(f"Normalized ledger rows: {len(result.normalized_assets)}")
     return result.exit_code
 
