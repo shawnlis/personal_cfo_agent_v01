@@ -1,0 +1,22 @@
+{
+  "source_timestamp": "2026-06-14T00:00:00+00:00",
+  "account_id": "MOOMOO-TEST-ACCOUNT-123456",
+  "cash": [
+    {
+      "currency": "HKD",
+      "amount": 88888.0
+    }
+  ],
+  "positions": [
+    {
+      "asset_id": "MOOMOO-HK.00700",
+      "asset_type": "equity",
+      "symbol": "HK.00700",
+      "name": "Tencent fixture",
+      "quantity": 100.0,
+      "currency": "HKD",
+      "market_value": 38000.0,
+      "cost_basis": 30000.0
+    }
+  ]
+}

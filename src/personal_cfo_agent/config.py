@@ -51,13 +51,13 @@ CONNECTOR_STATUS_MATRIX: dict[str, dict[str, object]] = {
         "notes": "v0.1.1 guarded read-only proof; TWS or IB Gateway must be started manually",
     },
     "moomoo": {
-        "status": "supported_candidate",
-        "method": "OpenD + SDK",
+        "status": "read_only_live_proof_candidate",
+        "method": "OpenD + SDK through supervised local session",
         "asset_read": "likely_yes",
         "position_read": "likely_yes",
         "cash_read": "likely_yes",
         "implementation_priority": 1,
-        "notes": "OpenD local gateway required; read-only wrapper required",
+        "notes": "v0.1.2 guarded read-only proof; OpenD must be started manually",
     },
     "tiger": {
         "status": "supported_candidate",
@@ -133,7 +133,10 @@ def load_moomoo_config(env: Mapping[str, str]) -> ProviderConfig:
         provider_name="moomoo",
         enabled=env_bool(env, "CFO_MOOMOO_ENABLED"),
         required_env_vars=required,
-        settings={key: env.get(key, "") for key in ("CFO_MOOMOO_ENABLED", *required)},
+        settings={
+            key: env.get(key, "")
+            for key in ("CFO_MOOMOO_ENABLED", *required, "CFO_ACCOUNT_HASH_SALT")
+        },
     )
 
 
