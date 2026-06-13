@@ -18,6 +18,7 @@ class RuntimeConfig:
     allow_live_read: bool = False
     manual_snapshot_path: Path | None = None
     output_root: Path = Path("reports/personal_cfo_agent/v01")
+    output_dir: Path | None = None
     as_of_date: str | None = None
     env: Mapping[str, str] = field(default_factory=lambda: dict(os.environ))
 

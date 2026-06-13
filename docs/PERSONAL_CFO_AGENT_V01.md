@@ -23,6 +23,7 @@ Personal CFO Agent v0.1 is a standalone, API-first asset aggregation foundation.
 ```powershell
 python scripts/personal_cfo_agent.py
 python scripts/personal_cfo_agent.py --manual-snapshot tests/fixtures/manual_snapshot_sample.json --as-of-date 20260614
+python scripts/personal_cfo_agent.py --manual-snapshot tests/fixtures/manual_snapshot/sample_manual_assets_v010.json --out-dir reports/personal_cfo_agent/v010_final_smoke
 python scripts/personal_cfo_agent.py --allow-live-read
 ```
 
@@ -32,7 +33,7 @@ Default behavior is safe: all live providers are disabled, manual snapshots are 
 
 Generated outputs are ignored by Git:
 
-- `PERSONAL_CFO_AGENT_V01.md`
+- `PERSONAL_CFO_AGENT_V010.md`
 - `provider_sync_summary.json`
 - `normalized_asset_ledger.csv`
 - `net_worth_summary.csv`

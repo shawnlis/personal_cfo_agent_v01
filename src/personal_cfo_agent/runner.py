@@ -56,7 +56,7 @@ def run(config: RuntimeConfig) -> RunnerResult:
         expected_provider_count=len(snapshots),
         as_of_date=as_of_date,
     )
-    output_dir = config.output_root / as_of_date
+    output_dir = config.output_dir or config.output_root / as_of_date
     output_paths = write_report_bundle(output_dir, statuses, normalized_assets, risk_summary)
     return RunnerResult(
         exit_code=0,
@@ -100,6 +100,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Root folder for generated report bundles.",
     )
     parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        help="Direct output directory for a report bundle.",
+    )
+    parser.add_argument(
         "--as-of-date",
         default=None,
         help="Report date in YYYYMMDD format.",
@@ -117,6 +123,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             allow_live_read=args.allow_live_read,
             manual_snapshot_path=args.manual_snapshot,
             output_root=args.output_root,
+            output_dir=args.out_dir,
             as_of_date=args.as_of_date,
         )
     )

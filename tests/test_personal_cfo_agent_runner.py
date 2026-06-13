@@ -88,3 +88,25 @@ def test_manual_fixture_runner_writes_required_output_bundle(tmp_path) -> None:
     )
     for account_id in FULL_ACCOUNT_IDS:
         assert account_id not in combined_output
+
+
+def test_out_dir_writes_v010_contract_files(tmp_path) -> None:
+    out_dir = tmp_path / "v010_final_smoke"
+    result = run(
+        RuntimeConfig(
+            manual_snapshot_path=FIXTURE,
+            output_dir=out_dir,
+            as_of_date="20260614",
+            env={},
+        )
+    )
+
+    assert result.output_dir == out_dir
+    assert (out_dir / "PERSONAL_CFO_AGENT_V010.md").exists()
+    assert (out_dir / "provider_sync_summary.json").exists()
+    assert (out_dir / "normalized_asset_ledger.csv").exists()
+    assert (out_dir / "net_worth_summary.csv").exists()
+    assert (out_dir / "liquidity_summary.csv").exists()
+    assert (out_dir / "currency_exposure.csv").exists()
+    assert (out_dir / "provider_warning_summary.csv").exists()
+    assert (out_dir / "personal_cfo_warnings.md").exists()

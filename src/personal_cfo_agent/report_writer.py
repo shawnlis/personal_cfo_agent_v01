@@ -25,7 +25,7 @@ def write_report_bundle(
 ) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = {
-        "markdown_report": output_dir / "PERSONAL_CFO_AGENT_V01.md",
+        "markdown_report": output_dir / "PERSONAL_CFO_AGENT_V010.md",
         "provider_sync_summary": output_dir / "provider_sync_summary.json",
         "normalized_asset_ledger": output_dir / "normalized_asset_ledger.csv",
         "net_worth_summary": output_dir / "net_worth_summary.csv",

@@ -1,0 +1,79 @@
+{
+  "source_timestamp": "2026-01-15T00:00:00+00:00",
+  "accounts": [
+    {
+      "account_id": "TEST-BROKER-ACCOUNT-123456789",
+      "account_type": "manual_brokerage",
+      "currency": "USD",
+      "notes": "Fake manual fixture account"
+    },
+    {
+      "account_id": "TEST-PROPERTY-ACCOUNT-987654321",
+      "account_type": "manual_property",
+      "currency": "SGD",
+      "notes": "Fake property fixture account"
+    }
+  ],
+  "cash": [
+    {
+      "account_id": "TEST-BROKER-ACCOUNT-123456789",
+      "currency": "USD",
+      "amount": 25000.0,
+      "notes": "Manual cash fallback fixture"
+    }
+  ],
+  "positions": [
+    {
+      "account_id": "TEST-BROKER-ACCOUNT-123456789",
+      "asset_id": "WEBULL-ETF-FIXTURE",
+      "asset_type": "etf",
+      "symbol": "VT",
+      "name": "Fake global equity ETF snapshot",
+      "quantity": 100.0,
+      "currency": "USD",
+      "market_value": 12000.0,
+      "cost_basis": 10000.0,
+      "unrealized_pnl": 2000.0,
+      "liquidity_bucket": "liquid",
+      "risk_bucket": "equity",
+      "source_confidence": "manual",
+      "needs_review": true,
+      "warning_codes": ["MANUAL_SNAPSHOT_REQUIRED"],
+      "notes": "Unsupported platform fixture represented manually"
+    },
+    {
+      "account_id": "TEST-PROPERTY-ACCOUNT-987654321",
+      "asset_id": "SG-RESIDENTIAL-PROPERTY-FIXTURE",
+      "asset_type": "property",
+      "symbol": "",
+      "name": "Fake residential property estimate",
+      "quantity": 1.0,
+      "currency": "SGD",
+      "market_value": 1000000.0,
+      "cost_basis": null,
+      "unrealized_pnl": null,
+      "liquidity_bucket": "illiquid",
+      "risk_bucket": "real_estate",
+      "source_confidence": "manual",
+      "needs_review": true,
+      "warning_codes": ["NEEDS_REVIEW"],
+      "notes": "Manual property valuation fixture"
+    }
+  ],
+  "balances": [
+    {
+      "account_id": "TEST-MORTGAGE-ACCOUNT-555555555",
+      "asset_id": "SG-MORTGAGE-FIXTURE",
+      "asset_type": "liability",
+      "name": "Fake mortgage balance",
+      "currency": "SGD",
+      "amount": -400000.0,
+      "liquidity_bucket": "liability",
+      "risk_bucket": "liability",
+      "source_confidence": "manual",
+      "needs_review": true,
+      "warning_codes": ["MANUAL_SNAPSHOT_REQUIRED"],
+      "notes": "Manual mortgage liability fixture"
+    }
+  ]
+}
