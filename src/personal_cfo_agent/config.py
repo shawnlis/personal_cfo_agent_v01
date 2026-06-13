@@ -60,13 +60,13 @@ CONNECTOR_STATUS_MATRIX: dict[str, dict[str, object]] = {
         "notes": "v0.1.2 guarded read-only proof; OpenD must be started manually",
     },
     "tiger": {
-        "status": "supported_candidate",
-        "method": "TigerOpen Python SDK",
+        "status": "read_only_live_proof_candidate",
+        "method": "TigerOpen Python SDK through supervised local configuration",
         "asset_read": True,
         "position_read": True,
         "cash_read": True,
         "implementation_priority": 2,
-        "notes": "SDK includes account-write surfaces, so read-only wrapper required",
+        "notes": "v0.1.3 guarded read-only proof; TigerOpen must be configured locally",
     },
     "webull": {
         "status": "unsupported_until_official_api_verified",
@@ -146,7 +146,10 @@ def load_tiger_config(env: Mapping[str, str]) -> ProviderConfig:
         provider_name="tiger",
         enabled=env_bool(env, "CFO_TIGER_ENABLED"),
         required_env_vars=required,
-        settings={key: env.get(key, "") for key in ("CFO_TIGER_ENABLED", *required)},
+        settings={
+            key: env.get(key, "")
+            for key in ("CFO_TIGER_ENABLED", *required, "CFO_ACCOUNT_HASH_SALT")
+        },
     )
 
 

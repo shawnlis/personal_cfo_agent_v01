@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | IBKR | read_only_live_proof_candidate | TWS API / IB Gateway through supervised local session | yes | yes | yes | 1 | v0.1.1 guarded read-only proof; TWS or IB Gateway must be started manually |
 | Moomoo | read_only_live_proof_candidate | OpenD + SDK through supervised local session | likely yes through account API | likely yes | likely yes | 1 | v0.1.2 guarded read-only proof; OpenD must be started manually |
-| Tiger | supported_candidate | TigerOpen Python SDK | yes | yes | yes | 2 | SDK includes trading methods, so read-only wrapper required |
+| Tiger | read_only_live_proof_candidate | TigerOpen Python SDK through supervised local configuration | yes | yes | yes | 2 | v0.1.3 guarded read-only proof; TigerOpen must be configured locally |
 
 ## Unsupported Until Official API Verified
 
