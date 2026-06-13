@@ -14,7 +14,7 @@ FIXTURE = Path("tests/fixtures/manual_snapshot_sample.json")
 
 def test_risk_engine_calculates_v01_summary_metrics() -> None:
     provider = ManualSnapshotProvider(load_manual_config({}, FIXTURE))
-    rows = normalize_snapshot(provider.sync())
+    rows = normalize_snapshot(provider._sync())
     summary = calculate_risk_summary(rows, expected_provider_count=4, as_of_date="20260614")
 
     assert summary.total_assets == 1037000.00
