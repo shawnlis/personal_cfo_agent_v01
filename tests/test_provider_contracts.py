@@ -31,6 +31,7 @@ FORBIDDEN_PUBLIC_METHODS = {
     "submit_order",
     "modify_order",
     "cancel_order",
+    "preview_order",
     "transfer_cash",
     "withdraw_cash",
     "trade",

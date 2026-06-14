@@ -17,6 +17,7 @@ class ConnectionMode(str, Enum):
     FIXTURE = "fixture_manual_snapshot"
     API_STUB = "api_contract_stub"
     LIVE_READINESS = "live_readiness_check_only"
+    LIVE_READ = "live_read_only"
 
 
 class WarningCode(str, Enum):
@@ -35,6 +36,7 @@ class WarningCode(str, Enum):
     SECRET_DETECTED = "SECRET_DETECTED"
     FORBIDDEN_METHOD_EXPOSED = "FORBIDDEN_METHOD_EXPOSED"
     UNOFFICIAL_API_BLOCKED = "UNOFFICIAL_API_BLOCKED"
+    SDK_NOT_INSTALLED = "SDK_NOT_INSTALLED"
 
 
 LEDGER_FIELDNAMES = [

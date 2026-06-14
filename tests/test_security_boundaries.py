@@ -20,6 +20,7 @@ FORBIDDEN_IMPORT_OR_CALL_MARKERS = [
     r"\bsubmit_order\b",
     r"\bmodify_order\b",
     r"\bcancel_order\b",
+    r"\bpreview_order\b",
     r"\btransfer_cash\b",
     r"\bwithdraw_cash\b",
     r"\bbuy\b",

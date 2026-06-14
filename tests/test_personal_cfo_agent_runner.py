@@ -32,22 +32,24 @@ def test_live_read_requires_explicit_flag() -> None:
         "CFO_IBKR_CLIENT_ID": "7",
         "CFO_IBKR_ACCOUNT": "DU_TEST",
     }
-    snapshots = collect_provider_snapshots(RuntimeConfig(env=env, allow_live_read=False))
+    snapshots = collect_provider_snapshots(
+        RuntimeConfig(env=env, allow_live_read=False, provider="ibkr")
+    )
     ibkr_status = snapshots[0].status
     assert WarningCode.LIVE_READ_NOT_ALLOWED in ibkr_status.warning_codes
     assert ibkr_status.connection_mode == ConnectionMode.API_STUB
 
-    allowed_snapshots = collect_provider_snapshots(
-        RuntimeConfig(env=env, allow_live_read=True)
+    ungated_snapshots = collect_provider_snapshots(
+        RuntimeConfig(env=env, allow_live_read=True, provider="all")
     )
-    allowed_status = allowed_snapshots[0].status
-    assert allowed_status.connection_mode == ConnectionMode.LIVE_READINESS
-    assert WarningCode.NEEDS_REVIEW in allowed_status.warning_codes
+    ungated_status = ungated_snapshots[0].status
+    assert ungated_status.connection_mode == ConnectionMode.API_STUB
+    assert WarningCode.LIVE_READ_NOT_ALLOWED in ungated_status.warning_codes
 
 
 def test_missing_provider_config_fails_closed() -> None:
     snapshots = collect_provider_snapshots(
-        RuntimeConfig(env={"CFO_IBKR_ENABLED": "1"}, allow_live_read=True)
+        RuntimeConfig(env={"CFO_IBKR_ENABLED": "1"}, allow_live_read=True, provider="ibkr")
     )
     ibkr_status = snapshots[0].status
     assert WarningCode.PROVIDER_CONFIG_MISSING in ibkr_status.warning_codes

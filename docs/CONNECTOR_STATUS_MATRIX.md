@@ -4,7 +4,7 @@
 
 | Platform | Status | Method | Asset Read | Position Read | Cash Read | Priority | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| IBKR | supported_candidate | TWS API / IB Gateway / Client Portal later | yes | yes | yes | 1 | read-only wrapper required |
+| IBKR | read_only_live_proof_candidate | TWS API / IB Gateway through supervised local session | yes | yes | yes | 1 | v0.1.1 guarded read-only proof; TWS or IB Gateway must be started manually |
 | Moomoo | supported_candidate | OpenD + SDK | likely yes through account API | likely yes | likely yes | 1 | OpenD local gateway required; read-only wrapper required |
 | Tiger | supported_candidate | TigerOpen Python SDK | yes | yes | yes | 2 | SDK includes trading methods, so read-only wrapper required |
 

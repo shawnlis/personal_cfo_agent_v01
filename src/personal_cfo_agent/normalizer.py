@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 
 from personal_cfo_agent.models import (
     NormalizedAsset,
@@ -14,8 +15,9 @@ from personal_cfo_agent.models import (
 )
 
 
-def hash_account_id(account_id: str) -> str:
-    digest = hashlib.sha256(account_id.encode("utf-8")).hexdigest()
+def hash_account_id(account_id: str, salt: str | None = None) -> str:
+    salt_value = salt if salt is not None else os.environ.get("CFO_ACCOUNT_HASH_SALT", "")
+    digest = hashlib.sha256(f"{salt_value}:{account_id}".encode("utf-8")).hexdigest()
     return f"acct_{digest[:16]}"
 
 
