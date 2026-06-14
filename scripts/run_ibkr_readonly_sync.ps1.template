@@ -1,0 +1,60 @@
+$ErrorActionPreference = "Stop"
+
+$gatewayConfirm = Read-Host "Confirm TWS / IB Gateway is already open and API read-only mode is enabled (type YES)"
+if ($gatewayConfirm -ne "YES") {
+    Write-Error "IBKR read-only sync cancelled before diagnostics."
+    exit 1
+}
+
+$syncConfirm = Read-Host "Confirm this is read-only sync only (type YES)"
+if ($syncConfirm -ne "YES") {
+    Write-Error "IBKR read-only sync cancelled before diagnostics."
+    exit 1
+}
+
+$runId = Get-Date -Format "yyyyMMdd_HHmmss"
+$outDir = ".\reports\personal_cfo_agent\ibkr_sync\$runId"
+New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+Write-Host "Running IBKR connection diagnostics..."
+$diagnosticsOutput = & python .\scripts\personal_cfo_agent.py --provider ibkr --connection-diagnostics 2>&1
+$diagnosticsExit = $LASTEXITCODE
+$diagnosticsOutput | ForEach-Object { Write-Host $_ }
+if ($diagnosticsExit -ne 0) {
+    exit $diagnosticsExit
+}
+if (($diagnosticsOutput -join "`n") -notmatch "diagnostic warning codes:\s*None") {
+    Write-Error "IBKR connection diagnostics returned warnings; live read not attempted."
+    exit 1
+}
+
+Write-Host "Running IBKR readiness check..."
+$readinessOutput = & python .\scripts\personal_cfo_agent.py --provider ibkr --readiness-check 2>&1
+$readinessExit = $LASTEXITCODE
+$readinessOutput | ForEach-Object { Write-Host $_ }
+if ($readinessExit -ne 0) {
+    exit $readinessExit
+}
+if (($readinessOutput -join "`n") -notmatch "warnings=None") {
+    Write-Error "IBKR readiness check returned warnings; live read not attempted."
+    exit 1
+}
+
+Write-Host "Running gated IBKR read-only sync..."
+$liveOutput = & python .\scripts\personal_cfo_agent.py `
+    --provider ibkr `
+    --allow-live-read `
+    --ibkr-data-diagnostics `
+    --out-dir $outDir 2>&1
+$liveExit = $LASTEXITCODE
+$liveOutput | ForEach-Object { Write-Host $_ }
+if ($liveExit -ne 0) {
+    exit $liveExit
+}
+if (($liveOutput -join "`n") -notmatch "Report bundle written to") {
+    Write-Error "IBKR sync did not produce a report bundle; inspect diagnostics before retrying."
+    exit 1
+}
+
+Write-Host "IBKR sync output path: $outDir"
+Write-Host "Reminder: reports stay local and ignored; never stage or commit generated report files."
