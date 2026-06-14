@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from personal_cfo_agent.config import RuntimeConfig, load_tiger_config
@@ -12,6 +13,7 @@ from personal_cfo_agent.models import ConnectionMode, ProviderLevel, WarningCode
 from personal_cfo_agent.normalizer import normalize_snapshot
 from personal_cfo_agent.providers.tiger_connection_diagnostics import (
     DEFAULT_PROPS_FILE,
+    run_tiger_config_preflight,
     run_tiger_connection_diagnostics,
 )
 from personal_cfo_agent.report_writer import write_report_bundle
@@ -25,6 +27,7 @@ from personal_cfo_agent.providers.tiger_models import (
 from personal_cfo_agent.providers.tiger_provider import TigerProvider
 from personal_cfo_agent.providers.tiger_readonly_adapter import TigerReadOnlyAdapter
 from personal_cfo_agent.runner import (
+    _format_tiger_config_preflight,
     _format_tiger_connection_diagnostics,
     _format_tiger_data_diagnostics,
     collect_provider_snapshots,
@@ -247,6 +250,234 @@ def test_cli_tiger_connection_diagnostics_does_not_print_config_values(tmp_path)
     assert "TIGER_ACCOUNT_SENTINEL" not in combined
     assert "HASH_SALT_SENTINEL" not in combined
     assert "PRIVATE_KEY_PLACEHOLDER" not in combined
+
+
+def test_tiger_config_preflight_passes_with_external_synthetic_config(tmp_path) -> None:
+    with tempfile.TemporaryDirectory(prefix="tiger_preflight_") as raw_dir:
+        config_dir = Path(raw_dir) / "external_tiger_config"
+        _write_placeholder_tiger_config(config_dir, key_name="private_key_pk1")
+        diagnostics = run_tiger_config_preflight(
+            {
+                "CFO_TIGER_ENABLED": "true",
+                "CFO_TIGER_CONFIG_DIR": str(config_dir),
+                "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+            },
+            repo_root=ROOT,
+        )
+
+    assert diagnostics.warning_codes == (WarningCode.TIGER_CONFIG_PREFLIGHT_OK,)
+    assert diagnostics.config_file_outside_repo is True
+    assert diagnostics.config_file_tracked is False
+    assert diagnostics.config_history_risk is False
+    assert diagnostics.private_key_format_category == "pkcs1_like"
+
+
+def test_tiger_config_preflight_missing_config_dir_emits_stage_code(tmp_path) -> None:
+    diagnostics = run_tiger_config_preflight(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(tmp_path / "missing"),
+            "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        },
+        repo_root=ROOT,
+    )
+
+    assert WarningCode.TIGER_CONFIG_DIR_MISSING in diagnostics.warning_codes
+    assert WarningCode.TIGER_CONFIG_PREFLIGHT_FAILED in diagnostics.warning_codes
+
+
+def test_tiger_config_preflight_missing_config_file_emits_stage_code(tmp_path) -> None:
+    diagnostics = run_tiger_config_preflight(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(tmp_path),
+            "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        },
+        repo_root=ROOT,
+    )
+
+    assert WarningCode.TIGER_CONFIG_FILE_MISSING in diagnostics.warning_codes
+    assert WarningCode.TIGER_CONFIG_PREFLIGHT_FAILED in diagnostics.warning_codes
+
+
+def test_tiger_config_preflight_invalid_config_file_emits_unreadable(tmp_path) -> None:
+    (tmp_path / DEFAULT_PROPS_FILE).write_bytes(b"\xff\xfe\xfa")
+    diagnostics = run_tiger_config_preflight(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(tmp_path),
+            "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        },
+        repo_root=ROOT,
+    )
+
+    assert diagnostics.config_file_exists is True
+    assert diagnostics.config_file_readable is False
+    assert WarningCode.TIGER_CONFIG_FILE_UNREADABLE in diagnostics.warning_codes
+
+
+def test_tiger_config_preflight_missing_required_keys_emits_redacted_codes(
+    tmp_path,
+) -> None:
+    (tmp_path / DEFAULT_PROPS_FILE).write_text(
+        "tiger_id=TIGER_ID_PLACEHOLDER\n",
+        encoding="utf-8",
+    )
+    diagnostics = run_tiger_config_preflight(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(tmp_path),
+        },
+        repo_root=ROOT,
+    )
+
+    assert WarningCode.TIGER_CONFIG_REQUIRED_KEY_MISSING in diagnostics.warning_codes
+    assert WarningCode.TIGER_PRIVATE_KEY_FIELD_MISSING in diagnostics.warning_codes
+
+
+def test_tiger_config_preflight_unknown_key_format_emits_stage_code(tmp_path) -> None:
+    (tmp_path / DEFAULT_PROPS_FILE).write_text(
+        "\n".join(
+            [
+                "tiger_id=TIGER_ID_PLACEHOLDER",
+                "account=ACCOUNT_PLACEHOLDER",
+                "private_key=UNKNOWN_KEY_PLACEHOLDER",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    diagnostics = run_tiger_config_preflight(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(tmp_path),
+        },
+        repo_root=ROOT,
+    )
+
+    assert diagnostics.private_key_format_category == "unknown_format"
+    assert WarningCode.TIGER_PRIVATE_KEY_FORMAT_UNKNOWN in diagnostics.warning_codes
+
+
+def test_tiger_config_preflight_inside_repo_emits_stage_code(tmp_path) -> None:
+    repo = tmp_path / "repo"
+    config_dir = repo / "tiger_config"
+    config_dir.mkdir(parents=True)
+    _write_placeholder_tiger_config(config_dir)
+    _git(repo, "init")
+    diagnostics = run_tiger_config_preflight(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(config_dir),
+            "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        },
+        repo_root=repo,
+    )
+
+    assert diagnostics.config_file_outside_repo is False
+    assert WarningCode.TIGER_CONFIG_FILE_INSIDE_REPO in diagnostics.warning_codes
+
+
+def test_tiger_config_preflight_tracked_config_emits_stage_code(tmp_path) -> None:
+    repo = tmp_path / "repo"
+    config_dir = repo / "tiger_config"
+    config_dir.mkdir(parents=True)
+    _write_placeholder_tiger_config(config_dir)
+    _git(repo, "init")
+    _git(repo, "add", "tiger_config/tiger_openapi_config.properties")
+    diagnostics = run_tiger_config_preflight(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(config_dir),
+            "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        },
+        repo_root=repo,
+    )
+
+    assert diagnostics.config_file_tracked is True
+    assert WarningCode.TIGER_CONFIG_FILE_TRACKED in diagnostics.warning_codes
+
+
+def test_cli_tiger_config_preflight_redacts_values_and_does_not_live_init(
+    tmp_path,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="tiger_preflight_") as raw_dir:
+        config_dir = Path(raw_dir) / "external_tiger_config"
+        _write_placeholder_tiger_config(config_dir)
+        env = {
+            **os.environ,
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(config_dir),
+            "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+            "CFO_ACCOUNT_HASH_SALT": "HASH_SALT_SENTINEL",
+        }
+        result = subprocess.run(
+            [
+                sys.executable,
+                "scripts/personal_cfo_agent.py",
+                "--provider",
+                "tiger",
+                "--config-preflight",
+            ],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    combined = result.stdout + result.stderr
+
+    assert result.returncode == 0
+    assert "Tiger config preflight (values redacted)" in result.stdout
+    assert "TigerOpen client initialized: no" in result.stdout
+    assert "Tiger account APIs called: no" in result.stdout
+    assert str(config_dir) not in combined
+    assert "TIGER_ACCOUNT_SENTINEL" not in combined
+    assert "HASH_SALT_SENTINEL" not in combined
+    assert "PRIVATE_KEY_PLACEHOLDER" not in combined
+
+
+def test_tiger_config_preflight_formatter_redacts_static_values(tmp_path) -> None:
+    with tempfile.TemporaryDirectory(prefix="tiger_preflight_") as raw_dir:
+        config_dir = Path(raw_dir) / "external_tiger_config"
+        _write_placeholder_tiger_config(config_dir)
+        diagnostics = run_tiger_config_preflight(
+            {
+                "CFO_TIGER_ENABLED": "true",
+                "CFO_TIGER_CONFIG_DIR": str(config_dir),
+                "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+            },
+            repo_root=ROOT,
+        )
+    formatted = "\n".join(_format_tiger_config_preflight(diagnostics))
+
+    assert str(config_dir) not in formatted
+    assert "TIGER_ACCOUNT_SENTINEL" not in formatted
+    assert "PRIVATE_KEY_PLACEHOLDER" not in formatted
+    assert "tiger_openapi_config.properties" in formatted
+
+
+def test_tiger_config_preflight_does_not_import_or_initialize_tigeropen(
+    tmp_path, monkeypatch
+) -> None:
+    import personal_cfo_agent.providers.tiger_connection_diagnostics as diag_module
+
+    def _blocked_import(name: str):
+        raise AssertionError(name)
+
+    monkeypatch.setattr(diag_module.importlib, "import_module", _blocked_import)
+    with tempfile.TemporaryDirectory(prefix="tiger_preflight_") as raw_dir:
+        config_dir = Path(raw_dir)
+        _write_placeholder_tiger_config(config_dir)
+        diagnostics = run_tiger_config_preflight(
+            {
+                "CFO_TIGER_ENABLED": "true",
+                "CFO_TIGER_CONFIG_DIR": str(config_dir),
+                "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+            },
+            repo_root=ROOT,
+        )
+
+    assert diagnostics.warning_codes == (WarningCode.TIGER_CONFIG_PREFLIGHT_OK,)
 
 
 def test_cli_tiger_data_diagnostics_requires_live_gate(tmp_path) -> None:
@@ -835,6 +1066,15 @@ def _install_fake_tiger_sdk(
         raise AssertionError(name)
 
     monkeypatch.setattr(adapter_module.importlib, "import_module", _fake_import)
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
 
 
 def _valid_config(extra: dict[str, str] | None = None):

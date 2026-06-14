@@ -42,7 +42,9 @@ from personal_cfo_agent.providers.ibkr_connection_diagnostics import (
     run_ibkr_connection_diagnostics,
 )
 from personal_cfo_agent.providers.tiger_connection_diagnostics import (
+    TigerConfigPreflight,
     TigerConnectionDiagnostics,
+    run_tiger_config_preflight,
     run_tiger_connection_diagnostics,
 )
 from personal_cfo_agent.report_writer import write_report_bundle
@@ -249,6 +251,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run redacted provider connection diagnostics without live API messages.",
     )
     parser.add_argument(
+        "--config-preflight",
+        action="store_true",
+        help="Run redacted Tiger config preflight without TigerOpen client initialization.",
+    )
+    parser.add_argument(
         "--ibkr-data-diagnostics",
         action="store_true",
         help="Print redacted IBKR live data-path diagnostics after a gated read.",
@@ -326,6 +333,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.validate_manual_snapshot is not None:
         return _validate_manual_snapshot_cli(args.validate_manual_snapshot)
+    if args.config_preflight:
+        if args.provider != "tiger":
+            parser.error("--config-preflight requires --provider tiger")
+        if args.allow_live_read:
+            parser.error("--config-preflight cannot be combined with --allow-live-read")
+        if args.readiness_check or args.connection_diagnostics:
+            parser.error(
+                "--config-preflight cannot be combined with --readiness-check or --connection-diagnostics"
+            )
+        return _tiger_config_preflight_cli()
     if args.connection_diagnostics:
         if args.provider not in {"ibkr", "tiger"}:
             parser.error(
@@ -432,6 +449,15 @@ def _connection_diagnostics_cli(provider: str) -> int:
     return 0
 
 
+def _tiger_config_preflight_cli() -> int:
+    diagnostics = run_tiger_config_preflight(dict(os.environ))
+    for line in _format_tiger_config_preflight(diagnostics):
+        print(line)
+    if WarningCode.TIGER_CONFIG_PREFLIGHT_OK in diagnostics.warning_codes:
+        return 0
+    return 1
+
+
 def _format_ibkr_connection_diagnostics(
     diagnostics: IBKRConnectionDiagnostics,
 ) -> list[str]:
@@ -470,6 +496,37 @@ def _format_tiger_connection_diagnostics(
         f"Python executable: {diagnostics.python_executable}",
         f"tigeropen import status: {'OK' if diagnostics.tigeropen_import_ok else 'MISSING'}",
         f"diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _format_tiger_config_preflight(diagnostics: TigerConfigPreflight) -> list[str]:
+    warning_text = ", ".join(code.value for code in diagnostics.warning_codes) or "None"
+    return [
+        "Tiger config preflight (values redacted)",
+        f"CFO_TIGER_ENABLED present and true: {_yes_no(diagnostics.enabled_present and diagnostics.enabled_true)}",
+        f"CFO_TIGER_CONFIG_DIR present: {_yes_no(diagnostics.config_dir_present)}",
+        f"Expected config file pattern: {diagnostics.expected_config_file_pattern}",
+        f"Expected config filename: {diagnostics.expected_props_filename}",
+        f"Adapter props_path expectation: {diagnostics.props_path_expectation}",
+        "TigerOpen config private-key fields: private_key_pk1 or private_key_pk8",
+        "TigerOpen env/private-key path option: TIGEROPEN_PRIVATE_KEY or private_key_path",
+        f"Config dir exists: {_yes_no(diagnostics.config_dir_exists)}",
+        f"Config dir is directory: {_yes_no(diagnostics.config_dir_is_directory)}",
+        f"Adapter props_path shape valid: {_yes_no(diagnostics.props_path_matches_adapter)}",
+        f"Config file exists: {_yes_no(diagnostics.config_file_exists)}",
+        f"Config file readable: {_yes_no(diagnostics.config_file_readable)}",
+        f"Config file outside repository: {_yes_no(diagnostics.config_file_outside_repo)}",
+        f"Config file tracked by git: {_yes_no(diagnostics.config_file_tracked)}",
+        f"Config history risk detected: {_yes_no(diagnostics.config_history_risk)}",
+        f"Tiger ID present: {_yes_no(diagnostics.tiger_id_present)}, redacted",
+        f"CFO_TIGER_ACCOUNT present: {_yes_no(diagnostics.account_present)}, redacted",
+        f"Config account present: {_yes_no(diagnostics.config_account_present)}, redacted",
+        f"Private key field present: {_yes_no(diagnostics.private_key_field_present)}, redacted",
+        f"Private key path/env present: {_yes_no(diagnostics.private_key_path_present)}, redacted",
+        f"Private key format category: {diagnostics.private_key_format_category}",
+        f"Preflight warning codes: {warning_text}",
+        "TigerOpen client initialized: no",
+        "Tiger account APIs called: no",
     ]
 
 

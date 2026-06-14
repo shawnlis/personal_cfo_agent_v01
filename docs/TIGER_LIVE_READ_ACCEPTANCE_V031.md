@@ -84,6 +84,41 @@ Result:
 
 This readiness gate validates environment variable presence only. It does not prove the local TigerOpen config directory or config file exists.
 
+## Config Preflight Gate
+
+Command:
+
+```powershell
+python .\scripts\personal_cfo_agent.py --provider tiger --config-preflight
+```
+
+Result:
+
+- Config preflight command added: yes.
+- Live read attempted by preflight: no.
+- TigerOpen client initialized by preflight: no.
+- Tiger account APIs called by preflight: no.
+- Expected config file pattern: `<CFO_TIGER_CONFIG_DIR>\tiger_openapi_config.properties`.
+- Expected config filename: `tiger_openapi_config.properties`.
+- Adapter `props_path` expectation: file path.
+- Config dir exists: yes.
+- Config dir is directory: yes.
+- Adapter `props_path` shape valid: yes.
+- Config file exists: yes.
+- Config file readable: yes.
+- Config file outside repository: yes.
+- Config file tracked by Git: no.
+- Config history risk detected: no.
+- Tiger ID present: yes, redacted.
+- `CFO_TIGER_ACCOUNT` present: yes, redacted.
+- Config account present: yes, redacted.
+- Private key field present: yes, redacted.
+- Private key path/env present: no, redacted.
+- Private key format category: `pkcs1_like`.
+- Warning codes: `TIGER_CONFIG_PREFLIGHT_OK`.
+
+No Tiger ID, raw account, private key, config value, config path, `.env.local` value, or balance was printed in this committed record.
+
 ## Connection Diagnostics Gate
 
 Command:
@@ -181,7 +216,7 @@ Current counts:
 
 ## Next Manual Step
 
-Review local TigerOpen client configuration outside Git, then rerun:
+Config preflight now passes, but no live read was run during this preflight-validation task. The operator can decide whether to run exactly one supervised live attempt next:
 
 ```powershell
 python .\scripts\personal_cfo_agent.py `

@@ -7,6 +7,7 @@ Personal CFO Agent v0.3.1 includes a supervised TigerOpen read-only proof harnes
 - TigerOpen must be configured locally by the operator.
 - Live sync requires `--provider tiger --allow-live-read`.
 - Readiness checks validate environment configuration only and do not connect to TigerOpen.
+- Config preflight validates local TigerOpen properties shape without initializing a TigerOpen client.
 - Connection diagnostics check local SDK/config readiness without printing config values.
 - No order, preview, modify, cancel, submit, cash-transfer, or withdrawal methods are exposed on the provider object.
 - First live read should be supervised.
@@ -26,6 +27,17 @@ Optional:
 
 Secrets and local TigerOpen configuration must stay outside Git and outside the repository directory. Do not commit local config, account exports, logs with account data, private keys, or generated reports. If a real Tiger config or private key is ever committed, rotate the key before any further live testing.
 
+Expected local config pattern:
+
+- `CFO_TIGER_CONFIG_DIR` should point to an external directory, for example `%USERPROFILE%\tiger_openapi_config`.
+- The expected properties filename inside that directory is `tiger_openapi_config.properties`.
+- The adapter passes `<CFO_TIGER_CONFIG_DIR>\tiger_openapi_config.properties` as TigerOpen `props_path`.
+- TigerOpen accepts `tiger_id` and `account` properties.
+- TigerOpen accepts private-key properties named `private_key_pk1` or `private_key_pk8`; the private-key format must match the field used.
+- TigerOpen can also use `TIGEROPEN_PRIVATE_KEY` or `private_key_path`, but values must remain local and must not be printed or committed.
+
+Do not put screenshots, config file contents, Tiger IDs, raw account IDs, private keys, tokens, `.env.local` values, or balances in docs or PR comments.
+
 ## Readiness Check
 
 Run this before starting a live proof:
@@ -36,9 +48,31 @@ python .\scripts\personal_cfo_agent.py --provider tiger --readiness-check
 
 This validates environment configuration only. It does not import `tigeropen`, open a network connection, or write reports.
 
+## Config Preflight
+
+Run this after readiness and before connection diagnostics or any supervised live attempt:
+
+```powershell
+python .\scripts\personal_cfo_agent.py --provider tiger --config-preflight
+```
+
+This validates the local config shape without initializing a TigerOpen client, authenticating, calling account APIs, or writing reports. It prints only redacted booleans/categories:
+
+- Expected config filename and pattern.
+- Whether `CFO_TIGER_CONFIG_DIR` is configured and points to a directory.
+- Whether `tiger_openapi_config.properties` exists and is readable.
+- Whether the config file is outside the repository.
+- Whether the config file is tracked by Git.
+- Whether config-like key files have Git history risk.
+- Whether `tiger_id`, account context, and private-key material are present, redacted.
+- Private-key format category only: `pkcs1_like`, `pkcs8_like`, `missing`, or `unknown_format`.
+- Warning codes such as `TIGER_CONFIG_PREFLIGHT_OK`, `TIGER_CONFIG_FILE_INSIDE_REPO`, or `TIGER_PRIVATE_KEY_FORMAT_UNKNOWN`.
+
+Do not continue to a supervised live attempt if preflight warning codes include `TIGER_CONFIG_PREFLIGHT_FAILED`, `TIGER_CONFIG_FILE_TRACKED`, `TIGER_CONFIG_HISTORY_RISK`, or any missing-key/private-key warning.
+
 ## Connection Diagnostics
 
-Run this after readiness and before any supervised live attempt:
+Run this after readiness and config preflight, before any supervised live attempt:
 
 ```powershell
 python .\scripts\personal_cfo_agent.py --provider tiger --connection-diagnostics
@@ -107,5 +141,7 @@ Successful live reads use the existing normalized asset ledger schema and provid
 ## v0.3.1 Status
 
 On the first v0.3.1 setup pass, `tigeropen` imported successfully and readiness passed. After pointing `CFO_TIGER_CONFIG_DIR` at the directory containing the local TigerOpen properties file, connection diagnostics passed with no warning codes.
+
+The config preflight command was added to diagnose local properties-file shape before TigerOpen client initialization. The current redacted preflight result is `TIGER_CONFIG_PREFLIGHT_OK`: the config file is outside the repository, untracked, readable, has no detected Git history risk, and reports private-key format category `pkcs1_like`. It does not run a live read and does not call Tiger account APIs.
 
 The supervised live read was retried once after client-initialization diagnostics were added. It failed closed during TigerOpen config load with `TIGER_CONFIG_LOAD_FAILED` and `PROVIDER_CONNECTION_FAILED`. Client initialization was not attempted. No asset query, position query, cash query, normalized rows, or report bundle was produced.
