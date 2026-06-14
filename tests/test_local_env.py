@@ -43,6 +43,21 @@ def test_local_env_loader_loads_missing_keys(tmp_path) -> None:
     assert env["CFO_IBKR_HOST"] == "127.0.0.1"
 
 
+def test_local_env_loader_accepts_utf8_bom(tmp_path) -> None:
+    env_file = tmp_path / ".env.local"
+    env_file.write_text(
+        "\ufeffCFO_IBKR_ENABLED=true\nCFO_IBKR_HOST=127.0.0.1\n",
+        encoding="utf-8",
+    )
+    env: dict[str, str] = {}
+
+    result = load_local_env_file(env_file, env)
+
+    assert result.ignored_lines == ()
+    assert env["CFO_IBKR_ENABLED"] == "true"
+    assert env["CFO_IBKR_HOST"] == "127.0.0.1"
+
+
 def test_os_environment_values_override_local_env(tmp_path) -> None:
     env_file = tmp_path / ".env.local"
     env_file.write_text(

@@ -36,7 +36,9 @@ def load_local_env_file(
     loaded: list[str] = []
     skipped: list[str] = []
     ignored: list[int] = []
-    for line_number, raw_line in enumerate(env_path.read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, raw_line in enumerate(
+        env_path.read_text(encoding="utf-8-sig").splitlines(), 1
+    ):
         parsed = _parse_env_line(raw_line)
         if parsed is None:
             stripped = raw_line.strip()

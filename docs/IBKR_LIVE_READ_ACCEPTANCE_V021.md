@@ -145,10 +145,10 @@ python .\scripts\personal_cfo_agent.py `
 
 ## Current Acceptance Status
 
-- The local socket, SDK import, API handshake, and managed-account callback path are confirmed.
-- The v0.2.1 live-read proof is not accepted yet because the configured account filter did not match the managed-account list and no position or account-summary rows were read.
-- The next supervised acceptance attempt should first correct or remove the local `CFO_IBKR_ACCOUNT` filter, then rerun the readiness check, connection diagnostics, and one gated `--ibkr-data-diagnostics` read.
-- A successful acceptance still requires at least managed-account validation plus position callback data, account-summary/cash callback data, or both, with outputs ignored and redacted.
+- Attempt 5 completed the supervised read-only proof with no account filter configured.
+- The local socket, SDK import, API handshake, managed-account callback, positions callback, and account-summary/cash callback paths are confirmed.
+- Reports were generated under an ignored `reports/` path and were not staged or tracked.
+- Acceptance is successful for the v0.2.1 supervised read-only data-path proof, subject to keeping PR #9 draft for review.
 
 ## Zero-Row Diagnostic Causes
 
@@ -157,3 +157,46 @@ python .\scripts\personal_cfo_agent.py `
 - Managed accounts are returned but there are no readable positions or cash rows for the selected scope.
 - Account-summary or positions callbacks time out before returning end markers.
 - API settings or local account subscriptions do not permit the requested read-only account-summary or position stream.
+
+## Attempt 5 Results
+
+- Date/time: 2026-06-14T14:32:45+08:00
+- Active session assumption: likely live because the configured local port was the usual live TWS/Gateway port; not independently verified by the agent
+- Account filter configured: no
+- Connection diagnostics before live read: socket reachable, `ibapi` import OK, warning codes none
+- Readiness result before live read: passed
+- Readiness warning codes: none
+- Live read attempted: yes, with `--provider ibkr --allow-live-read --ibkr-data-diagnostics`
+- Live read success: yes for the supervised read-only data-path proof
+- Provider connection mode: `live_read_only`
+- Provider warning codes: none
+- Connected to socket: yes
+- API handshake observed: yes
+- Managed accounts callback observed: yes
+- Managed account count: 1, redacted
+- Requested account hash: not configured
+- Requested account observed in managed accounts: not configured
+- Account-filter mismatch resolved: yes
+- Positions callback observed: yes
+- Positions read: 54
+- Account summary callback observed: yes
+- Cash currency count: 1
+- Normalized ledger rows: 55
+- Output path: `reports\personal_cfo_agent\ibkr_v021_live_acceptance`
+- Output files created: 8 expected report files
+- Raw account ID pattern found in generated outputs: no
+- `account_id_hash` present in generated outputs: yes
+- Secret marker found in generated outputs: no
+- Generated reports ignored by git: yes
+- Generated reports tracked by git: no
+
+## Attempt 5 Output Files
+
+- `PERSONAL_CFO_AGENT_V010.md`
+- `provider_sync_summary.json`
+- `normalized_asset_ledger.csv`
+- `net_worth_summary.csv`
+- `liquidity_summary.csv`
+- `currency_exposure.csv`
+- `provider_warning_summary.csv`
+- `personal_cfo_warnings.md`
