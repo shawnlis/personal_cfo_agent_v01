@@ -56,6 +56,26 @@ def test_missing_provider_config_fails_closed() -> None:
     assert not snapshots[0].has_data()
 
 
+def test_moomoo_live_read_requires_explicit_provider_and_flag() -> None:
+    env = {
+        "CFO_MOOMOO_ENABLED": "1",
+        "CFO_MOOMOO_HOST": "127.0.0.1",
+        "CFO_MOOMOO_PORT": "11111",
+    }
+    blocked_without_flag = collect_provider_snapshots(
+        RuntimeConfig(env=env, allow_live_read=False, provider="moomoo")
+    )
+    assert WarningCode.LIVE_READ_NOT_ALLOWED in blocked_without_flag[0].status.warning_codes
+
+    blocked_without_provider = collect_provider_snapshots(
+        RuntimeConfig(env=env, allow_live_read=True, provider="all")
+    )
+    moomoo_status = next(
+        snapshot.status for snapshot in blocked_without_provider if snapshot.provider_name == "moomoo"
+    )
+    assert WarningCode.LIVE_READ_NOT_ALLOWED in moomoo_status.warning_codes
+
+
 def test_manual_fixture_runner_writes_required_output_bundle(tmp_path) -> None:
     result = run(
         RuntimeConfig(

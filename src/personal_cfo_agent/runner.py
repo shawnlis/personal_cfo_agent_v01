@@ -71,9 +71,12 @@ def run(config: RuntimeConfig) -> RunnerResult:
 
 
 def run_readiness_check(config: RuntimeConfig) -> RunnerResult:
-    if config.provider != "ibkr":
+    if config.provider == "ibkr":
+        provider = IBKRProvider(load_ibkr_config(config.env), allow_live_read=False)
+    elif config.provider == "moomoo":
+        provider = MoomooProvider(load_moomoo_config(config.env), allow_live_read=False)
+    else:
         return RunnerResult(exit_code=0, statuses=[], normalized_assets=[])
-    provider = IBKRProvider(load_ibkr_config(config.env), allow_live_read=False)
     provider.readiness_check()
     return RunnerResult(exit_code=0, statuses=[provider._status()], normalized_assets=[])
 
@@ -158,12 +161,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
-    if args.readiness_check and args.provider != "ibkr":
-        parser.error("--readiness-check is currently implemented for --provider ibkr")
+    if args.readiness_check and args.provider not in {"ibkr", "moomoo"}:
+        parser.error("--readiness-check is currently implemented for --provider ibkr or moomoo")
     if args.as_of_date is not None:
         _validate_as_of_date(args.as_of_date, parser)
     if args.provider == "ibkr" and args.allow_live_read:
         print("Read-only IBKR sync only. No order methods are exposed.")
+    if args.provider == "moomoo" and args.allow_live_read:
+        print("Read-only Moomoo sync only. No order methods are exposed.")
     result = run(
         RuntimeConfig(
             allow_live_read=args.allow_live_read,
