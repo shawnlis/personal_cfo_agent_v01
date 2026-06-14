@@ -12,7 +12,9 @@ tmp/
 
 # Generated local outputs and real personal finance data.
 reports/
+reports/personal_cfo_agent/ibkr_sync/
 manual_snapshots/
+scripts/*.local.ps1
 *.local
 *.secret
 *.key

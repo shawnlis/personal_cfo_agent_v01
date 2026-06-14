@@ -14,7 +14,10 @@ PACKAGE_DIRS = [
     ROOT / "src" / "personal_cfo_agent" / "manual_snapshot",
     ROOT / "src" / "personal_cfo_agent" / "dashboard",
 ]
-SCRIPT_FILES = [ROOT / "scripts" / "personal_cfo_agent.py"]
+SCRIPT_FILES = [
+    ROOT / "scripts" / "personal_cfo_agent.py",
+    ROOT / "scripts" / "run_ibkr_readonly_sync.py",
+]
 
 
 def main() -> int:
