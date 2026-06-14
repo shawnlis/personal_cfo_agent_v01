@@ -24,7 +24,7 @@ Optional:
 
 - `CFO_ACCOUNT_HASH_SALT`
 
-Secrets and local TigerOpen configuration must stay outside Git. Do not commit local config, account exports, logs with account data, or generated reports.
+Secrets and local TigerOpen configuration must stay outside Git and outside the repository directory. Do not commit local config, account exports, logs with account data, private keys, or generated reports. If a real Tiger config or private key is ever committed, rotate the key before any further live testing.
 
 ## Readiness Check
 
@@ -50,7 +50,10 @@ The diagnostics output is redacted. It reports only presence and yes/no status f
 - Config directory configured.
 - Config directory exists.
 - Config file exists.
+- Tiger ID configured, redacted.
 - Account configured.
+- Private key configured, redacted.
+- Private key format category, redacted.
 - Account hash salt configured.
 - `tigeropen` import status.
 - Warning codes.
@@ -80,12 +83,17 @@ If `tigeropen` is not installed, the provider fails closed with `SDK_NOT_INSTALL
 With `--tiger-data-diagnostics`, the CLI prints only redacted data-path diagnostics:
 
 - SDK import status.
-- Local config/client load status.
+- Config directory/file status.
+- Local config load status.
+- Tiger ID/account/private-key presence, redacted.
+- Private-key format category, redacted.
+- Client init and client auth status.
 - Account context observed yes/no.
 - Selected account hash.
 - Account count redacted.
-- Asset query attempted/success.
-- Position query attempted/success.
+- Assets query attempted/success.
+- Positions query attempted/success.
+- Cash query attempted/success.
 - Position count.
 - Cash currency count.
 - Normalized rows.
@@ -100,4 +108,4 @@ Successful live reads use the existing normalized asset ledger schema and provid
 
 On the first v0.3.1 setup pass, `tigeropen` imported successfully and readiness passed. After pointing `CFO_TIGER_CONFIG_DIR` at the directory containing the local TigerOpen properties file, connection diagnostics passed with no warning codes.
 
-The supervised live read was then attempted once. It failed closed during TigerOpen config/client initialization with `PROVIDER_CONNECTION_FAILED`. No asset query, position query, cash query, normalized rows, or report bundle was produced.
+The supervised live read was retried once after client-initialization diagnostics were added. It failed closed during TigerOpen config load with `TIGER_CONFIG_LOAD_FAILED` and `PROVIDER_CONNECTION_FAILED`. Client initialization was not attempted. No asset query, position query, cash query, normalized rows, or report bundle was produced.

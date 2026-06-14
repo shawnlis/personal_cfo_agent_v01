@@ -64,17 +64,33 @@ class TigerProvider(ProviderBase):
             self._snapshot = adapter.collect()
         except TigerSDKNotInstalledError as exc:
             self.diagnostics = _diagnostics_from_error(exc)
-            self.warning_codes = _dedupe([*self.warning_codes, WarningCode.SDK_NOT_INSTALLED])
+            self.warning_codes = _dedupe(
+                [
+                    *self.warning_codes,
+                    *_warning_codes_from_diagnostics(self.diagnostics),
+                    WarningCode.SDK_NOT_INSTALLED,
+                ]
+            )
             return False
         except TigerConnectionError as exc:
             self.diagnostics = _diagnostics_from_error(exc)
             self.warning_codes = _dedupe(
-                [*self.warning_codes, WarningCode.PROVIDER_CONNECTION_FAILED]
+                [
+                    *self.warning_codes,
+                    *_warning_codes_from_diagnostics(self.diagnostics),
+                    WarningCode.PROVIDER_CONNECTION_FAILED,
+                ]
             )
             return False
         except TigerFetchError as exc:
             self.diagnostics = _diagnostics_from_error(exc)
-            self.warning_codes = _dedupe([*self.warning_codes, WarningCode.PROVIDER_FETCH_FAILED])
+            self.warning_codes = _dedupe(
+                [
+                    *self.warning_codes,
+                    *_warning_codes_from_diagnostics(self.diagnostics),
+                    WarningCode.PROVIDER_FETCH_FAILED,
+                ]
+            )
             return False
         except Exception as exc:
             self.diagnostics = _diagnostics_from_error(exc)
@@ -82,6 +98,9 @@ class TigerProvider(ProviderBase):
             return False
 
         self.diagnostics = dict(self._snapshot.diagnostics)
+        self.warning_codes = _dedupe(
+            [*self.warning_codes, *_warning_codes_from_diagnostics(self.diagnostics)]
+        )
         self.provider_level = ProviderLevel.LEVEL_2
         self.connection_mode = ConnectionMode.LIVE_READ
         return True
@@ -171,3 +190,16 @@ def _diagnostics_from_error(exc: BaseException | None = None) -> dict[str, objec
     if isinstance(exc, TigerReadError) and exc.diagnostics is not None:
         return exc.diagnostics.to_redacted_dict()
     return {}
+
+
+def _warning_codes_from_diagnostics(diagnostics: dict[str, object]) -> list[WarningCode]:
+    raw_codes = diagnostics.get("warning_codes") if diagnostics else []
+    codes: list[WarningCode] = []
+    if not isinstance(raw_codes, list):
+        return codes
+    for raw_code in raw_codes:
+        try:
+            codes.append(WarningCode(str(raw_code)))
+        except ValueError:
+            continue
+    return codes

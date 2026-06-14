@@ -24,7 +24,12 @@ from personal_cfo_agent.manual_snapshot import (
     write_manual_snapshot_template,
 )
 from personal_cfo_agent.local_env import LOCAL_ENV_FILENAME, load_local_env_file
-from personal_cfo_agent.models import NormalizedAsset, ProviderStatus, RawProviderSnapshot
+from personal_cfo_agent.models import (
+    NormalizedAsset,
+    ProviderStatus,
+    RawProviderSnapshot,
+    WarningCode,
+)
 from personal_cfo_agent.normalizer import normalize_snapshots
 from personal_cfo_agent.providers import (
     IBKRProvider,
@@ -61,7 +66,18 @@ def run(config: RuntimeConfig) -> RunnerResult:
     snapshots = collect_provider_snapshots(config)
     statuses = [snapshot.status for snapshot in snapshots]
     data_snapshots = [snapshot for snapshot in snapshots if snapshot.has_data()]
-    normalized_assets = normalize_snapshots(data_snapshots)
+    try:
+        normalized_assets = normalize_snapshots(data_snapshots)
+    except Exception:
+        if any(snapshot.provider_name == "tiger" for snapshot in data_snapshots):
+            return RunnerResult(
+                exit_code=1,
+                statuses=_mark_tiger_normalization_failed(statuses),
+                normalized_assets=[],
+                output_dir=None,
+                output_paths={},
+            )
+        raise
     statuses = _attach_diagnostic_normalized_rows(statuses, normalized_assets)
     if not normalized_assets:
         return RunnerResult(
@@ -158,6 +174,60 @@ def _attach_diagnostic_normalized_rows(
         diagnostics["normalized_rows"] = row_counts.get(status.provider_name, 0)
         updated.append(replace(status, diagnostics=diagnostics))
     return updated
+
+
+def _mark_tiger_normalization_failed(statuses: list[ProviderStatus]) -> list[ProviderStatus]:
+    updated: list[ProviderStatus] = []
+    for status in statuses:
+        if status.provider_name != "tiger":
+            updated.append(status)
+            continue
+        diagnostics = dict(status.diagnostics)
+        warning_codes = [
+            *diagnostics.get("warning_codes", []),
+            WarningCode.TIGER_NORMALIZATION_FAILED.value,
+            WarningCode.PROVIDER_FETCH_FAILED.value,
+        ]
+        diagnostics["warning_codes"] = _dedupe_text(warning_codes)
+        stage_failures = dict(diagnostics.get("stage_failures", {}))
+        stage_failures["normalization"] = "Tiger normalization failed"
+        diagnostics["stage_failures"] = stage_failures
+        diagnostics["normalized_rows"] = 0
+        updated.append(
+            replace(
+                status,
+                warning_codes=_dedupe_warning_codes(
+                    [
+                        *status.warning_codes,
+                        WarningCode.TIGER_NORMALIZATION_FAILED,
+                        WarningCode.PROVIDER_FETCH_FAILED,
+                    ]
+                ),
+                diagnostics=diagnostics,
+            )
+        )
+    return updated
+
+
+def _dedupe_warning_codes(codes: list[WarningCode]) -> list[WarningCode]:
+    seen: set[WarningCode] = set()
+    result: list[WarningCode] = []
+    for code in codes:
+        if code not in seen:
+            result.append(code)
+            seen.add(code)
+    return result
+
+
+def _dedupe_text(values: list[object]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value)
+        if text not in seen:
+            result.append(text)
+            seen.add(text)
+    return result
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -391,7 +461,11 @@ def _format_tiger_connection_diagnostics(
         f"CFO_TIGER_CONFIG_DIR present: {_yes_no(diagnostics.config_dir_present)}",
         f"Config dir exists: {_yes_no(diagnostics.config_dir_exists)}",
         f"Config file exists: {_yes_no(diagnostics.config_file_exists)}",
+        f"Tiger ID present: {_yes_no(diagnostics.tiger_id_present)}, redacted",
         f"CFO_TIGER_ACCOUNT present: {_yes_no(diagnostics.account_present)}, redacted",
+        f"Config account present: {_yes_no(diagnostics.config_account_present)}, redacted",
+        f"Private key present: {_yes_no(diagnostics.private_key_present)}, redacted",
+        f"Private key format detected: {diagnostics.private_key_format_detected}",
         f"CFO_ACCOUNT_HASH_SALT present: {_yes_no(diagnostics.hash_salt_present)}, redacted",
         f"Python executable: {diagnostics.python_executable}",
         f"tigeropen import status: {'OK' if diagnostics.tigeropen_import_ok else 'MISSING'}",
@@ -439,15 +513,26 @@ def _format_tiger_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
     return [
         "Tiger data-path diagnostics (values redacted)",
         f"SDK import OK: {_yes_no(bool(diagnostics.get('sdk_import_ok')))}",
+        f"Config dir exists: {_yes_no(bool(diagnostics.get('config_dir_exists')))}",
+        f"Config file exists: {_yes_no(bool(diagnostics.get('config_file_exists')))}",
         f"Config loaded: {_yes_no(bool(diagnostics.get('config_loaded')))}",
+        f"Tiger ID present: {_yes_no(bool(diagnostics.get('tiger_id_present_redacted')))}, redacted",
+        f"Account present: {_yes_no(bool(diagnostics.get('account_present_redacted')))}, redacted",
+        f"Private key present: {_yes_no(bool(diagnostics.get('private_key_present_redacted')))}, redacted",
+        f"Private key format detected: {diagnostics.get('private_key_format_detected_redacted', 'missing')}",
+        f"Client init attempted: {_yes_no(bool(diagnostics.get('client_init_attempted')))}",
+        f"Client init success: {_yes_no(bool(diagnostics.get('client_init_success')))}",
+        f"Client auth success: {_yes_no(bool(diagnostics.get('client_auth_success')))}",
         f"Account context observed: {_yes_no(bool(diagnostics.get('account_context_observed')))}",
         f"Selected account hash: {diagnostics.get('selected_account_hash', 'not configured')}",
         f"Account count redacted: {diagnostics.get('account_count_redacted', 0)}",
-        f"Asset query attempted: {_yes_no(bool(diagnostics.get('asset_query_attempted')))}",
-        f"Asset query success: {_yes_no(bool(diagnostics.get('asset_query_success')))}",
-        f"Position query attempted: {_yes_no(bool(diagnostics.get('position_query_attempted')))}",
-        f"Position query success: {_yes_no(bool(diagnostics.get('position_query_success')))}",
+        f"Assets query attempted: {_yes_no(bool(diagnostics.get('assets_query_attempted')))}",
+        f"Assets query success: {_yes_no(bool(diagnostics.get('assets_query_success')))}",
+        f"Positions query attempted: {_yes_no(bool(diagnostics.get('positions_query_attempted')))}",
+        f"Positions query success: {_yes_no(bool(diagnostics.get('positions_query_success')))}",
         f"Position count: {diagnostics.get('position_count', 0)}",
+        f"Cash query attempted: {_yes_no(bool(diagnostics.get('cash_query_attempted')))}",
+        f"Cash query success: {_yes_no(bool(diagnostics.get('cash_query_success')))}",
         f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
         f"Normalized rows: {diagnostics.get('normalized_rows', 0)}",
         f"SDK output suppressed: {_yes_no(bool(diagnostics.get('sdk_output_suppressed')))}",

@@ -37,6 +37,16 @@ Result:
 
 Only boolean/redacted checks were printed.
 
+Config hygiene check:
+
+- Tracked Tiger config files: no.
+- Tracked `.pem` private-key files: no.
+- Tracked `.key` private-key files: no.
+- Tiger config/private-key history hits: no.
+- Repo-root Tiger config file after hygiene cleanup: no.
+- Local TigerOpen config location: outside the repository.
+- If a real Tiger config or private key is ever committed, rotate the key before any further live testing.
+
 Initial environment value:
 
 - `CFO_TIGER_ENABLED` present and true: yes.
@@ -89,9 +99,28 @@ Result:
 - Tiger config directory configured: yes.
 - Config dir exists: yes.
 - Config file exists: yes.
+- Tiger ID present: redacted yes/no only.
 - Account configured: yes, redacted.
+- Private key present: redacted yes/no only.
+- Private key format: redacted category only.
 - Account hash salt configured: yes, redacted.
 - Warning codes: None.
+
+## Diagnostic Stage Table
+
+| Stage | Redacted status fields |
+| --- | --- |
+| SDK import | `sdk_import_ok` |
+| Config dir/file | `config_dir_exists`, `config_file_exists` |
+| Config load | `config_loaded`, `stage_failures.config_load` |
+| Private key | `private_key_present_redacted`, `private_key_format_detected_redacted` |
+| Client init | `client_init_attempted`, `client_init_success`, `stage_failures.client_init` |
+| Client auth | `client_auth_success`, `stage_failures.client_auth` |
+| Account context | `account_context_observed`, `account_count_redacted`, `selected_account_hash` |
+| Assets | `assets_query_attempted`, `assets_query_success` |
+| Positions | `positions_query_attempted`, `positions_query_success`, `position_count` |
+| Cash | `cash_query_attempted`, `cash_query_success`, `cash_currency_count` |
+| Normalization | `normalized_rows`, `stage_failures.normalization` |
 
 ## Supervised Live Attempt
 
@@ -110,19 +139,30 @@ python .\scripts\personal_cfo_agent.py `
 Result:
 
 - SDK import OK: yes.
+- Config dir exists: yes.
+- Config file exists: yes.
 - Config loaded: no.
+- Tiger ID present: yes, redacted.
+- Account present: yes, redacted.
+- Private key present: yes, redacted.
+- Private key format detected: redacted category only.
+- Client init attempted: no.
+- Client init success: no.
+- Client auth success: no.
 - Account context observed: yes.
 - Account count redacted: 1.
-- Asset query attempted: no.
-- Asset query success: no.
-- Position query attempted: no.
-- Position query success: no.
+- Assets query attempted: no.
+- Assets query success: no.
+- Positions query attempted: no.
+- Positions query success: no.
 - Position count: 0.
+- Cash query attempted: no.
+- Cash query success: no.
 - Cash currency count: 0.
 - Normalized rows: 0.
 - SDK output suppressed: yes.
-- Warning codes: `PROVIDER_CONNECTION_FAILED`.
-- Stage failure: `config_load=TigerOpen config/client initialization failed`.
+- Warning codes: `TIGER_CONFIG_LOAD_FAILED`, `PROVIDER_CONNECTION_FAILED`.
+- Stage failure: `config_load=TigerOpen config load failed (TypeError)`.
 - Report bundle generated: no.
 
 ## Acceptance Status
@@ -136,6 +176,7 @@ Current counts:
 - Position count: 0.
 - Cash currency count: 0.
 - Normalized rows: 0.
+- Live read success: no.
 - Report bundle generated: no.
 
 ## Next Manual Step

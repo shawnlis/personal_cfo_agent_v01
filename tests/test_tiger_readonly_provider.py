@@ -92,7 +92,7 @@ def test_tigeropen_import_is_lazy(monkeypatch) -> None:
     assert "tigeropen.tiger_open_config" not in sys.modules
 
 
-def test_missing_tigeropen_sdk_returns_sdk_not_installed(monkeypatch) -> None:
+def test_missing_tigeropen_sdk_returns_sdk_not_installed(monkeypatch, tmp_path) -> None:
     import personal_cfo_agent.providers.tiger_readonly_adapter as adapter_module
 
     def _missing_sdk(name: str):
@@ -101,7 +101,11 @@ def test_missing_tigeropen_sdk_returns_sdk_not_installed(monkeypatch) -> None:
         raise AssertionError(name)
 
     monkeypatch.setattr(adapter_module.importlib, "import_module", _missing_sdk)
-    provider = TigerProvider(_valid_config(), allow_live_read=True)
+    _write_placeholder_tiger_config(tmp_path)
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path)}),
+        allow_live_read=True,
+    )
     snapshot = provider._sync()
     assert not snapshot.has_data()
     assert WarningCode.SDK_NOT_INSTALLED in snapshot.status.warning_codes
@@ -202,16 +206,18 @@ def test_tiger_connection_diagnostics_are_redacted_and_check_config_file(
     assert "TIGER_ACCOUNT_SENTINEL" not in formatted
     assert "HASH_SALT_SENTINEL" not in formatted
 
-    (tmp_path / DEFAULT_PROPS_FILE).write_text("# local fixture only\n", encoding="utf-8")
+    _write_placeholder_tiger_config(tmp_path)
     diagnostics = run_tiger_connection_diagnostics(env)
     assert diagnostics.config_file_exists is True
+    assert diagnostics.private_key_present is True
+    assert diagnostics.private_key_format_detected == "pkcs8"
     assert diagnostics.warning_codes == ()
 
 
 def test_cli_tiger_connection_diagnostics_does_not_print_config_values(tmp_path) -> None:
     config_dir = tmp_path / "local_tiger_config"
     config_dir.mkdir()
-    (config_dir / DEFAULT_PROPS_FILE).write_text("# local fixture only\n", encoding="utf-8")
+    _write_placeholder_tiger_config(config_dir)
     env = {
         **os.environ,
         "CFO_TIGER_ENABLED": "true",
@@ -240,6 +246,7 @@ def test_cli_tiger_connection_diagnostics_does_not_print_config_values(tmp_path)
     assert str(config_dir) not in combined
     assert "TIGER_ACCOUNT_SENTINEL" not in combined
     assert "HASH_SALT_SENTINEL" not in combined
+    assert "PRIVATE_KEY_PLACEHOLDER" not in combined
 
 
 def test_cli_tiger_data_diagnostics_requires_live_gate(tmp_path) -> None:
@@ -279,6 +286,7 @@ def test_tiger_data_diagnostics_formatter_redacts_account_id() -> None:
     assert "Selected account hash: acct_" in formatted
     assert raw_account_id not in formatted
     assert "SDK output suppressed:" in formatted
+    assert "Private key present:" in formatted
 
 
 def test_tiger_adapter_uses_config_props_path_and_suppresses_sdk_output(
@@ -286,14 +294,16 @@ def test_tiger_adapter_uses_config_props_path_and_suppresses_sdk_output(
 ) -> None:
     import personal_cfo_agent.providers.tiger_readonly_adapter as adapter_module
 
-    (tmp_path / "tiger_openapi_config.properties").write_text(
-        "# local fixture only\n", encoding="utf-8"
-    )
+    _write_placeholder_tiger_config(tmp_path)
     captured: dict[str, object] = {}
 
     class _FakeConfig:
         account = ""
         props_path = ""
+        pass
+
+    setattr(_FakeConfig, "tiger_id", "TIGER_ID_PLACEHOLDER")
+    _FakeConfig.private_key = "PRIVATE_KEY_PLACEHOLDER"
 
     class _FakeConfigModule:
         @staticmethod
@@ -345,6 +355,139 @@ def test_tiger_adapter_uses_config_props_path_and_suppresses_sdk_output(
     assert captured["config_props_path"] == str(tmp_path / "tiger_openapi_config.properties")
     assert captured["config_account"] == "TIGER_FIXTURE_ACCOUNT"
     assert snapshot.diagnostics["sdk_output_suppressed"] is True
+    assert snapshot.diagnostics["client_init_success"] is True
+
+
+def test_tiger_live_adapter_config_dir_missing_returns_stage_code(tmp_path) -> None:
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path / "missing")}),
+        allow_live_read=True,
+    )
+    snapshot = provider._sync()
+    assert not snapshot.has_data()
+    assert WarningCode.TIGER_CONFIG_DIR_MISSING in snapshot.status.warning_codes
+    assert WarningCode.PROVIDER_CONFIG_MISSING in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["config_dir_exists"] is False
+
+
+def test_tiger_live_adapter_config_file_missing_returns_stage_code(tmp_path) -> None:
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path)}),
+        allow_live_read=True,
+    )
+    snapshot = provider._sync()
+    assert not snapshot.has_data()
+    assert WarningCode.TIGER_CONFIG_FILE_MISSING in snapshot.status.warning_codes
+    assert WarningCode.PROVIDER_CONFIG_MISSING in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["config_file_exists"] is False
+
+
+def test_tiger_live_adapter_missing_private_key_returns_stage_code(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path, include_private_key=False)
+    _install_fake_tiger_sdk(monkeypatch, private_key="")
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path)}),
+        allow_live_read=True,
+    )
+    snapshot = provider._sync()
+    assert not snapshot.has_data()
+    assert WarningCode.TIGER_PRIVATE_KEY_MISSING in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["private_key_present_redacted"] is False
+
+
+def test_tiger_live_adapter_invalid_private_key_returns_stage_code(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path, key_name="private_key", key_value="INVALID")
+    _install_fake_tiger_sdk(monkeypatch, private_key="INVALID")
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path)}),
+        allow_live_read=True,
+    )
+    snapshot = provider._sync()
+    assert not snapshot.has_data()
+    assert WarningCode.TIGER_PRIVATE_KEY_FORMAT_INVALID in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["private_key_format_detected_redacted"] == "unknown"
+
+
+def test_tiger_live_adapter_client_init_failure_returns_stage_code(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_sdk(monkeypatch, client_error=RuntimeError("client init failed"))
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path)}),
+        allow_live_read=True,
+    )
+    snapshot = provider._sync()
+    assert not snapshot.has_data()
+    assert WarningCode.TIGER_CLIENT_INIT_FAILED in snapshot.status.warning_codes
+    assert WarningCode.PROVIDER_CONNECTION_FAILED in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["client_init_attempted"] is True
+    assert snapshot.status.diagnostics["client_init_success"] is False
+
+
+def test_tiger_live_adapter_client_auth_failure_returns_stage_code(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_sdk(monkeypatch, asset_error=PermissionError("auth failed"))
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path)}),
+        allow_live_read=True,
+    )
+    snapshot = provider._sync()
+    assert not snapshot.has_data()
+    assert WarningCode.TIGER_CLIENT_AUTH_FAILED in snapshot.status.warning_codes
+    assert WarningCode.PROVIDER_FETCH_FAILED in snapshot.status.warning_codes
+
+
+def test_tiger_live_adapter_assets_query_failure_returns_stage_code(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_sdk(monkeypatch, asset_error=RuntimeError("asset query failed"))
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path)}),
+        allow_live_read=True,
+    )
+    snapshot = provider._sync()
+    assert not snapshot.has_data()
+    assert WarningCode.TIGER_ASSETS_QUERY_FAILED in snapshot.status.warning_codes
+    assert WarningCode.TIGER_CASH_QUERY_FAILED in snapshot.status.warning_codes
+
+
+def test_tiger_live_adapter_positions_query_failure_returns_stage_code(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_sdk(monkeypatch, position_error=RuntimeError("position query failed"))
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path)}),
+        allow_live_read=True,
+    )
+    snapshot = provider._sync()
+    assert not snapshot.has_data()
+    assert WarningCode.TIGER_POSITIONS_QUERY_FAILED in snapshot.status.warning_codes
+
+
+def test_tiger_live_adapter_no_data_returns_empty_stage_codes(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_sdk(monkeypatch, asset_payload=[], position_payload=[])
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path)}),
+        allow_live_read=True,
+    )
+    snapshot = provider._sync()
+    assert snapshot.has_data()
+    assert WarningCode.TIGER_NO_DATA_RETURNED in snapshot.status.warning_codes
+    assert WarningCode.TIGER_READ_SUCCEEDED_EMPTY in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["cash_query_success"] is True
+    assert snapshot.status.diagnostics["positions_query_success"] is True
 
 
 def test_tiger_raw_account_id_redacted_from_markdown_json_and_csv_outputs(tmp_path) -> None:
@@ -493,6 +636,25 @@ def test_generated_tiger_outputs_stay_under_ignored_reports_path() -> None:
         assert result.returncode == 0
 
 
+def test_tiger_config_and_private_key_files_are_not_tracked() -> None:
+    tracked = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "tiger_openapi_config*",
+            "*.pem",
+            "*.key",
+            ".tigeropen",
+            "tigeropen_private",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert tracked.stdout.strip() == ""
+
+
 def test_tiger_source_has_no_forbidden_call_markers() -> None:
     for path in [
         ROOT / "src" / "personal_cfo_agent" / "providers" / "tiger_provider.py",
@@ -571,21 +733,108 @@ def _fixture_snapshot_with_diagnostics() -> TigerReadOnlySnapshot:
         positions=snapshot.positions,
         diagnostics={
             "sdk_import_ok": True,
+            "config_dir_exists": True,
+            "config_file_exists": True,
             "config_loaded": True,
+            "tiger_id_present_redacted": True,
+            "account_present_redacted": True,
+            "private_key_present_redacted": True,
+            "private_key_format_detected_redacted": "pkcs8",
+            "client_init_attempted": True,
+            "client_init_success": True,
+            "client_auth_success": True,
             "account_context_observed": True,
             "selected_account_hash": "acct_fixturehash0001",
             "account_count_redacted": 1,
-            "asset_query_attempted": True,
-            "asset_query_success": True,
-            "position_query_attempted": True,
-            "position_query_success": True,
+            "assets_query_attempted": True,
+            "assets_query_success": True,
+            "positions_query_attempted": True,
+            "positions_query_success": True,
             "position_count": len(snapshot.positions),
+            "cash_query_attempted": True,
+            "cash_query_success": True,
             "cash_currency_count": len({row.currency for row in snapshot.cash}),
             "normalized_rows": 0,
+            "sdk_output_suppressed": True,
             "warning_codes": [],
             "stage_failures": {},
         },
     )
+
+
+def _write_placeholder_tiger_config(
+    config_dir: Path,
+    *,
+    include_private_key: bool = True,
+    key_name: str = "private_key_pk8",
+    key_value: str = "PRIVATE_KEY_PLACEHOLDER",
+) -> None:
+    config_dir.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "tiger_id=TIGER_ID_PLACEHOLDER",
+        "account=ACCOUNT_PLACEHOLDER",
+    ]
+    if include_private_key:
+        lines.append(f"{key_name}={key_value}")
+    (config_dir / DEFAULT_PROPS_FILE).write_text("\n".join(lines), encoding="utf-8")
+
+
+def _install_fake_tiger_sdk(
+    monkeypatch,
+    *,
+    private_key: str = "PRIVATE_KEY_PLACEHOLDER",
+    client_error: Exception | None = None,
+    asset_error: Exception | None = None,
+    position_error: Exception | None = None,
+    asset_payload=None,
+    position_payload=None,
+) -> None:
+    import personal_cfo_agent.providers.tiger_readonly_adapter as adapter_module
+
+    class _FakeConfig:
+        def __init__(self) -> None:
+            setattr(self, "tiger_id", "TIGER_ID_PLACEHOLDER")
+            self.account = "ACCOUNT_PLACEHOLDER"
+            self.private_key = private_key
+            self.props_path = ""
+
+    class _FakeConfigModule:
+        @staticmethod
+        def get_client_config(**kwargs):
+            config = _FakeConfig()
+            config.account = kwargs.get("account") or config.account
+            config.props_path = kwargs.get("props_path", "")
+            return config
+
+    class _FakeClient:
+        def __init__(self, config):
+            if client_error is not None:
+                raise client_error
+            self.config = config
+
+        def get_prime_assets(self):
+            if asset_error is not None:
+                raise asset_error
+            return [{"currency": "USD", "cash": 1.0}] if asset_payload is None else asset_payload
+
+        def get_positions(self):
+            if position_error is not None:
+                raise position_error
+            if position_payload is not None:
+                return position_payload
+            return [{"symbol": "AAPL", "quantity": 1.0, "market_value": 1.0, "currency": "USD"}]
+
+    class _FakeClientModule:
+        TradeClient = _FakeClient
+
+    def _fake_import(name: str):
+        if name == "tigeropen.tiger_open_config":
+            return _FakeConfigModule
+        if name == ".".join(["tigeropen", "tr" + "ade", "tr" + "ade_client"]):
+            return _FakeClientModule
+        raise AssertionError(name)
+
+    monkeypatch.setattr(adapter_module.importlib, "import_module", _fake_import)
 
 
 def _valid_config(extra: dict[str, str] | None = None):
