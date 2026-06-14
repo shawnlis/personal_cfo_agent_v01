@@ -119,6 +119,52 @@ Result:
 
 No Tiger ID, raw account, private key, config value, config path, `.env.local` value, or balance was printed in this committed record.
 
+## SDK Config Compatibility Probe
+
+Command:
+
+```powershell
+python .\scripts\personal_cfo_agent.py --provider tiger --sdk-config-probe
+```
+
+Purpose:
+
+- Diagnose TigerOpen SDK config-loading compatibility after config preflight passed but the prior supervised live attempt failed closed during SDK config load.
+- Test `props_path` modes without account data calls: `directory`, `file`, `explicit_props_path`, and `sdk_default`.
+- Report SDK config/client construction status with sanitized exception class/category only.
+
+Safety:
+
+- No account, position, cash, order, order preview, order modification/cancellation, cash transfer, or withdrawal API call is made by the probe.
+- No Tiger ID, raw account, private key, config contents, local config path, `.env.local` value, exact balance, screenshot, or cookie is printed or committed.
+
+Result:
+
+- Probe result: passed.
+- Props path modes tested: `directory`, `file`, `explicit_props_path`, `sdk_default`.
+- Working props path mode selected: `file`.
+- SDK import OK: yes.
+- Config file detected: yes.
+- Required keys present: Tiger ID yes, account yes, private key yes; all redacted.
+- Private key format category: `pkcs1_like`.
+- SDK config constructed: yes.
+- SDK client constructed: yes.
+- SDK exception class sanitized: `None`.
+- SDK exception category: `none`.
+- `directory` mode: config yes, client yes.
+- `file` mode: config yes, client yes.
+- `explicit_props_path` mode: config no, client no, sanitized exception class `TypeError`, category `unknown`.
+- `sdk_default` mode: config no, client no, category `required_key_missing`.
+- Probe warning codes: `TIGER_SDK_CONFIG_CONSTRUCTED`, `TIGER_SDK_CLIENT_CONSTRUCTED`.
+- Tiger account data APIs called: no.
+- Tiger order/cash-transfer APIs called: no.
+
+Adapter update:
+
+- The adapter now uses explicit `TigerOpenClientConfig` construction with exact properties-file `props_path` and dynamic-domain loading disabled for config construction.
+- The adapter no longer relies on the SDK helper path that failed with sanitized `TypeError`.
+- No account/position/cash live-read acceptance was attempted in this task.
+
 ## Connection Diagnostics Gate
 
 Command:

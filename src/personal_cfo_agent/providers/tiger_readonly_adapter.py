@@ -311,15 +311,25 @@ def _load_sdk() -> dict[str, Any]:
 
 def _build_config(sdk: dict[str, Any], config_dir: str, account_id: str) -> Any:
     config_module = sdk["config_module"]
+    config_cls = getattr(config_module, "TigerOpenClientConfig", None)
     get_config = getattr(config_module, "get_client_config", None)
     props_path = str(Path(config_dir) / DEFAULT_PROPS_FILE)
-    if callable(get_config):
+    if callable(config_cls):
         try:
-            config = get_config(account=account_id, props_path=props_path)
+            config = config_cls(enable_dynamic_domain=False, props_path=props_path)
+        except TypeError:
+            config = config_cls(props_path=props_path)
+    elif callable(get_config):
+        try:
+            config = get_config(
+                account=account_id,
+                enable_dynamic_domain=False,
+                props_path=props_path,
+            )
         except TypeError:
             config = get_config()
     else:
-        config = config_module.TigerOpenClientConfig()
+        raise TigerConnectionError("TigerOpen config class is unavailable")
     for attr_name, attr_value in {
         "account": account_id,
         "props_path": props_path,

@@ -70,6 +70,38 @@ This validates the local config shape without initializing a TigerOpen client, a
 
 Do not continue to a supervised live attempt if preflight warning codes include `TIGER_CONFIG_PREFLIGHT_FAILED`, `TIGER_CONFIG_FILE_TRACKED`, `TIGER_CONFIG_HISTORY_RISK`, or any missing-key/private-key warning.
 
+## SDK Config Compatibility Probe
+
+Run this after config preflight if TigerOpen config loading or client initialization needs diagnosis:
+
+```powershell
+python .\scripts\personal_cfo_agent.py --provider tiger --sdk-config-probe
+```
+
+This probe checks TigerOpen SDK config-loading compatibility without account data calls. It does not run a live read, call asset/position/cash APIs, place or preview orders, modify/cancel orders, transfer/withdraw cash, write reports, or print config values.
+
+The probe tests redacted config-loading modes:
+
+- `directory`: `props_path` points at `CFO_TIGER_CONFIG_DIR`.
+- `file`: `props_path` points at `<CFO_TIGER_CONFIG_DIR>\tiger_openapi_config.properties`.
+- `explicit_props_path`: SDK helper config construction with an explicit `props_path`.
+- `sdk_default`: SDK default config loading.
+
+It reports only:
+
+- SDK import status.
+- Redacted TigerOpen package path.
+- Modes tested and the selected working mode, if any.
+- Expected config filename.
+- Config file detected yes/no.
+- Required-key presence booleans for Tiger ID, account, and private key.
+- Private-key format category only.
+- SDK config/client construction status.
+- Sanitized exception class/category.
+- Warning codes.
+
+Do not paste screenshots, config contents, Tiger IDs, raw account IDs, private keys, tokens, `.env.local` values, or balances into docs or PR comments when using the probe.
+
 ## Connection Diagnostics
 
 Run this after readiness and config preflight, before any supervised live attempt:
@@ -143,5 +175,18 @@ Successful live reads use the existing normalized asset ledger schema and provid
 On the first v0.3.1 setup pass, `tigeropen` imported successfully and readiness passed. After pointing `CFO_TIGER_CONFIG_DIR` at the directory containing the local TigerOpen properties file, connection diagnostics passed with no warning codes.
 
 The config preflight command was added to diagnose local properties-file shape before TigerOpen client initialization. The current redacted preflight result is `TIGER_CONFIG_PREFLIGHT_OK`: the config file is outside the repository, untracked, readable, has no detected Git history risk, and reports private-key format category `pkcs1_like`. It does not run a live read and does not call Tiger account APIs.
+
+The SDK config compatibility probe was added after config preflight passed but the prior supervised live attempt failed closed during TigerOpen config load. The probe tests TigerOpen config-loading modes without account, position, cash, order, or transfer calls.
+
+Current redacted probe result:
+
+- Working props path mode: `file`.
+- SDK config constructed: yes.
+- SDK client constructed: yes.
+- Sanitized exception category: `none`.
+- Probe warning codes: `TIGER_SDK_CONFIG_CONSTRUCTED`, `TIGER_SDK_CLIENT_CONSTRUCTED`.
+- Account data APIs called by the probe: no.
+
+The adapter now uses explicit `TigerOpenClientConfig` construction with exact properties-file `props_path` and dynamic-domain loading disabled for config construction. It no longer relies on the SDK helper path that failed with sanitized `TypeError`.
 
 The supervised live read was retried once after client-initialization diagnostics were added. It failed closed during TigerOpen config load with `TIGER_CONFIG_LOAD_FAILED` and `PROVIDER_CONNECTION_FAILED`. Client initialization was not attempted. No asset query, position query, cash query, normalized rows, or report bundle was produced.

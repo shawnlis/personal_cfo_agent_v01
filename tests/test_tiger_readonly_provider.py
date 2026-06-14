@@ -15,6 +15,7 @@ from personal_cfo_agent.providers.tiger_connection_diagnostics import (
     DEFAULT_PROPS_FILE,
     run_tiger_config_preflight,
     run_tiger_connection_diagnostics,
+    run_tiger_sdk_config_probe,
 )
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
@@ -30,6 +31,7 @@ from personal_cfo_agent.runner import (
     _format_tiger_config_preflight,
     _format_tiger_connection_diagnostics,
     _format_tiger_data_diagnostics,
+    _format_tiger_sdk_config_probe,
     collect_provider_snapshots,
 )
 
@@ -478,6 +480,191 @@ def test_tiger_config_preflight_does_not_import_or_initialize_tigeropen(
         )
 
     assert diagnostics.warning_codes == (WarningCode.TIGER_CONFIG_PREFLIGHT_OK,)
+
+
+def test_cli_tiger_sdk_config_probe_flag_exists() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/personal_cfo_agent.py", "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "--sdk-config-probe" in result.stdout
+
+
+def test_tiger_sdk_config_probe_redacts_values_and_sanitizes_exceptions(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_probe_sdk(
+        monkeypatch,
+        fail_modes={"directory": RuntimeError("TIGER_SECRET_ACCOUNT_123456")},
+    )
+    diagnostics = run_tiger_sdk_config_probe(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(tmp_path),
+            "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        },
+        repo_root=ROOT,
+    )
+    formatted = "\n".join(_format_tiger_sdk_config_probe(diagnostics))
+
+    assert diagnostics.working_props_path_mode == "file"
+    assert diagnostics.sdk_config_constructed is True
+    assert "TIGER_SECRET_ACCOUNT_123456" not in formatted
+    assert "TIGER_ACCOUNT_SENTINEL" not in formatted
+    assert "PRIVATE_KEY_PLACEHOLDER" not in formatted
+
+
+def test_tiger_sdk_config_probe_does_not_call_account_data_apis(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    calls = _install_fake_tiger_probe_sdk(monkeypatch)
+    diagnostics = run_tiger_sdk_config_probe(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(tmp_path),
+            "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        },
+        repo_root=ROOT,
+    )
+
+    assert diagnostics.sdk_client_constructed is True
+    assert calls["asset"] == 0
+    assert calls["position"] == 0
+    assert calls["cash"] == 0
+
+
+def test_tiger_sdk_config_probe_records_props_path_mode_attempts(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_probe_sdk(monkeypatch)
+    diagnostics = run_tiger_sdk_config_probe(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(tmp_path),
+            "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        },
+        repo_root=ROOT,
+    )
+
+    assert diagnostics.props_path_modes_tested == (
+        "directory",
+        "file",
+        "explicit_props_path",
+        "sdk_default",
+    )
+    assert {result.mode for result in diagnostics.variant_results} == set(
+        diagnostics.props_path_modes_tested
+    )
+
+
+def test_tiger_sdk_config_probe_successful_file_mode_selects_file(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_probe_sdk(
+        monkeypatch,
+        fail_modes={"directory": RuntimeError("directory mode failed")},
+    )
+    diagnostics = run_tiger_sdk_config_probe(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(tmp_path),
+            "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        },
+        repo_root=ROOT,
+    )
+
+    assert diagnostics.working_props_path_mode == "file"
+    assert diagnostics.sdk_config_constructed is True
+
+
+def test_tiger_sdk_config_probe_successful_directory_mode_selects_directory(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_probe_sdk(
+        monkeypatch,
+        fail_modes={"file": RuntimeError("file mode failed")},
+    )
+    diagnostics = run_tiger_sdk_config_probe(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(tmp_path),
+            "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        },
+        repo_root=ROOT,
+    )
+
+    assert diagnostics.working_props_path_mode == "directory"
+    assert diagnostics.sdk_config_constructed is True
+
+
+def test_tiger_sdk_config_probe_all_failed_modes_return_stage_code(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_probe_sdk(
+        monkeypatch,
+        fail_modes={
+            "directory": RuntimeError("directory failed"),
+            "file": RuntimeError("file failed"),
+            "explicit_props_path": RuntimeError("explicit failed"),
+            "sdk_default": RuntimeError("default failed"),
+        },
+    )
+    diagnostics = run_tiger_sdk_config_probe(
+        {
+            "CFO_TIGER_ENABLED": "true",
+            "CFO_TIGER_CONFIG_DIR": str(tmp_path),
+            "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        },
+        repo_root=ROOT,
+    )
+
+    assert diagnostics.working_props_path_mode == "none"
+    assert diagnostics.sdk_config_constructed is False
+    assert WarningCode.TIGER_SDK_CONFIG_PROBE_FAILED in diagnostics.warning_codes
+
+
+def test_cli_tiger_sdk_config_probe_redacts_values_with_synthetic_config() -> None:
+    with tempfile.TemporaryDirectory(prefix="tiger_probe_") as raw_dir:
+        config_dir = Path(raw_dir) / "external_tiger_config"
+        _write_placeholder_tiger_config(config_dir)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "scripts/personal_cfo_agent.py",
+                "--provider",
+                "tiger",
+                "--sdk-config-probe",
+            ],
+            cwd=ROOT,
+            env={
+                **os.environ,
+                "CFO_TIGER_ENABLED": "true",
+                "CFO_TIGER_CONFIG_DIR": str(config_dir),
+                "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    combined = result.stdout + result.stderr
+
+    assert result.returncode == 0
+    assert "TigerOpen SDK config compatibility probe (values redacted)" in result.stdout
+    assert "Tiger account data APIs called: no" in result.stdout
+    assert "Tiger order/cash-transfer APIs called: no" in result.stdout
+    assert "TIGER_ACCOUNT_SENTINEL" not in combined
+    assert "PRIVATE_KEY_PLACEHOLDER" not in combined
 
 
 def test_cli_tiger_data_diagnostics_requires_live_gate(tmp_path) -> None:
@@ -1066,6 +1253,87 @@ def _install_fake_tiger_sdk(
         raise AssertionError(name)
 
     monkeypatch.setattr(adapter_module.importlib, "import_module", _fake_import)
+
+
+def _install_fake_tiger_probe_sdk(
+    monkeypatch,
+    *,
+    fail_modes: dict[str, Exception] | None = None,
+    client_error: Exception | None = None,
+) -> dict[str, int]:
+    import personal_cfo_agent.providers.tiger_connection_diagnostics as diag_module
+
+    failures = fail_modes or {}
+    calls = {"asset": 0, "position": 0, "cash": 0}
+
+    class _FakeConfig:
+        def __init__(self, *, enable_dynamic_domain=True, props_path=None):
+            self.props_path = str(props_path or "")
+            mode = _probe_mode_from_props_path(self.props_path)
+            if mode in failures:
+                raise failures[mode]
+            setattr(self, "tiger_id", "TIGER_ID_PLACEHOLDER")
+            self.account = "ACCOUNT_PLACEHOLDER"
+            self.private_key = "PRIVATE_KEY_PLACEHOLDER"
+            self.license = None
+            self._token = None
+
+        @property
+        def token(self):
+            return self._token
+
+    class _FakeConfigModule:
+        TigerOpenClientConfig = _FakeConfig
+
+        @staticmethod
+        def get_client_config(**kwargs):
+            if "explicit_props_path" in failures:
+                raise failures["explicit_props_path"]
+            return _FakeConfig(props_path=kwargs.get("props_path"))
+
+    class _FakeClient:
+        def __init__(self, config):
+            if client_error is not None:
+                raise client_error
+            self.config = config
+
+        def get_prime_assets(self):
+            calls["asset"] += 1
+            return []
+
+        def get_positions(self):
+            calls["position"] += 1
+            return []
+
+        def get_assets(self):
+            calls["cash"] += 1
+            return []
+
+    class _FakeClientModule:
+        TradeClient = _FakeClient
+
+    class _FakeTigerOpenModule:
+        __file__ = r"C:\Users\Lenovo\AppData\Roaming\Python\Python313\site-packages\tigeropen\__init__.py"
+
+    def _fake_import(name: str):
+        if name == "tigeropen":
+            return _FakeTigerOpenModule
+        if name == "tigeropen.tiger_open_config":
+            return _FakeConfigModule
+        if name == ".".join(["tigeropen", "tr" + "ade", "tr" + "ade_client"]):
+            return _FakeClientModule
+        raise AssertionError(name)
+
+    monkeypatch.setattr(diag_module.importlib, "import_module", _fake_import)
+    return calls
+
+
+def _probe_mode_from_props_path(props_path: str) -> str:
+    if not props_path:
+        return "sdk_default"
+    if props_path.endswith(DEFAULT_PROPS_FILE):
+        return "file"
+    return "directory"
 
 
 def _git(repo: Path, *args: str) -> None:

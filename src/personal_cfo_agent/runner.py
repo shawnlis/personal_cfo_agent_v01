@@ -44,8 +44,10 @@ from personal_cfo_agent.providers.ibkr_connection_diagnostics import (
 from personal_cfo_agent.providers.tiger_connection_diagnostics import (
     TigerConfigPreflight,
     TigerConnectionDiagnostics,
+    TigerSDKConfigProbe,
     run_tiger_config_preflight,
     run_tiger_connection_diagnostics,
+    run_tiger_sdk_config_probe,
 )
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
@@ -256,6 +258,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run redacted Tiger config preflight without TigerOpen client initialization.",
     )
     parser.add_argument(
+        "--sdk-config-probe",
+        action="store_true",
+        help="Run redacted TigerOpen SDK config compatibility probe without account data calls.",
+    )
+    parser.add_argument(
         "--ibkr-data-diagnostics",
         action="store_true",
         help="Print redacted IBKR live data-path diagnostics after a gated read.",
@@ -333,6 +340,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.validate_manual_snapshot is not None:
         return _validate_manual_snapshot_cli(args.validate_manual_snapshot)
+    if args.config_preflight and args.sdk_config_probe:
+        parser.error("--config-preflight and --sdk-config-probe cannot be combined")
     if args.config_preflight:
         if args.provider != "tiger":
             parser.error("--config-preflight requires --provider tiger")
@@ -343,6 +352,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "--config-preflight cannot be combined with --readiness-check or --connection-diagnostics"
             )
         return _tiger_config_preflight_cli()
+    if args.sdk_config_probe:
+        if args.provider != "tiger":
+            parser.error("--sdk-config-probe requires --provider tiger")
+        if args.allow_live_read:
+            parser.error("--sdk-config-probe cannot be combined with --allow-live-read")
+        if args.readiness_check or args.connection_diagnostics:
+            parser.error(
+                "--sdk-config-probe cannot be combined with --readiness-check or --connection-diagnostics"
+            )
+        return _tiger_sdk_config_probe_cli()
     if args.connection_diagnostics:
         if args.provider not in {"ibkr", "tiger"}:
             parser.error(
@@ -458,6 +477,15 @@ def _tiger_config_preflight_cli() -> int:
     return 1
 
 
+def _tiger_sdk_config_probe_cli() -> int:
+    diagnostics = run_tiger_sdk_config_probe(dict(os.environ))
+    for line in _format_tiger_sdk_config_probe(diagnostics):
+        print(line)
+    if diagnostics.sdk_config_constructed:
+        return 0
+    return 1
+
+
 def _format_ibkr_connection_diagnostics(
     diagnostics: IBKRConnectionDiagnostics,
 ) -> list[str]:
@@ -528,6 +556,48 @@ def _format_tiger_config_preflight(diagnostics: TigerConfigPreflight) -> list[st
         "TigerOpen client initialized: no",
         "Tiger account APIs called: no",
     ]
+
+
+def _format_tiger_sdk_config_probe(diagnostics: TigerSDKConfigProbe) -> list[str]:
+    warning_text = ", ".join(code.value for code in diagnostics.warning_codes) or "None"
+    required = diagnostics.required_keys_present_redacted
+    lines = [
+        "TigerOpen SDK config compatibility probe (values redacted)",
+        f"SDK import OK: {_yes_no(diagnostics.sdk_import_ok)}",
+        f"TigerOpen package path: {diagnostics.tigeropen_package_path}",
+        f"Props path modes tested: {', '.join(diagnostics.props_path_modes_tested)}",
+        f"Working props_path mode: {diagnostics.working_props_path_mode}",
+        f"Expected config filename: {diagnostics.expected_config_filename}",
+        f"Config file detected: {_yes_no(diagnostics.config_file_detected)}",
+        f"Required key tiger_id present: {_yes_no(bool(required.get('tiger_id')))}, redacted",
+        f"Required key account present: {_yes_no(bool(required.get('account')))}, redacted",
+        f"Required key private_key present: {_yes_no(bool(required.get('private_key')))}, redacted",
+        f"Private key format category: {diagnostics.private_key_format_category}",
+        f"SDK config constructed: {_yes_no(diagnostics.sdk_config_constructed)}",
+        f"SDK client constructed: {_yes_no(diagnostics.sdk_client_constructed)}",
+        f"SDK exception class sanitized: {diagnostics.sdk_exception_class_sanitized}",
+        f"SDK exception category: {diagnostics.sdk_exception_category}",
+    ]
+    for result in diagnostics.variant_results:
+        variant_warning_text = (
+            ", ".join(code.value for code in result.warning_codes) or "None"
+        )
+        lines.append(
+            "Mode "
+            f"{result.mode}: config={_yes_no(result.config_constructed)}; "
+            f"client={_yes_no(result.client_constructed)}; "
+            f"exception_class={result.exception_class_sanitized}; "
+            f"category={result.exception_category}; "
+            f"warning_codes={variant_warning_text}"
+        )
+    lines.extend(
+        [
+            f"Probe warning codes: {warning_text}",
+            "Tiger account data APIs called: no",
+            "Tiger order/cash-transfer APIs called: no",
+        ]
+    )
+    return lines
 
 
 def _format_ibkr_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
