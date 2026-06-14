@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import importlib
+import logging
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from typing import Any
 
@@ -51,10 +54,12 @@ class MoomooReadOnlyAdapter:
 
     def collect(self) -> MoomooReadOnlySnapshot:
         sdk = _load_sdk()
+        _quiet_sdk_logging(sdk)
         context = None
         source_timestamp = datetime.now(timezone.utc).isoformat()
         try:
-            context = sdk.OpenSecTradeContext(host=self.host, port=self.port)
+            with _suppress_sdk_console_output():
+                context = sdk.OpenSecTradeContext(host=self.host, port=self.port)
         except Exception as exc:  # pragma: no cover - exercised with live OpenD only
             diagnostics = _build_diagnostics(
                 connected_to_opend=False,
@@ -75,14 +80,36 @@ class MoomooReadOnlyAdapter:
             )
             raise MoomooConnectionError("Moomoo OpenD connection failed", diagnostics) from exc
 
+        account_ids: list[str] = []
+        account_list_seen = False
+        cash_rows: list[MoomooCashRow] = []
+        cash_seen = False
+        position_rows: list[MoomooPositionRow] = []
+        positions_seen = False
         try:
-            account_ids, account_list_seen = self._collect_account_ids(context, sdk)
-            cash_rows, cash_seen = self._collect_cash(context, sdk, source_timestamp)
-            position_rows, positions_seen = self._collect_positions(
-                context, sdk, source_timestamp
+            with _suppress_sdk_console_output():
+                account_ids, account_list_seen = self._collect_account_ids(context, sdk)
+                cash_rows, cash_seen = self._collect_cash(context, sdk, source_timestamp)
+                position_rows, positions_seen = self._collect_positions(
+                    context, sdk, source_timestamp
+                )
+        except MoomooFetchError as exc:
+            if exc.diagnostics is not None:
+                raise
+            diagnostics = _build_diagnostics(
+                connected_to_opend=True,
+                connection_established=True,
+                account_list_seen=account_list_seen,
+                account_count=len(account_ids),
+                positions_seen=positions_seen,
+                position_count=len(position_rows),
+                cash_seen=cash_seen,
+                cash_currency_count=len({row.currency for row in cash_rows if row.currency}),
+                normalized_row_count=len(cash_rows) + len(position_rows),
+                timeout_seconds=self.timeout_seconds,
+                warning_codes=[WarningCode.PROVIDER_FETCH_FAILED],
             )
-        except MoomooFetchError:
-            raise
+            raise MoomooFetchError("Moomoo read requests failed", diagnostics) from exc
         except Exception as exc:  # pragma: no cover - exercised with live OpenD only
             diagnostics = _build_diagnostics(
                 connected_to_opend=True,
@@ -104,7 +131,8 @@ class MoomooReadOnlyAdapter:
         finally:
             close = getattr(context, "close", None)
             if callable(close):
-                close()
+                with _suppress_sdk_console_output():
+                    close()
 
         currencies = [row.currency for row in cash_rows if row.currency]
         account_currency = currencies[0] if currencies else None
@@ -225,6 +253,28 @@ def _load_sdk() -> Any:
         return importlib.import_module("futu")
     except ImportError as exc:
         raise MoomooSDKNotInstalledError("futu is not installed") from exc
+
+
+def _quiet_sdk_logging(sdk: Any) -> None:
+    logger = getattr(
+        getattr(getattr(sdk, "common", None), "ft_logger", None),
+        "logger",
+        None,
+    )
+    if logger is None:
+        return
+    for attr in ("console_level", "file_level"):
+        try:
+            setattr(logger, attr, logging.WARNING)
+        except Exception:
+            continue
+
+
+@contextmanager
+def _suppress_sdk_console_output():
+    sink = io.StringIO()
+    with redirect_stdout(sink), redirect_stderr(sink):
+        yield
 
 
 def _first_callable(context: Any, names: list[str]) -> Any | None:

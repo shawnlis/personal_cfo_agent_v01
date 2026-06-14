@@ -350,6 +350,91 @@ def test_moomoo_fetch_failure_returns_warning_code_without_crashing() -> None:
     assert WarningCode.PROVIDER_FETCH_FAILED in snapshot.status.warning_codes
 
 
+def test_moomoo_live_adapter_suppresses_sdk_console_output(monkeypatch, capsys) -> None:
+    import personal_cfo_agent.providers.moomoo_readonly_adapter as adapter_module
+
+    class _NoisyLogger:
+        console_level = 20
+        file_level = 10
+
+    class _FakeFtLogger:
+        logger = _NoisyLogger()
+
+    class _FakeCommon:
+        ft_logger = _FakeFtLogger()
+
+    class _FakeTrdEnv:
+        REAL = "REAL"
+
+    class _NoisyContext:
+        def __init__(self, *, host: str, port: int) -> None:
+            print(f"raw host={host} port={port} user_id=SDK_USER_ID_PLACEHOLDER")
+
+        def acc_list_query(self):
+            print("raw account id MOOMOO_TEST_ACCOUNT_SENTINEL")
+            return 0, [{"acc_id": "MOOMOO_TEST_ACCOUNT_SENTINEL"}]
+
+        def accinfo_query(self, *, trd_env):
+            print("exact balance SHOULD_NOT_APPEAR")
+            return 0, [{"currency": "USD", "cash": 10.0}]
+
+        def position_list_query(self, *, trd_env):
+            print("raw position payload")
+            return 0, []
+
+        def close(self) -> None:
+            print("disconnect user_id=SDK_USER_ID_PLACEHOLDER")
+
+    class _FakeSdk:
+        common = _FakeCommon()
+        RET_OK = 0
+        TrdEnv = _FakeTrdEnv()
+        OpenSecTradeContext = _NoisyContext
+
+    monkeypatch.setattr(adapter_module.importlib, "import_module", lambda name: _FakeSdk)
+    provider = MoomooProvider(_valid_config(), allow_live_read=True)
+
+    snapshot = provider._sync()
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+
+    assert snapshot.has_data()
+    assert combined == ""
+    assert _FakeSdk.common.ft_logger.logger.console_level == 30
+    assert _FakeSdk.common.ft_logger.logger.file_level == 30
+
+
+def test_moomoo_live_adapter_fetch_failure_keeps_redacted_diagnostics(
+    monkeypatch,
+) -> None:
+    import personal_cfo_agent.providers.moomoo_readonly_adapter as adapter_module
+
+    class _FakeContext:
+        def __init__(self, *, host: str, port: int) -> None:
+            pass
+
+        def acc_list_query(self):
+            return 1, "raw account id MOOMOO_TEST_ACCOUNT_SENTINEL"
+
+        def close(self) -> None:
+            pass
+
+    class _FakeSdk:
+        RET_OK = 0
+        OpenSecTradeContext = _FakeContext
+
+    monkeypatch.setattr(adapter_module.importlib, "import_module", lambda name: _FakeSdk)
+    provider = MoomooProvider(_valid_config(), allow_live_read=True)
+
+    snapshot = provider._sync()
+
+    assert not snapshot.has_data()
+    assert WarningCode.PROVIDER_FETCH_FAILED in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["connected_to_opend"] is True
+    assert snapshot.status.diagnostics["connection_established"] is True
+    assert snapshot.status.diagnostics["warning_codes"] == ["PROVIDER_FETCH_FAILED"]
+
+
 def test_provider_mode_required_for_moomoo_live_gate() -> None:
     snapshots = collect_provider_snapshots(
         RuntimeConfig(env=_valid_env(), allow_live_read=True, provider="all")
