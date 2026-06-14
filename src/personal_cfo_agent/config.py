@@ -19,6 +19,7 @@ class RuntimeConfig:
     provider: str = "all"
     readiness_check: bool = False
     ibkr_data_diagnostics: bool = False
+    tiger_data_diagnostics: bool = False
     manual_snapshot_path: Path | None = None
     dashboard: bool = False
     dashboard_assumptions_path: Path | None = None

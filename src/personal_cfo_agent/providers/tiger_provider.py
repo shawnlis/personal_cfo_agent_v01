@@ -16,6 +16,7 @@ from personal_cfo_agent.providers.tiger_models import TigerReadOnlySnapshot
 from personal_cfo_agent.providers.tiger_readonly_adapter import (
     TigerConnectionError,
     TigerFetchError,
+    TigerReadError,
     TigerReadOnlyAdapter,
     TigerSDKNotInstalledError,
 )
@@ -61,21 +62,45 @@ class TigerProvider(ProviderBase):
         adapter = self._live_adapter or self._build_adapter()
         try:
             self._snapshot = adapter.collect()
-        except TigerSDKNotInstalledError:
-            self.warning_codes = _dedupe([*self.warning_codes, WarningCode.SDK_NOT_INSTALLED])
-            return False
-        except TigerConnectionError:
+        except TigerSDKNotInstalledError as exc:
+            self.diagnostics = _diagnostics_from_error(exc)
             self.warning_codes = _dedupe(
-                [*self.warning_codes, WarningCode.PROVIDER_CONNECTION_FAILED]
+                [
+                    *self.warning_codes,
+                    *_warning_codes_from_diagnostics(self.diagnostics),
+                    WarningCode.SDK_NOT_INSTALLED,
+                ]
             )
             return False
-        except TigerFetchError:
-            self.warning_codes = _dedupe([*self.warning_codes, WarningCode.PROVIDER_FETCH_FAILED])
+        except TigerConnectionError as exc:
+            self.diagnostics = _diagnostics_from_error(exc)
+            self.warning_codes = _dedupe(
+                [
+                    *self.warning_codes,
+                    *_warning_codes_from_diagnostics(self.diagnostics),
+                    WarningCode.PROVIDER_CONNECTION_FAILED,
+                ]
+            )
             return False
-        except Exception:
+        except TigerFetchError as exc:
+            self.diagnostics = _diagnostics_from_error(exc)
+            self.warning_codes = _dedupe(
+                [
+                    *self.warning_codes,
+                    *_warning_codes_from_diagnostics(self.diagnostics),
+                    WarningCode.PROVIDER_FETCH_FAILED,
+                ]
+            )
+            return False
+        except Exception as exc:
+            self.diagnostics = _diagnostics_from_error(exc)
             self.warning_codes = _dedupe([*self.warning_codes, WarningCode.PROVIDER_FETCH_FAILED])
             return False
 
+        self.diagnostics = dict(self._snapshot.diagnostics)
+        self.warning_codes = _dedupe(
+            [*self.warning_codes, *_warning_codes_from_diagnostics(self.diagnostics)]
+        )
         self.provider_level = ProviderLevel.LEVEL_2
         self.connection_mode = ConnectionMode.LIVE_READ
         return True
@@ -142,6 +167,7 @@ class TigerProvider(ProviderBase):
         return TigerReadOnlyAdapter(
             config_dir=str(settings["CFO_TIGER_CONFIG_DIR"]),
             account_id=str(settings["CFO_TIGER_ACCOUNT"]),
+            account_hash_salt=settings.get("CFO_ACCOUNT_HASH_SALT"),
         )
 
     def _require_snapshot(self) -> TigerReadOnlySnapshot:
@@ -158,3 +184,22 @@ def _dedupe(codes: list[WarningCode]) -> list[WarningCode]:
             result.append(code)
             seen.add(code)
     return result
+
+
+def _diagnostics_from_error(exc: BaseException | None = None) -> dict[str, object]:
+    if isinstance(exc, TigerReadError) and exc.diagnostics is not None:
+        return exc.diagnostics.to_redacted_dict()
+    return {}
+
+
+def _warning_codes_from_diagnostics(diagnostics: dict[str, object]) -> list[WarningCode]:
+    raw_codes = diagnostics.get("warning_codes") if diagnostics else []
+    codes: list[WarningCode] = []
+    if not isinstance(raw_codes, list):
+        return codes
+    for raw_code in raw_codes:
+        try:
+            codes.append(WarningCode(str(raw_code)))
+        except ValueError:
+            continue
+    return codes
