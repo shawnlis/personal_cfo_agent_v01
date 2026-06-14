@@ -24,13 +24,31 @@ python .\scripts\personal_cfo_agent.py `
   --out-dir .\reports\personal_cfo_agent\ibkr_v021_live_acceptance
 ```
 
-## Results
+## Attempt 1 Results
 
 - Readiness result: passed
 - Readiness warning codes: none
 - Live read attempted: yes
 - Live read success: no
 - Provider warning codes: `SDK_NOT_INSTALLED`
+- Accounts read: 0
+- Positions read: 0
+- Currencies seen: none
+- Output directory created: no
+- Output files created: none
+
+## Attempt 2 Results
+
+- Date/time: 2026-06-14T13:31:26+08:00
+- Python executable: `C:\Python313\python.exe`
+- Python version: 3.13.7
+- `ibapi` install status: installed with `python -m pip install ibapi`
+- `ibapi` import status: passed
+- Readiness result: passed
+- Readiness warning codes: none
+- Live read attempted: yes
+- Live read success: no
+- Provider warning codes: `PROVIDER_CONNECTION_FAILED`
 - Accounts read: 0
 - Positions read: 0
 - Currencies seen: none
@@ -55,6 +73,7 @@ python .\scripts\personal_cfo_agent.py `
 
 ## Known Limitations
 
-- IBKR live-read acceptance did not complete because the local IBKR SDK dependency was not installed in this environment.
+- Attempt 1 did not complete because the local IBKR SDK dependency was not installed in this environment.
+- Attempt 2 verified that `ibapi` imports, but the local TWS or IB Gateway API session was not reachable from the supervised live-read command.
 - No account, position, cash, balance, or currency data was collected.
 - A successful acceptance run still requires a manually started TWS or IB Gateway session, the explicit IBKR provider mode, `--allow-live-read`, and ignored local configuration.

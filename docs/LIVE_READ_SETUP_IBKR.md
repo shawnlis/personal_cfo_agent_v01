@@ -37,6 +37,16 @@ python .\scripts\personal_cfo_agent.py --provider ibkr --readiness-check
 
 This validates environment configuration only. It does not import `ibapi`, open a network connection, or write reports.
 
+## Local SDK Dependency
+
+IBKR live-read proof requires the local Python package `ibapi`:
+
+```powershell
+python -m pip install ibapi
+```
+
+Do not commit virtualenv folders, user site-packages, broker SDK caches, account exports, or generated report outputs. Installing `ibapi` does not bypass the live-read gates: `.env.local` or OS environment configuration, manually started TWS or IB Gateway, API access enabled in TWS or Gateway, explicit `--provider ibkr`, and explicit `--allow-live-read` are still required.
+
 ## Supervised Live Proof
 
 After manually starting TWS or IB Gateway:
