@@ -3,59 +3,160 @@
 from __future__ import annotations
 
 import importlib
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from personal_cfo_agent.models import WarningCode
+from personal_cfo_agent.normalizer import hash_account_id
 from personal_cfo_agent.providers.tiger_models import (
     TigerAccountRow,
     TigerCashRow,
     TigerPositionRow,
+    TigerReadDiagnostics,
     TigerReadOnlySnapshot,
 )
 
 
-class TigerSDKNotInstalledError(RuntimeError):
+class TigerReadError(RuntimeError):
+    def __init__(self, message: str, diagnostics: TigerReadDiagnostics | None = None) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
+class TigerSDKNotInstalledError(TigerReadError):
     pass
 
 
-class TigerConnectionError(RuntimeError):
+class TigerConnectionError(TigerReadError):
     pass
 
 
-class TigerFetchError(RuntimeError):
+class TigerFetchError(TigerReadError):
     pass
+
+
+@dataclass
+class _DiagnosticState:
+    sdk_import_ok: bool = False
+    config_loaded: bool = False
+    account_context_observed: bool = False
+    selected_account_hash: str = "not configured"
+    account_count_redacted: int = 0
+    asset_query_attempted: bool = False
+    asset_query_success: bool = False
+    position_query_attempted: bool = False
+    position_query_success: bool = False
+    position_count: int = 0
+    cash_currency_count: int = 0
+    warning_codes: list[WarningCode] = field(default_factory=list)
+    stage_failures: dict[str, str] = field(default_factory=dict)
+
+    def add_warning(self, code: WarningCode) -> None:
+        if code not in self.warning_codes:
+            self.warning_codes.append(code)
+
+    def fail(self, stage: str, summary: str, code: WarningCode) -> None:
+        self.stage_failures[stage] = summary
+        self.add_warning(code)
+
+    def to_diagnostics(self) -> TigerReadDiagnostics:
+        return TigerReadDiagnostics(
+            sdk_import_ok=self.sdk_import_ok,
+            config_loaded=self.config_loaded,
+            account_context_observed=self.account_context_observed,
+            selected_account_hash=self.selected_account_hash,
+            account_count_redacted=self.account_count_redacted,
+            asset_query_attempted=self.asset_query_attempted,
+            asset_query_success=self.asset_query_success,
+            position_query_attempted=self.position_query_attempted,
+            position_query_success=self.position_query_success,
+            position_count=self.position_count,
+            cash_currency_count=self.cash_currency_count,
+            warning_codes=tuple(self.warning_codes),
+            stage_failures=dict(self.stage_failures),
+        )
 
 
 class TigerReadOnlyAdapter:
     """Collects TigerOpen account data through a private read-only wrapper."""
 
-    def __init__(self, config_dir: str, account_id: str) -> None:
+    def __init__(
+        self, config_dir: str, account_id: str, account_hash_salt: str | None = None
+    ) -> None:
         self.config_dir = config_dir
         self.account_id = account_id
+        self.account_hash_salt = account_hash_salt
 
     def collect(self) -> TigerReadOnlySnapshot:
-        sdk = _load_sdk()
+        state = _DiagnosticState()
+        try:
+            sdk = _load_sdk()
+        except TigerSDKNotInstalledError as exc:
+            state.fail("sdk_import", "TigerOpen SDK import failed", WarningCode.SDK_NOT_INSTALLED)
+            raise TigerSDKNotInstalledError(str(exc), state.to_diagnostics()) from exc
+
+        state.sdk_import_ok = True
+        if self.account_id:
+            state.account_context_observed = True
+            state.account_count_redacted = 1
+            state.selected_account_hash = hash_account_id(
+                self.account_id, self.account_hash_salt
+            )
         source_timestamp = datetime.now(timezone.utc).isoformat()
         try:
             config = _build_config(sdk, self.config_dir, self.account_id)
             client = sdk["client_cls"](config)
+            state.config_loaded = True
         except Exception as exc:  # pragma: no cover - exercised with live TigerOpen only
-            raise TigerConnectionError(str(exc)) from exc
+            state.fail(
+                "config_load",
+                "TigerOpen config/client initialization failed",
+                WarningCode.PROVIDER_CONNECTION_FAILED,
+            )
+            raise TigerConnectionError(
+                "TigerOpen config/client initialization failed", state.to_diagnostics()
+            ) from exc
 
         try:
+            state.asset_query_attempted = True
             asset_payload = _call_first(client, ["get_prime_assets", "get_assets"])
+            state.asset_query_success = True
+        except TigerFetchError as exc:
+            state.fail("assets", "TigerOpen asset query failed", WarningCode.PROVIDER_FETCH_FAILED)
+            raise TigerFetchError(str(exc), state.to_diagnostics()) from exc
+        except Exception as exc:  # pragma: no cover - exercised with live TigerOpen only
+            state.fail("assets", "TigerOpen asset query failed", WarningCode.PROVIDER_FETCH_FAILED)
+            raise TigerFetchError("TigerOpen asset query failed", state.to_diagnostics()) from exc
+
+        try:
+            state.position_query_attempted = True
             position_payload = _call_first(
                 client, ["get_positions", "get_prime_positions", "get_positions_v2"]
             )
-        except TigerFetchError:
-            raise
+            state.position_query_success = True
+        except TigerFetchError as exc:
+            state.fail(
+                "positions",
+                "TigerOpen position query failed",
+                WarningCode.PROVIDER_FETCH_FAILED,
+            )
+            raise TigerFetchError(str(exc), state.to_diagnostics()) from exc
         except Exception as exc:  # pragma: no cover - exercised with live TigerOpen only
-            raise TigerFetchError(str(exc)) from exc
+            state.fail(
+                "positions",
+                "TigerOpen position query failed",
+                WarningCode.PROVIDER_FETCH_FAILED,
+            )
+            raise TigerFetchError("TigerOpen position query failed", state.to_diagnostics()) from exc
 
         cash_rows = _cash_rows(asset_payload, self.account_id, source_timestamp)
         position_rows = _position_rows(position_payload, self.account_id, source_timestamp)
+        state.cash_currency_count = len({row.currency for row in cash_rows})
+        state.position_count = len(position_rows)
         account_currency = cash_rows[0].currency if cash_rows else None
+        diagnostics = state.to_diagnostics().to_redacted_dict()
         return TigerReadOnlySnapshot(
             accounts=[
                 TigerAccountRow(
@@ -66,6 +167,7 @@ class TigerReadOnlyAdapter:
             ],
             cash=cash_rows,
             positions=position_rows,
+            diagnostics=diagnostics,
         )
 
 

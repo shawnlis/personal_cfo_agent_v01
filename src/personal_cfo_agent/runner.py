@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -36,6 +36,10 @@ from personal_cfo_agent.providers.ibkr_connection_diagnostics import (
     IBKRConnectionDiagnostics,
     run_ibkr_connection_diagnostics,
 )
+from personal_cfo_agent.providers.tiger_connection_diagnostics import (
+    TigerConnectionDiagnostics,
+    run_tiger_connection_diagnostics,
+)
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
 
@@ -58,6 +62,7 @@ def run(config: RuntimeConfig) -> RunnerResult:
     statuses = [snapshot.status for snapshot in snapshots]
     data_snapshots = [snapshot for snapshot in snapshots if snapshot.has_data()]
     normalized_assets = normalize_snapshots(data_snapshots)
+    statuses = _attach_diagnostic_normalized_rows(statuses, normalized_assets)
     if not normalized_assets:
         return RunnerResult(
             exit_code=0,
@@ -138,6 +143,23 @@ def collect_provider_snapshots(config: RuntimeConfig) -> list[RawProviderSnapsho
     return [provider._sync() for provider in providers]
 
 
+def _attach_diagnostic_normalized_rows(
+    statuses: list[ProviderStatus], normalized_assets: list[NormalizedAsset]
+) -> list[ProviderStatus]:
+    row_counts: dict[str, int] = {}
+    for row in normalized_assets:
+        row_counts[row.provider] = row_counts.get(row.provider, 0) + 1
+    updated: list[ProviderStatus] = []
+    for status in statuses:
+        if status.provider_name != "tiger" or not status.diagnostics:
+            updated.append(status)
+            continue
+        diagnostics = dict(status.diagnostics)
+        diagnostics["normalized_rows"] = row_counts.get(status.provider_name, 0)
+        updated.append(replace(status, diagnostics=diagnostics))
+    return updated
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Personal CFO Agent v0.1 runner")
     parser.add_argument(
@@ -160,6 +182,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--ibkr-data-diagnostics",
         action="store_true",
         help="Print redacted IBKR live data-path diagnostics after a gated read.",
+    )
+    parser.add_argument(
+        "--tiger-data-diagnostics",
+        action="store_true",
+        help="Print redacted Tiger live data-path diagnostics after a gated read.",
     )
     parser.add_argument(
         "--allow-live-read",
@@ -230,9 +257,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.validate_manual_snapshot is not None:
         return _validate_manual_snapshot_cli(args.validate_manual_snapshot)
     if args.connection_diagnostics:
-        if args.provider != "ibkr":
-            parser.error("--connection-diagnostics is currently implemented for --provider ibkr")
-        return _connection_diagnostics_cli()
+        if args.provider not in {"ibkr", "tiger"}:
+            parser.error(
+                "--connection-diagnostics is currently implemented for --provider ibkr or tiger"
+            )
+        return _connection_diagnostics_cli(args.provider)
     if args.ibkr_data_diagnostics:
         if args.provider != "ibkr":
             parser.error("--ibkr-data-diagnostics requires --provider ibkr")
@@ -240,6 +269,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--ibkr-data-diagnostics cannot be combined with --readiness-check")
         if not args.allow_live_read:
             parser.error("--ibkr-data-diagnostics requires --allow-live-read")
+    if args.tiger_data_diagnostics:
+        if args.provider != "tiger":
+            parser.error("--tiger-data-diagnostics requires --provider tiger")
+        if args.readiness_check:
+            parser.error("--tiger-data-diagnostics cannot be combined with --readiness-check")
+        if not args.allow_live_read:
+            parser.error("--tiger-data-diagnostics requires --allow-live-read")
     if args.readiness_check and args.provider not in {"ibkr", "moomoo", "tiger"}:
         parser.error(
             "--readiness-check is currently implemented for --provider ibkr, moomoo, or tiger"
@@ -258,6 +294,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             provider=args.provider,
             readiness_check=args.readiness_check,
             ibkr_data_diagnostics=args.ibkr_data_diagnostics,
+            tiger_data_diagnostics=args.tiger_data_diagnostics,
             manual_snapshot_path=args.manual_snapshot,
             dashboard=args.dashboard,
             dashboard_assumptions_path=args.dashboard_assumptions,
@@ -271,6 +308,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{status.provider_name}: {status.connection_mode.value}; warnings={warnings}")
         if args.ibkr_data_diagnostics and status.provider_name == "ibkr":
             for line in _format_ibkr_data_diagnostics(status.diagnostics):
+                print(line)
+        if args.tiger_data_diagnostics and status.provider_name == "tiger":
+            for line in _format_tiger_data_diagnostics(status.diagnostics):
                 print(line)
     if result.output_dir is None:
         print("No provider produced data; no reports generated.")
@@ -310,9 +350,14 @@ def _print_manual_validation_issues(issues, severity: str) -> None:
         print(f"{severity}: {issue.path}: {issue.code.value}: {issue.message}")
 
 
-def _connection_diagnostics_cli() -> int:
-    diagnostics = run_ibkr_connection_diagnostics(dict(os.environ))
-    for line in _format_ibkr_connection_diagnostics(diagnostics):
+def _connection_diagnostics_cli(provider: str) -> int:
+    if provider == "ibkr":
+        diagnostics = run_ibkr_connection_diagnostics(dict(os.environ))
+        for line in _format_ibkr_connection_diagnostics(diagnostics):
+            print(line)
+        return 0
+    diagnostics = run_tiger_connection_diagnostics(dict(os.environ))
+    for line in _format_tiger_connection_diagnostics(diagnostics):
         print(line)
     return 0
 
@@ -332,6 +377,24 @@ def _format_ibkr_connection_diagnostics(
         f"Python executable: {diagnostics.python_executable}",
         f"ibapi import status: {'OK' if diagnostics.ibapi_import_ok else 'MISSING'}",
         f"TCP socket reachable host/port: {_yes_no(diagnostics.tcp_socket_reachable)}",
+        f"diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _format_tiger_connection_diagnostics(
+    diagnostics: TigerConnectionDiagnostics,
+) -> list[str]:
+    warning_text = ", ".join(code.value for code in diagnostics.warning_codes) or "None"
+    return [
+        "Tiger connection diagnostics (values redacted)",
+        f"CFO_TIGER_ENABLED present and true: {_yes_no(diagnostics.enabled_present and diagnostics.enabled_true)}",
+        f"CFO_TIGER_CONFIG_DIR present: {_yes_no(diagnostics.config_dir_present)}",
+        f"Config dir exists: {_yes_no(diagnostics.config_dir_exists)}",
+        f"Config file exists: {_yes_no(diagnostics.config_file_exists)}",
+        f"CFO_TIGER_ACCOUNT present: {_yes_no(diagnostics.account_present)}, redacted",
+        f"CFO_ACCOUNT_HASH_SALT present: {_yes_no(diagnostics.hash_salt_present)}, redacted",
+        f"Python executable: {diagnostics.python_executable}",
+        f"tigeropen import status: {'OK' if diagnostics.tigeropen_import_ok else 'MISSING'}",
         f"diagnostic warning codes: {warning_text}",
     ]
 
@@ -358,6 +421,37 @@ def _format_ibkr_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
         f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
         f"Timeout seconds: {diagnostics.get('timeout_seconds', 0)}",
         f"Data diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _format_tiger_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
+    if not diagnostics:
+        return ["Tiger data-path diagnostics (values redacted): unavailable"]
+    warning_codes = diagnostics.get("warning_codes") or []
+    warning_text = ", ".join(str(code) for code in warning_codes) or "None"
+    stage_failures = diagnostics.get("stage_failures") or {}
+    if isinstance(stage_failures, dict):
+        stage_text = ", ".join(
+            f"{key}={value}" for key, value in stage_failures.items()
+        ) or "None"
+    else:
+        stage_text = "unavailable"
+    return [
+        "Tiger data-path diagnostics (values redacted)",
+        f"SDK import OK: {_yes_no(bool(diagnostics.get('sdk_import_ok')))}",
+        f"Config loaded: {_yes_no(bool(diagnostics.get('config_loaded')))}",
+        f"Account context observed: {_yes_no(bool(diagnostics.get('account_context_observed')))}",
+        f"Selected account hash: {diagnostics.get('selected_account_hash', 'not configured')}",
+        f"Account count redacted: {diagnostics.get('account_count_redacted', 0)}",
+        f"Asset query attempted: {_yes_no(bool(diagnostics.get('asset_query_attempted')))}",
+        f"Asset query success: {_yes_no(bool(diagnostics.get('asset_query_success')))}",
+        f"Position query attempted: {_yes_no(bool(diagnostics.get('position_query_attempted')))}",
+        f"Position query success: {_yes_no(bool(diagnostics.get('position_query_success')))}",
+        f"Position count: {diagnostics.get('position_count', 0)}",
+        f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
+        f"Normalized rows: {diagnostics.get('normalized_rows', 0)}",
+        f"Data diagnostic warning codes: {warning_text}",
+        f"Stage failures: {stage_text}",
     ]
 
 

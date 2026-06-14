@@ -10,6 +10,10 @@ from pathlib import Path
 from personal_cfo_agent.config import RuntimeConfig, load_tiger_config
 from personal_cfo_agent.models import ConnectionMode, ProviderLevel, WarningCode
 from personal_cfo_agent.normalizer import normalize_snapshot
+from personal_cfo_agent.providers.tiger_connection_diagnostics import (
+    DEFAULT_PROPS_FILE,
+    run_tiger_connection_diagnostics,
+)
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
 from personal_cfo_agent.providers.tiger_models import (
@@ -19,7 +23,11 @@ from personal_cfo_agent.providers.tiger_models import (
     TigerReadOnlySnapshot,
 )
 from personal_cfo_agent.providers.tiger_provider import TigerProvider
-from personal_cfo_agent.runner import collect_provider_snapshots
+from personal_cfo_agent.runner import (
+    _format_tiger_connection_diagnostics,
+    _format_tiger_data_diagnostics,
+    collect_provider_snapshots,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,6 +104,10 @@ def test_missing_tigeropen_sdk_returns_sdk_not_installed(monkeypatch) -> None:
     snapshot = provider._sync()
     assert not snapshot.has_data()
     assert WarningCode.SDK_NOT_INSTALLED in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["sdk_import_ok"] is False
+    assert snapshot.status.diagnostics["stage_failures"] == {
+        "sdk_import": "TigerOpen SDK import failed"
+    }
 
 
 def test_tiger_provider_public_api_has_no_forbidden_methods() -> None:
@@ -165,6 +177,106 @@ def test_tiger_fetch_failure_returns_warning_code_without_crashing() -> None:
     snapshot = provider._sync()
     assert not snapshot.has_data()
     assert WarningCode.PROVIDER_FETCH_FAILED in snapshot.status.warning_codes
+
+
+def test_tiger_connection_diagnostics_are_redacted_and_check_config_file(
+    tmp_path, monkeypatch
+) -> None:
+    import personal_cfo_agent.providers.tiger_connection_diagnostics as diag_module
+
+    monkeypatch.setattr(diag_module.importlib, "import_module", lambda name: object())
+    env = {
+        "CFO_TIGER_ENABLED": "true",
+        "CFO_TIGER_CONFIG_DIR": str(tmp_path),
+        "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        "CFO_ACCOUNT_HASH_SALT": "HASH_SALT_SENTINEL",
+    }
+    diagnostics = run_tiger_connection_diagnostics(env)
+    formatted = "\n".join(_format_tiger_connection_diagnostics(diagnostics))
+
+    assert diagnostics.config_dir_exists is True
+    assert diagnostics.config_file_exists is False
+    assert WarningCode.PROVIDER_CONFIG_MISSING in diagnostics.warning_codes
+    assert str(tmp_path) not in formatted
+    assert "TIGER_ACCOUNT_SENTINEL" not in formatted
+    assert "HASH_SALT_SENTINEL" not in formatted
+
+    (tmp_path / DEFAULT_PROPS_FILE).write_text("# local fixture only\n", encoding="utf-8")
+    diagnostics = run_tiger_connection_diagnostics(env)
+    assert diagnostics.config_file_exists is True
+    assert diagnostics.warning_codes == ()
+
+
+def test_cli_tiger_connection_diagnostics_does_not_print_config_values(tmp_path) -> None:
+    config_dir = tmp_path / "local_tiger_config"
+    config_dir.mkdir()
+    (config_dir / DEFAULT_PROPS_FILE).write_text("# local fixture only\n", encoding="utf-8")
+    env = {
+        **os.environ,
+        "CFO_TIGER_ENABLED": "true",
+        "CFO_TIGER_CONFIG_DIR": str(config_dir),
+        "CFO_TIGER_ACCOUNT": "TIGER_ACCOUNT_SENTINEL",
+        "CFO_ACCOUNT_HASH_SALT": "HASH_SALT_SENTINEL",
+    }
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/personal_cfo_agent.py",
+            "--provider",
+            "tiger",
+            "--connection-diagnostics",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0
+    assert "Tiger connection diagnostics (values redacted)" in result.stdout
+    assert "Config file exists: yes" in result.stdout
+    assert str(config_dir) not in combined
+    assert "TIGER_ACCOUNT_SENTINEL" not in combined
+    assert "HASH_SALT_SENTINEL" not in combined
+
+
+def test_cli_tiger_data_diagnostics_requires_live_gate(tmp_path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/personal_cfo_agent.py",
+            "--provider",
+            "tiger",
+            "--tiger-data-diagnostics",
+            "--out-dir",
+            str(tmp_path / "reports"),
+        ],
+        cwd=ROOT,
+        env={**os.environ, **_valid_env(str(tmp_path / "missing_config"))},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "--tiger-data-diagnostics requires --allow-live-read" in combined
+    assert not (tmp_path / "reports").exists()
+
+
+def test_tiger_data_diagnostics_formatter_redacts_account_id() -> None:
+    raw_account_id = _fixture_snapshot().accounts[0].account_id
+    provider = TigerProvider(
+        _valid_config(),
+        allow_live_read=True,
+        live_adapter=_FakeAdapter(_fixture_snapshot_with_diagnostics()),
+    )
+    snapshot = provider._sync()
+    formatted = "\n".join(_format_tiger_data_diagnostics(snapshot.status.diagnostics))
+
+    assert snapshot.status.diagnostics["account_context_observed"] is True
+    assert "Selected account hash: acct_" in formatted
+    assert raw_account_id not in formatted
 
 
 def test_tiger_raw_account_id_redacted_from_markdown_json_and_csv_outputs(tmp_path) -> None:
@@ -297,16 +409,20 @@ def test_cli_tiger_live_read_refuses_without_explicit_flag(tmp_path) -> None:
 
 
 def test_generated_tiger_outputs_stay_under_ignored_reports_path() -> None:
-    report_path = "reports/personal_cfo_agent/tiger_v013_live_smoke/provider_sync_summary.json"
-    result = subprocess.run(
-        ["git", "check-ignore", "-v", report_path],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0
-    assert "reports/" in result.stdout
+    paths = [
+        "reports/personal_cfo_agent/tiger_v031_live_acceptance/provider_sync_summary.json",
+        "tiger_openapi_config.properties",
+        "tiger_openapi_token.properties",
+    ]
+    for path in paths:
+        result = subprocess.run(
+            ["git", "check-ignore", "-v", path],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0
 
 
 def test_tiger_source_has_no_forbidden_call_markers() -> None:
@@ -376,6 +492,31 @@ def _fixture_snapshot() -> TigerReadOnlySnapshot:
             )
             for row in payload["positions"]
         ],
+    )
+
+
+def _fixture_snapshot_with_diagnostics() -> TigerReadOnlySnapshot:
+    snapshot = _fixture_snapshot()
+    return TigerReadOnlySnapshot(
+        accounts=snapshot.accounts,
+        cash=snapshot.cash,
+        positions=snapshot.positions,
+        diagnostics={
+            "sdk_import_ok": True,
+            "config_loaded": True,
+            "account_context_observed": True,
+            "selected_account_hash": "acct_fixturehash0001",
+            "account_count_redacted": 1,
+            "asset_query_attempted": True,
+            "asset_query_success": True,
+            "position_query_attempted": True,
+            "position_query_success": True,
+            "position_count": len(snapshot.positions),
+            "cash_currency_count": len({row.currency for row in snapshot.cash}),
+            "normalized_rows": 0,
+            "warning_codes": [],
+            "stage_failures": {},
+        },
     )
 
 

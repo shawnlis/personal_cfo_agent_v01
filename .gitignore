@@ -20,6 +20,8 @@ scripts/*.local.ps1
 *.secret
 *.key
 *.pem
+tiger_openapi_config.properties
+tiger_openapi_token.properties
 .env
 .env.*
 !.env.example
