@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from personal_cfo_agent.models import WarningCode
+
 
 @dataclass(frozen=True)
 class IBKRAccountRow:
@@ -38,7 +40,40 @@ class IBKRPositionRow:
 
 
 @dataclass(frozen=True)
+class IBKRReadDiagnostics:
+    connected_to_socket: bool = False
+    api_handshake_seen: bool = False
+    managed_accounts_seen: bool = False
+    managed_account_count_redacted: int = 0
+    requested_account_hash: str | None = None
+    requested_account_seen: bool | None = None
+    positions_callback_seen: bool = False
+    position_count: int = 0
+    account_summary_callback_seen: bool = False
+    cash_currency_count: int = 0
+    timeout_seconds: float = 0.0
+    warning_codes: list[WarningCode] = field(default_factory=list)
+
+    def to_redacted_dict(self) -> dict[str, object]:
+        return {
+            "connected_to_socket": self.connected_to_socket,
+            "api_handshake_seen": self.api_handshake_seen,
+            "managed_accounts_seen": self.managed_accounts_seen,
+            "managed_account_count_redacted": self.managed_account_count_redacted,
+            "requested_account_hash": self.requested_account_hash,
+            "requested_account_seen": self.requested_account_seen,
+            "positions_callback_seen": self.positions_callback_seen,
+            "position_count": self.position_count,
+            "account_summary_callback_seen": self.account_summary_callback_seen,
+            "cash_currency_count": self.cash_currency_count,
+            "timeout_seconds": self.timeout_seconds,
+            "warning_codes": [code.value for code in self.warning_codes],
+        }
+
+
+@dataclass(frozen=True)
 class IBKRReadOnlySnapshot:
     accounts: list[IBKRAccountRow] = field(default_factory=list)
     cash: list[IBKRCashRow] = field(default_factory=list)
     positions: list[IBKRPositionRow] = field(default_factory=list)
+    diagnostics: IBKRReadDiagnostics = field(default_factory=IBKRReadDiagnostics)

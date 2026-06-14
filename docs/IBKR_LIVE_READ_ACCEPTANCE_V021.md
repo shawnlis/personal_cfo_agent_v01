@@ -24,6 +24,16 @@ python .\scripts\personal_cfo_agent.py `
   --out-dir .\reports\personal_cfo_agent\ibkr_v021_live_acceptance
 ```
 
+Supervised read-only live read with redacted data-path diagnostics:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --provider ibkr `
+  --allow-live-read `
+  --ibkr-data-diagnostics `
+  --out-dir .\reports\personal_cfo_agent\ibkr_v021_live_acceptance
+```
+
 ## Attempt 1 Results
 
 - Readiness result: passed
@@ -82,7 +92,7 @@ python .\scripts\personal_cfo_agent.py `
 - Secrets in generated outputs: not applicable; no outputs were generated
 - `.env.local` content in generated outputs: not applicable; no outputs were generated
 - Generated reports committed: no
-- Attempt 3 generated no output files; the configured reports path remains ignored by git
+- Attempts 3 and 4 generated no output files; the configured reports path remains ignored by git
 
 ## Safety Confirmation
 
@@ -107,3 +117,43 @@ python .\scripts\personal_cfo_agent.py `
 - Attempt 2 verified that `ibapi` imports, but the local TWS or IB Gateway API session was not reachable from the supervised live-read command.
 - Attempt 3 reached the read-only live connection path with no warning codes, but no account, position, cash, balance, or currency data was returned, so no reports were generated.
 - A successful acceptance run still requires a manually started TWS or IB Gateway session, the explicit IBKR provider mode, `--allow-live-read`, and ignored local configuration.
+
+## Attempt 4 Results
+
+- Date/time: 2026-06-14T14:14:59+08:00
+- Connection diagnostics before live read: socket reachable, `ibapi` import OK, warning codes none
+- Readiness result before live read: passed
+- Readiness warning codes: none
+- Live read attempted: yes, with `--provider ibkr --allow-live-read --ibkr-data-diagnostics`
+- Live read success: no accepted data proof; the read-only API handshake was observed, then the account filter failed closed
+- Provider connection mode: `live_read_only`
+- Provider warning codes: `IBKR_ACCOUNT_FILTER_MISMATCH`, `IBKR_NO_DATA_RETURNED`
+- Connected to socket: yes
+- API handshake observed: yes
+- Managed accounts callback observed: yes
+- Managed account count: 1, redacted
+- Requested account hash: present, exact hash omitted from this committed record
+- Requested account observed in managed accounts: no
+- Positions callback observed: no
+- Positions read: 0
+- Account summary callback observed: no
+- Cash currency count: 0
+- Currencies seen: none
+- Output path: `reports\personal_cfo_agent\ibkr_v021_live_acceptance`
+- Output directory created: no
+- Output files created: none
+
+## Current Acceptance Status
+
+- The local socket, SDK import, API handshake, and managed-account callback path are confirmed.
+- The v0.2.1 live-read proof is not accepted yet because the configured account filter did not match the managed-account list and no position or account-summary rows were read.
+- The next supervised acceptance attempt should first correct or remove the local `CFO_IBKR_ACCOUNT` filter, then rerun the readiness check, connection diagnostics, and one gated `--ibkr-data-diagnostics` read.
+- A successful acceptance still requires at least managed-account validation plus position callback data, account-summary/cash callback data, or both, with outputs ignored and redacted.
+
+## Zero-Row Diagnostic Causes
+
+- TWS or IB Gateway is reachable but the API session has not fully authorized the requested account.
+- `CFO_IBKR_ACCOUNT` is configured but does not match the managed-account callback list.
+- Managed accounts are returned but there are no readable positions or cash rows for the selected scope.
+- Account-summary or positions callbacks time out before returning end markers.
+- API settings or local account subscriptions do not permit the requested read-only account-summary or position stream.

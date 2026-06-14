@@ -157,6 +157,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run redacted provider connection diagnostics without live API messages.",
     )
     parser.add_argument(
+        "--ibkr-data-diagnostics",
+        action="store_true",
+        help="Print redacted IBKR live data-path diagnostics after a gated read.",
+    )
+    parser.add_argument(
         "--allow-live-read",
         action="store_true",
         help="Allow read-only live readiness checks for enabled API providers.",
@@ -228,6 +233,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.provider != "ibkr":
             parser.error("--connection-diagnostics is currently implemented for --provider ibkr")
         return _connection_diagnostics_cli()
+    if args.ibkr_data_diagnostics:
+        if args.provider != "ibkr":
+            parser.error("--ibkr-data-diagnostics requires --provider ibkr")
+        if args.readiness_check:
+            parser.error("--ibkr-data-diagnostics cannot be combined with --readiness-check")
+        if not args.allow_live_read:
+            parser.error("--ibkr-data-diagnostics requires --allow-live-read")
     if args.readiness_check and args.provider not in {"ibkr", "moomoo", "tiger"}:
         parser.error(
             "--readiness-check is currently implemented for --provider ibkr, moomoo, or tiger"
@@ -245,6 +257,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             allow_live_read=args.allow_live_read,
             provider=args.provider,
             readiness_check=args.readiness_check,
+            ibkr_data_diagnostics=args.ibkr_data_diagnostics,
             manual_snapshot_path=args.manual_snapshot,
             dashboard=args.dashboard,
             dashboard_assumptions_path=args.dashboard_assumptions,
@@ -256,6 +269,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     for status in result.statuses:
         warnings = ", ".join(code.value for code in status.warning_codes) or "None"
         print(f"{status.provider_name}: {status.connection_mode.value}; warnings={warnings}")
+        if args.ibkr_data_diagnostics and status.provider_name == "ibkr":
+            for line in _format_ibkr_data_diagnostics(status.diagnostics):
+                print(line)
     if result.output_dir is None:
         print("No provider produced data; no reports generated.")
     else:
@@ -317,6 +333,31 @@ def _format_ibkr_connection_diagnostics(
         f"ibapi import status: {'OK' if diagnostics.ibapi_import_ok else 'MISSING'}",
         f"TCP socket reachable host/port: {_yes_no(diagnostics.tcp_socket_reachable)}",
         f"diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _format_ibkr_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
+    if not diagnostics:
+        return ["IBKR data-path diagnostics (values redacted): unavailable"]
+    warning_codes = diagnostics.get("warning_codes") or []
+    warning_text = ", ".join(str(code) for code in warning_codes) or "None"
+    requested_hash = diagnostics.get("requested_account_hash") or "not configured"
+    requested_seen = diagnostics.get("requested_account_seen")
+    requested_seen_text = "not configured" if requested_seen is None else _yes_no(bool(requested_seen))
+    return [
+        "IBKR data-path diagnostics (values redacted)",
+        f"Connected to socket: {_yes_no(bool(diagnostics.get('connected_to_socket')))}",
+        f"API handshake observed: {_yes_no(bool(diagnostics.get('api_handshake_seen')))}",
+        f"Managed accounts callback observed: {_yes_no(bool(diagnostics.get('managed_accounts_seen')))}",
+        f"Managed account count redacted: {diagnostics.get('managed_account_count_redacted', 0)}",
+        f"Requested account hash: {requested_hash}",
+        f"Requested account observed in managed accounts: {requested_seen_text}",
+        f"Positions callback observed: {_yes_no(bool(diagnostics.get('positions_callback_seen')))}",
+        f"Position count: {diagnostics.get('position_count', 0)}",
+        f"Account summary callback observed: {_yes_no(bool(diagnostics.get('account_summary_callback_seen')))}",
+        f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
+        f"Timeout seconds: {diagnostics.get('timeout_seconds', 0)}",
+        f"Data diagnostic warning codes: {warning_text}",
     ]
 
 

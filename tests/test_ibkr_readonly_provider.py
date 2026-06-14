@@ -14,6 +14,7 @@ from personal_cfo_agent.providers.ibkr_models import (
     IBKRAccountRow,
     IBKRCashRow,
     IBKRPositionRow,
+    IBKRReadDiagnostics,
     IBKRReadOnlySnapshot,
 )
 from personal_cfo_agent.providers.ibkr_connection_diagnostics import (
@@ -22,6 +23,7 @@ from personal_cfo_agent.providers.ibkr_connection_diagnostics import (
 from personal_cfo_agent.providers.ibkr_provider import IBKRProvider
 from personal_cfo_agent.risk_engine import calculate_risk_summary
 from personal_cfo_agent.runner import collect_provider_snapshots
+from personal_cfo_agent.runner import _format_ibkr_data_diagnostics
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -169,6 +171,22 @@ def test_fetch_failure_returns_warning_code_without_crashing() -> None:
     assert WarningCode.PROVIDER_FETCH_FAILED in snapshot.status.warning_codes
 
 
+def test_handshake_timeout_returns_explicit_diagnostic_warning_codes() -> None:
+    provider = IBKRProvider(
+        _valid_config(),
+        allow_live_read=True,
+        live_adapter=_FailingAdapter("handshake"),
+    )
+    snapshot = provider._sync()
+
+    assert not snapshot.has_data()
+    assert WarningCode.IBKR_HANDSHAKE_TIMEOUT in snapshot.status.warning_codes
+    assert WarningCode.IBKR_CALLBACK_TIMEOUT in snapshot.status.warning_codes
+    assert WarningCode.PROVIDER_CONNECTION_FAILED in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["connected_to_socket"] is True
+    assert snapshot.status.diagnostics["api_handshake_seen"] is False
+
+
 def test_unexpected_adapter_failure_returns_fetch_warning_without_crashing() -> None:
     provider = IBKRProvider(
         _valid_config(),
@@ -178,6 +196,110 @@ def test_unexpected_adapter_failure_returns_fetch_warning_without_crashing() -> 
     snapshot = provider._sync()
     assert not snapshot.has_data()
     assert WarningCode.PROVIDER_FETCH_FAILED in snapshot.status.warning_codes
+
+
+def test_empty_managed_accounts_returns_explicit_warning_codes() -> None:
+    diagnostics = IBKRReadDiagnostics(
+        connected_to_socket=True,
+        api_handshake_seen=True,
+        managed_accounts_seen=True,
+        managed_account_count_redacted=0,
+        warning_codes=[
+            WarningCode.IBKR_MANAGED_ACCOUNTS_EMPTY,
+            WarningCode.IBKR_NO_DATA_RETURNED,
+        ],
+    )
+    provider = IBKRProvider(
+        _valid_config(),
+        allow_live_read=True,
+        live_adapter=_FakeAdapter(IBKRReadOnlySnapshot(diagnostics=diagnostics)),
+    )
+    snapshot = provider._sync()
+
+    assert WarningCode.IBKR_MANAGED_ACCOUNTS_EMPTY in snapshot.status.warning_codes
+    assert WarningCode.IBKR_NO_DATA_RETURNED in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["managed_accounts_seen"] is True
+    assert snapshot.status.diagnostics["managed_account_count_redacted"] == 0
+
+
+def test_successful_empty_callbacks_return_empty_read_warning_codes() -> None:
+    diagnostics = IBKRReadDiagnostics(
+        connected_to_socket=True,
+        api_handshake_seen=True,
+        managed_accounts_seen=True,
+        managed_account_count_redacted=1,
+        positions_callback_seen=False,
+        position_count=0,
+        account_summary_callback_seen=False,
+        cash_currency_count=0,
+        warning_codes=[
+            WarningCode.IBKR_POSITIONS_EMPTY,
+            WarningCode.IBKR_ACCOUNT_SUMMARY_EMPTY,
+            WarningCode.IBKR_NO_DATA_RETURNED,
+            WarningCode.IBKR_READ_SUCCEEDED_EMPTY,
+        ],
+    )
+    provider = IBKRProvider(
+        _valid_config(),
+        allow_live_read=True,
+        live_adapter=_FakeAdapter(IBKRReadOnlySnapshot(diagnostics=diagnostics)),
+    )
+    snapshot = provider._sync()
+
+    assert WarningCode.IBKR_POSITIONS_EMPTY in snapshot.status.warning_codes
+    assert WarningCode.IBKR_ACCOUNT_SUMMARY_EMPTY in snapshot.status.warning_codes
+    assert WarningCode.IBKR_READ_SUCCEEDED_EMPTY in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["position_count"] == 0
+    assert snapshot.status.diagnostics["cash_currency_count"] == 0
+
+
+def test_requested_account_mismatch_is_redacted_in_diagnostics() -> None:
+    raw_account_id = "DU7654321"
+    diagnostics = IBKRReadDiagnostics(
+        connected_to_socket=True,
+        api_handshake_seen=True,
+        managed_accounts_seen=True,
+        managed_account_count_redacted=1,
+        requested_account_hash="acct_redacted1234",
+        requested_account_seen=False,
+        warning_codes=[
+            WarningCode.IBKR_ACCOUNT_FILTER_MISMATCH,
+            WarningCode.IBKR_NO_DATA_RETURNED,
+        ],
+    )
+    provider = IBKRProvider(
+        _valid_config({"CFO_IBKR_ACCOUNT": raw_account_id}),
+        allow_live_read=True,
+        live_adapter=_FakeAdapter(IBKRReadOnlySnapshot(diagnostics=diagnostics)),
+    )
+    snapshot = provider._sync()
+    status_payload = json.dumps(snapshot.status.to_dict())
+
+    assert WarningCode.IBKR_ACCOUNT_FILTER_MISMATCH in snapshot.status.warning_codes
+    assert "acct_redacted1234" in status_payload
+    assert raw_account_id not in status_payload
+
+
+def test_stubbed_data_path_returns_not_implemented_warning_code() -> None:
+    diagnostics = IBKRReadDiagnostics(
+        connected_to_socket=True,
+        api_handshake_seen=True,
+        managed_accounts_seen=True,
+        managed_account_count_redacted=1,
+        warning_codes=[
+            WarningCode.IBKR_DATA_PATH_NOT_IMPLEMENTED,
+            WarningCode.IBKR_NO_DATA_RETURNED,
+        ],
+    )
+    provider = IBKRProvider(
+        _valid_config(),
+        allow_live_read=True,
+        live_adapter=_FakeAdapter(IBKRReadOnlySnapshot(diagnostics=diagnostics)),
+    )
+    snapshot = provider._sync()
+
+    assert WarningCode.IBKR_DATA_PATH_NOT_IMPLEMENTED in snapshot.status.warning_codes
+    assert WarningCode.IBKR_NO_DATA_RETURNED in snapshot.status.warning_codes
 
 
 def test_raw_account_id_redacted_from_markdown_json_and_csv_outputs(tmp_path) -> None:
@@ -295,6 +417,50 @@ def test_cli_connection_diagnostics_redacts_values_and_does_not_live_read(tmp_pa
         "REDACTED_SALT_PLACEHOLDER",
     ):
         assert raw_value not in combined
+
+
+def test_cli_data_diagnostics_requires_explicit_live_flag(tmp_path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "personal_cfo_agent.py"),
+            "--provider",
+            "ibkr",
+            "--ibkr-data-diagnostics",
+        ],
+        cwd=tmp_path,
+        env={**_without_cfo_env(), **_valid_env()},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "--ibkr-data-diagnostics requires --allow-live-read" in result.stderr
+    assert "Read-only IBKR sync only" not in result.stdout
+
+
+def test_ibkr_data_diagnostics_formatter_redacts_raw_values() -> None:
+    raw_account_id = "DU1234567"
+    diagnostics = IBKRReadDiagnostics(
+        connected_to_socket=True,
+        api_handshake_seen=True,
+        managed_accounts_seen=True,
+        managed_account_count_redacted=1,
+        requested_account_hash="acct_abc123",
+        requested_account_seen=True,
+        positions_callback_seen=True,
+        position_count=2,
+        account_summary_callback_seen=True,
+        cash_currency_count=1,
+        timeout_seconds=10.0,
+        warning_codes=[WarningCode.IBKR_POSITIONS_EMPTY],
+    ).to_redacted_dict()
+    text = "\n".join(_format_ibkr_data_diagnostics(diagnostics))
+
+    assert "acct_abc123" in text
+    assert raw_account_id not in text
+    assert "IBKR_POSITIONS_EMPTY" in text
 
 
 def test_connection_diagnostics_socket_unreachable_returns_warning(monkeypatch) -> None:
@@ -427,6 +593,19 @@ class _FailingAdapter:
             raise IBKRConnectionError("gateway unavailable")
         if self.mode == "fetch":
             raise IBKRFetchError("fetch timed out")
+        if self.mode == "handshake":
+            raise IBKRConnectionError(
+                "handshake timed out",
+                IBKRReadDiagnostics(
+                    connected_to_socket=True,
+                    api_handshake_seen=False,
+                    timeout_seconds=1.0,
+                    warning_codes=[
+                        WarningCode.IBKR_HANDSHAKE_TIMEOUT,
+                        WarningCode.IBKR_CALLBACK_TIMEOUT,
+                    ],
+                ),
+            )
         raise RuntimeError("unexpected adapter failure")
 
 

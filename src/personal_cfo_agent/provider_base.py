@@ -37,6 +37,7 @@ class ProviderBase(ABC):
         self.warning_codes: list[WarningCode] = list(config.warning_codes)
         self.raw_snapshot_path: str | None = None
         self.normalized_positions: list[dict[str, object]] = []
+        self.diagnostics: dict[str, object] = {}
 
     @abstractmethod
     def validate_config(self) -> list[WarningCode]:
@@ -79,6 +80,7 @@ class ProviderBase(ABC):
             warning_codes=self.warning_codes,
             raw_snapshot_path=self.raw_snapshot_path,
             normalized_positions=self.normalized_positions,
+            diagnostics=self.diagnostics,
         )
 
     def _sync(self) -> RawProviderSnapshot:

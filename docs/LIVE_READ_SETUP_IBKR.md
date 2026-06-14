@@ -73,6 +73,33 @@ Read-only IBKR sync only. No order methods are exposed.
 
 If `ibapi` is not installed, the provider fails closed with `SDK_NOT_INSTALLED`. If TWS or IB Gateway is not reachable, it fails closed with `PROVIDER_CONNECTION_FAILED`. If read requests fail or time out, it reports `PROVIDER_FETCH_FAILED`.
 
+## Redacted Data-Path Diagnostics
+
+When TWS or IB Gateway is reachable but no rows are returned, run one supervised diagnostic read:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --provider ibkr `
+  --allow-live-read `
+  --ibkr-data-diagnostics `
+  --out-dir .\reports\personal_cfo_agent\ibkr_v021_live_acceptance
+```
+
+This mode still requires all live-read gates and still prints the read-only warning. It reports only redacted data-path state:
+
+- socket connection observed
+- API handshake observed
+- managed-accounts callback observed and redacted count
+- requested account hash and whether that account was observed
+- positions callback observed and row count
+- account-summary callback observed and cash currency count
+- timeout seconds
+- diagnostic warning codes
+
+It does not print raw account IDs, balances, host, port, client ID, salts, passwords, or local environment values.
+
+Zero-row outcomes are not accepted as a successful live proof unless the diagnostic state explains them safely. Common causes include TWS or IB Gateway not fully authorizing the API session, no managed accounts returned, a configured account filter that does not match the managed-account list, callbacks timing out, or account-summary and position callbacks completing with no rows.
+
 ## Output Contract
 
 Successful live reads use the existing normalized asset ledger schema and provider sync summary. Raw account IDs are not written to outputs; `account_id_hash` is used instead.
