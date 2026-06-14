@@ -15,12 +15,34 @@ PS_TEMPLATE = ROOT / "scripts" / "run_ibkr_readonly_sync.ps1.template"
 def test_powershell_template_exists_and_contains_confirmation_prompts() -> None:
     text = PS_TEMPLATE.read_text(encoding="utf-8")
 
+    assert PS_TEMPLATE.name.endswith(".ps1.template")
+    assert not (ROOT / "scripts" / "run_ibkr_readonly_sync.ps1").exists()
     assert "Confirm TWS / IB Gateway is already open and API read-only mode is enabled" in text
     assert "Confirm this is read-only sync only" in text
     assert "python .\\scripts\\personal_cfo_agent.py --provider ibkr --connection-diagnostics" in text
     assert "python .\\scripts\\personal_cfo_agent.py --provider ibkr --readiness-check" in text
     assert "--allow-live-read" in text
     assert "--ibkr-data-diagnostics" in text
+
+
+def test_powershell_template_has_no_env_values_or_scheduler_creation() -> None:
+    text = PS_TEMPLATE.read_text(encoding="utf-8")
+
+    assert "CFO_IBKR_" not in text
+    assert "CFO_ACCOUNT_HASH_SALT" not in text
+    assert re.search(r"\b[A-Z]{1,5}[A-Z0-9_-]*\d{5,}\b", text) is None
+    assert "Register-ScheduledTask" not in text
+    assert "New-ScheduledTask" not in text
+    assert "schtasks" not in text.lower()
+
+
+def test_powershell_template_orders_checks_before_live_sync() -> None:
+    text = PS_TEMPLATE.read_text(encoding="utf-8")
+
+    diagnostics_index = text.index("--connection-diagnostics")
+    readiness_index = text.index("--readiness-check")
+    live_index = text.index("--allow-live-read")
+    assert diagnostics_index < readiness_index < live_index
 
 
 def test_python_wrapper_refuses_live_sync_without_allow_flag(monkeypatch, tmp_path) -> None:
@@ -49,6 +71,56 @@ def test_python_wrapper_refuses_live_sync_without_allow_flag(monkeypatch, tmp_pa
         ("--provider", "ibkr", "--connection-diagnostics"),
         ("--provider", "ibkr", "--readiness-check"),
     ]
+    assert not (tmp_path / "reports" / "personal_cfo_agent" / "ibkr_sync" / "20260101_000000").exists()
+
+
+def test_python_wrapper_dry_smoke_does_not_run_connection_diagnostics_or_live_read(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    commands: list[tuple[str, ...]] = []
+    command_cwds: list[Path | None] = []
+
+    def fake_run(args, cwd=None):
+        commands.append(tuple(args))
+        command_cwds.append(cwd)
+        return sync.CommandResult(
+            tuple(args),
+            0,
+            "Loaded local environment from .env.local; values redacted\n"
+            "ibkr: api_contract_stub; warnings=PROVIDER_DISABLED\n"
+            "No provider produced data; no reports generated.\n",
+            "",
+        )
+
+    index_path = tmp_path / "reports" / "personal_cfo_agent" / "ibkr_sync_dry_smoke" / "ibkr_sync_index.json"
+    monkeypatch.setattr(sync, "_run_agent_command", fake_run)
+    exit_code = sync.main(
+        [
+            "--dry-smoke",
+            "--run-id",
+            "20260101_000002",
+            "--out-root",
+            str(tmp_path / "reports" / "personal_cfo_agent" / "ibkr_sync_dry_smoke"),
+            "--index-path",
+            str(index_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert commands == [("--provider", "ibkr", "--readiness-check")]
+    assert command_cwds == [index_path.parent]
+    captured = capsys.readouterr()
+    assert ".env.local" not in captured.out
+    assert "local environment file" in captured.out
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    run = payload["runs"][-1]
+    assert run["diagnostics_status"] == "skipped_no_network"
+    assert run["live_read_attempted"] is False
+    assert "--connection-diagnostics" not in {part for command in commands for part in command}
+    assert "--allow-live-read" not in {part for command in commands for part in command}
+    assert not (
+        tmp_path / "reports" / "personal_cfo_agent" / "ibkr_sync_dry_smoke" / "20260101_000002"
+    ).exists()
 
 
 def test_python_wrapper_diagnostics_only_mode_without_network(monkeypatch, tmp_path) -> None:
@@ -93,6 +165,36 @@ def test_python_wrapper_diagnostics_only_mode_without_network(monkeypatch, tmp_p
     run = payload["runs"][-1]
     assert run["live_read_attempted"] is False
     assert run["warning_codes"] == ["PROVIDER_DISABLED"]
+
+
+def test_readiness_failure_prevents_live_read(monkeypatch, tmp_path) -> None:
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(args):
+        commands.append(tuple(args))
+        if "--connection-diagnostics" in args:
+            return sync.CommandResult(tuple(args), 0, "diagnostic warning codes: None\n", "")
+        return sync.CommandResult(tuple(args), 1, "", "readiness failed\n")
+
+    monkeypatch.setattr(sync, "_run_agent_command", fake_run)
+    exit_code = sync.main(
+        [
+            "--allow-live-read",
+            "--run-id",
+            "20260101_000003",
+            "--out-root",
+            str(tmp_path / "reports" / "personal_cfo_agent" / "ibkr_sync"),
+            "--index-path",
+            str(tmp_path / "reports" / "personal_cfo_agent" / "ibkr_sync" / "ibkr_sync_index.json"),
+        ]
+    )
+
+    assert exit_code == 1
+    assert commands == [
+        ("--provider", "ibkr", "--connection-diagnostics"),
+        ("--provider", "ibkr", "--readiness-check"),
+    ]
+    assert not (tmp_path / "reports" / "personal_cfo_agent" / "ibkr_sync" / "20260101_000003").exists()
 
 
 def test_sync_index_schema_is_stable(tmp_path) -> None:
@@ -177,6 +279,16 @@ def test_local_powershell_copy_remains_ignored() -> None:
     assert result.returncode == 0
 
 
+def test_standalone_sync_index_remains_ignored() -> None:
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", "--", "ibkr_sync_index.json"],
+        cwd=ROOT,
+        check=False,
+    )
+
+    assert result.returncode == 0
+
+
 def test_no_forbidden_order_or_cash_transfer_markers() -> None:
     combined_text = "\n".join(
         [
@@ -193,6 +305,12 @@ def test_no_forbidden_order_or_cash_transfer_markers() -> None:
         "preview_order",
         "transfer_cash",
         "withdraw_cash",
+        "buy",
+        "sell",
+        "trade",
+        "roll",
+        "open_position",
+        "close_position",
     )
 
     for marker in forbidden_markers:

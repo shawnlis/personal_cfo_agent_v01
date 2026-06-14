@@ -68,23 +68,40 @@ class CommandResult:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.dry_smoke and args.diagnostics_only:
+        parser.error("--dry-smoke cannot be combined with --diagnostics-only")
+    if args.dry_smoke and args.allow_live_read:
+        parser.error("--dry-smoke cannot be combined with --allow-live-read")
     run_id = args.run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
     if not _RUN_ID_PATTERN.fullmatch(run_id):
         parser.error("--run-id must use YYYYMMDD_HHMMSS")
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     output_root = _resolve_repo_path(args.out_root)
     output_dir = output_root / run_id
-    output_dir.mkdir(parents=True, exist_ok=True)
     index_path = _resolve_repo_path(args.index_path) if args.index_path else output_root / INDEX_FILENAME
 
-    diagnostics = _run_agent_command(["--provider", "ibkr", "--connection-diagnostics"])
-    _emit_command_output(diagnostics)
-    readiness = _run_agent_command(["--provider", "ibkr", "--readiness-check"])
+    diagnostics: CommandResult | None = None
+    diagnostics_warnings: list[str] = []
+    diagnostics_status = "skipped_no_network" if args.dry_smoke else "not_run"
+    if not args.dry_smoke:
+        diagnostics = _run_agent_command(["--provider", "ibkr", "--connection-diagnostics"])
+        _emit_command_output(diagnostics)
+        diagnostics_warnings = _extract_warning_codes(diagnostics.combined_output)
+        diagnostics_status = _status_for(diagnostics, diagnostics_warnings)
+
+    readiness_cwd = None
+    if args.dry_smoke:
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        readiness_cwd = index_path.parent
+    if readiness_cwd is None:
+        readiness = _run_agent_command(["--provider", "ibkr", "--readiness-check"])
+    else:
+        readiness = _run_agent_command(
+            ["--provider", "ibkr", "--readiness-check"], cwd=readiness_cwd
+        )
     _emit_command_output(readiness)
 
-    diagnostics_warnings = _extract_warning_codes(diagnostics.combined_output)
     readiness_warnings = _extract_warning_codes(readiness.combined_output)
-    diagnostics_status = _status_for(diagnostics, diagnostics_warnings)
     readiness_status = _status_for(readiness, readiness_warnings)
     warning_codes = sorted({*diagnostics_warnings, *readiness_warnings})
 
@@ -95,7 +112,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     cash_currency_count = 0
     exit_code = 0
 
-    if args.diagnostics_only:
+    if args.dry_smoke:
+        print("IBKR dry smoke complete: no connection diagnostics or live read attempted.")
+        exit_code = 0 if readiness.returncode == 0 else 1
+    elif args.diagnostics_only:
+        assert diagnostics is not None
         exit_code = 0 if diagnostics.returncode == 0 and readiness.returncode == 0 else 1
     elif not args.allow_live_read:
         print(
@@ -105,6 +126,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         exit_code = 2
     elif diagnostics_status == "passed" and readiness_status == "passed":
         live_read_attempted = True
+        output_dir.mkdir(parents=True, exist_ok=True)
         live = _run_agent_command(
             [
                 "--provider",
@@ -216,11 +238,11 @@ def contains_raw_account_id(payload: object) -> bool:
     return _RAW_ACCOUNT_PATTERN.search(text) is not None
 
 
-def _run_agent_command(args: Sequence[str]) -> CommandResult:
-    command = [sys.executable, str(AGENT_SCRIPT), *args]
+def _run_agent_command(args: Sequence[str], cwd: Path | None = None) -> CommandResult:
+    command = [sys.executable, str(REPO_ROOT / AGENT_SCRIPT), *args]
     completed = subprocess.run(
         command,
-        cwd=REPO_ROOT,
+        cwd=cwd or REPO_ROOT,
         capture_output=True,
         text=True,
         check=False,
@@ -239,6 +261,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--allow-live-read",
         action="store_true",
         help="Permit the final gated IBKR read-only sync command.",
+    )
+    parser.add_argument(
+        "--dry-smoke",
+        action="store_true",
+        help="Run readiness-only finalization smoke without socket diagnostics or live read.",
     )
     parser.add_argument(
         "--diagnostics-only",
@@ -309,9 +336,15 @@ def _extract_int(text: str, pattern: str) -> int:
 
 def _emit_command_output(result: CommandResult) -> None:
     if result.stdout:
-        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+        stdout = _redact_wrapper_output(result.stdout)
+        print(stdout, end="" if stdout.endswith("\n") else "\n")
     if result.stderr:
-        print(result.stderr, end="" if result.stderr.endswith("\n") else "\n", file=sys.stderr)
+        stderr = _redact_wrapper_output(result.stderr)
+        print(stderr, end="" if stderr.endswith("\n") else "\n", file=sys.stderr)
+
+
+def _redact_wrapper_output(text: str) -> str:
+    return text.replace(".env.local", "local environment file")
 
 
 def _resolve_repo_path(path: Path) -> Path:

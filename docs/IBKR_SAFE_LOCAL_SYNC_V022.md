@@ -25,9 +25,9 @@ CFO_IBKR_ENABLED=true
 CFO_IBKR_HOST=
 CFO_IBKR_PORT=
 CFO_IBKR_CLIENT_ID=
-CFO_IBKR_ACCOUNT=
-CFO_ACCOUNT_HASH_SALT=
 ```
+
+Optional sensitive values such as the account filter and account-hash salt must be kept only in `.env.local` or OS environment variables. Leave them out unless needed for your local setup.
 
 Do not commit `.env.local`, account identifiers, salts, passwords, tokens, local logs, screenshots, cookies, or generated report outputs.
 
@@ -62,6 +62,14 @@ Diagnostics and readiness only:
 ```powershell
 python .\scripts\run_ibkr_readonly_sync.py --diagnostics-only
 ```
+
+No-network finalization dry smoke:
+
+```powershell
+python .\scripts\run_ibkr_readonly_sync.py --dry-smoke --out-root .\reports\personal_cfo_agent\ibkr_sync_dry_smoke
+```
+
+Dry smoke is for PR finalization and local validation only. It runs the readiness check, writes only the ignored local sync index, and does not run connection diagnostics, open a broker socket, pass `--allow-live-read`, or create a report bundle.
 
 Full supervised read-only sync:
 
