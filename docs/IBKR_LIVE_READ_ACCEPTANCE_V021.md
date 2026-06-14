@@ -55,6 +55,26 @@ python .\scripts\personal_cfo_agent.py `
 - Output directory created: no
 - Output files created: none
 
+## Attempt 3 Results
+
+- Date/time: 2026-06-14T13:48:29+08:00
+- Connection diagnostics command: `python .\scripts\personal_cfo_agent.py --provider ibkr --connection-diagnostics`
+- `ibapi` import status: OK
+- TCP socket reachable host/port: yes
+- Diagnostic warning codes: none
+- Readiness result: passed
+- Readiness warning codes: none
+- Live read attempted: yes
+- Live read success: yes for the read-only connection path; no data rows were returned
+- Provider connection mode: `live_read_only`
+- Provider warning codes: none
+- Accounts read: 0
+- Positions read: 0
+- Currencies seen: none
+- Output path: `reports\personal_cfo_agent\ibkr_v021_live_acceptance`
+- Output directory created: no
+- Output files created: none
+
 ## Redaction Checks
 
 - Raw account IDs in generated outputs: not applicable; no outputs were generated
@@ -62,6 +82,7 @@ python .\scripts\personal_cfo_agent.py `
 - Secrets in generated outputs: not applicable; no outputs were generated
 - `.env.local` content in generated outputs: not applicable; no outputs were generated
 - Generated reports committed: no
+- Attempt 3 generated no output files; the configured reports path remains ignored by git
 
 ## Safety Confirmation
 
@@ -71,9 +92,18 @@ python .\scripts\personal_cfo_agent.py `
 - No bank, CPF, IRAS, HDB, SingPass, browser automation, scraping, screenshot, cookie, or recommendation workflow was used.
 - No raw account number, exact sensitive balance, secret, hash salt, screenshot, cookie, or `.env.local` value is included in this record.
 
+## Manual TWS / Gateway Checklist
+
+- Confirm TWS or IB Gateway is running before the live-read command.
+- Confirm API access is enabled in TWS or IB Gateway.
+- Confirm the configured host and port match the active TWS or IB Gateway API port.
+- Confirm local firewall rules allow the connection.
+- Confirm any TWS connection prompt is accepted by the operator.
+- Confirm the configured client ID is not already in use by another client session.
+
 ## Known Limitations
 
 - Attempt 1 did not complete because the local IBKR SDK dependency was not installed in this environment.
 - Attempt 2 verified that `ibapi` imports, but the local TWS or IB Gateway API session was not reachable from the supervised live-read command.
-- No account, position, cash, balance, or currency data was collected.
+- Attempt 3 reached the read-only live connection path with no warning codes, but no account, position, cash, balance, or currency data was returned, so no reports were generated.
 - A successful acceptance run still requires a manually started TWS or IB Gateway session, the explicit IBKR provider mode, `--allow-live-read`, and ignored local configuration.

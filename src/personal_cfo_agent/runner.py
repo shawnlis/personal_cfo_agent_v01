@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,10 @@ from personal_cfo_agent.providers import (
     ManualSnapshotProvider,
     MoomooProvider,
     TigerProvider,
+)
+from personal_cfo_agent.providers.ibkr_connection_diagnostics import (
+    IBKRConnectionDiagnostics,
+    run_ibkr_connection_diagnostics,
 )
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
@@ -147,6 +152,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Validate selected provider config without live connection.",
     )
     parser.add_argument(
+        "--connection-diagnostics",
+        action="store_true",
+        help="Run redacted provider connection diagnostics without live API messages.",
+    )
+    parser.add_argument(
         "--allow-live-read",
         action="store_true",
         help="Allow read-only live readiness checks for enabled API providers.",
@@ -214,6 +224,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.validate_manual_snapshot is not None:
         return _validate_manual_snapshot_cli(args.validate_manual_snapshot)
+    if args.connection_diagnostics:
+        if args.provider != "ibkr":
+            parser.error("--connection-diagnostics is currently implemented for --provider ibkr")
+        return _connection_diagnostics_cli()
     if args.readiness_check and args.provider not in {"ibkr", "moomoo", "tiger"}:
         parser.error(
             "--readiness-check is currently implemented for --provider ibkr, moomoo, or tiger"
@@ -278,3 +292,33 @@ def _validate_manual_snapshot_cli(path: Path) -> int:
 def _print_manual_validation_issues(issues, severity: str) -> None:
     for issue in issues:
         print(f"{severity}: {issue.path}: {issue.code.value}: {issue.message}")
+
+
+def _connection_diagnostics_cli() -> int:
+    diagnostics = run_ibkr_connection_diagnostics(dict(os.environ))
+    for line in _format_ibkr_connection_diagnostics(diagnostics):
+        print(line)
+    return 0
+
+
+def _format_ibkr_connection_diagnostics(
+    diagnostics: IBKRConnectionDiagnostics,
+) -> list[str]:
+    warning_text = ", ".join(code.value for code in diagnostics.warning_codes) or "None"
+    return [
+        "IBKR connection diagnostics (values redacted)",
+        f"CFO_IBKR_ENABLED present and true: {_yes_no(diagnostics.enabled_present and diagnostics.enabled_true)}",
+        f"CFO_IBKR_HOST present: {_yes_no(diagnostics.host_present)}",
+        f"CFO_IBKR_PORT present: {_yes_no(diagnostics.port_present)}",
+        f"CFO_IBKR_CLIENT_ID present: {_yes_no(diagnostics.client_id_present)}",
+        f"CFO_IBKR_ACCOUNT present: {_yes_no(diagnostics.account_present)}, redacted",
+        f"CFO_ACCOUNT_HASH_SALT present: {_yes_no(diagnostics.hash_salt_present)}, redacted",
+        f"Python executable: {diagnostics.python_executable}",
+        f"ibapi import status: {'OK' if diagnostics.ibapi_import_ok else 'MISSING'}",
+        f"TCP socket reachable host/port: {_yes_no(diagnostics.tcp_socket_reachable)}",
+        f"diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _yes_no(value: bool) -> str:
+    return "yes" if value else "no"

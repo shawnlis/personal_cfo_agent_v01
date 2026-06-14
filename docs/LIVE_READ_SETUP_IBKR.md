@@ -47,6 +47,16 @@ python -m pip install ibapi
 
 Do not commit virtualenv folders, user site-packages, broker SDK caches, account exports, or generated report outputs. Installing `ibapi` does not bypass the live-read gates: `.env.local` or OS environment configuration, manually started TWS or IB Gateway, API access enabled in TWS or Gateway, explicit `--provider ibkr`, and explicit `--allow-live-read` are still required.
 
+## Redacted Connection Diagnostics
+
+Before a live-read attempt, run:
+
+```powershell
+python .\scripts\personal_cfo_agent.py --provider ibkr --connection-diagnostics
+```
+
+Diagnostics report only redacted presence, Python executable, `ibapi` import status, TCP socket reachability, and warning codes. They do not print host, port, client ID, account ID, salts, or `.env.local` values. The TCP probe opens a socket only and sends no IBKR API messages.
+
 ## Supervised Live Proof
 
 After manually starting TWS or IB Gateway:

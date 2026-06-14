@@ -16,6 +16,9 @@ from personal_cfo_agent.providers.ibkr_models import (
     IBKRPositionRow,
     IBKRReadOnlySnapshot,
 )
+from personal_cfo_agent.providers.ibkr_connection_diagnostics import (
+    run_ibkr_connection_diagnostics,
+)
 from personal_cfo_agent.providers.ibkr_provider import IBKRProvider
 from personal_cfo_agent.risk_engine import calculate_risk_summary
 from personal_cfo_agent.runner import collect_provider_snapshots
@@ -243,6 +246,85 @@ def test_config_values_are_not_printed_by_cli_readiness_check() -> None:
     assert "7331" not in combined
 
 
+def test_cli_connection_diagnostics_redacts_values_and_does_not_live_read(tmp_path) -> None:
+    local_env = tmp_path / ".env.local"
+    local_env.write_text(
+        "\n".join(
+            [
+                "CFO_IBKR_ENABLED=true",
+                "CFO_IBKR_HOST=192.0.2.44",
+                "CFO_IBKR_PORT=not-a-port",
+                "CFO_IBKR_CLIENT_ID=7331",
+                "CFO_IBKR_ACCOUNT" + "=" + "REDACTED_ACCOUNT_PLACEHOLDER",
+                "CFO_ACCOUNT_HASH_SALT" + "=" + "REDACTED_SALT_PLACEHOLDER",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "personal_cfo_agent.py"),
+            "--provider",
+            "ibkr",
+            "--connection-diagnostics",
+        ],
+        cwd=tmp_path,
+        env=_without_cfo_env(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    combined = result.stdout + result.stderr
+
+    assert result.returncode == 0
+    assert "Loaded local environment from .env.local; values redacted" in result.stdout
+    assert "IBKR connection diagnostics (values redacted)" in result.stdout
+    assert "CFO_IBKR_ENABLED present and true: yes" in result.stdout
+    assert "CFO_IBKR_ACCOUNT present: yes, redacted" in result.stdout
+    assert "CFO_ACCOUNT_HASH_SALT present: yes, redacted" in result.stdout
+    assert "TCP socket reachable host/port:" in result.stdout
+    assert "Read-only IBKR sync only" not in result.stdout
+    assert "No provider produced data" not in result.stdout
+    for raw_value in (
+        "192.0.2.44",
+        "not-a-port",
+        "7331",
+        "REDACTED_ACCOUNT_PLACEHOLDER",
+        "REDACTED_SALT_PLACEHOLDER",
+    ):
+        assert raw_value not in combined
+
+
+def test_connection_diagnostics_socket_unreachable_returns_warning(monkeypatch) -> None:
+    import personal_cfo_agent.providers.ibkr_connection_diagnostics as diagnostics_module
+
+    def _unreachable(*args, **kwargs):
+        raise OSError("not reachable")
+
+    monkeypatch.setattr(diagnostics_module.socket, "create_connection", _unreachable)
+    diagnostics = run_ibkr_connection_diagnostics(_valid_env(), timeout_seconds=0.01)
+
+    assert diagnostics.tcp_socket_reachable is False
+    assert WarningCode.PROVIDER_CONNECTION_FAILED in diagnostics.warning_codes
+
+
+def test_connection_diagnostics_missing_sdk_returns_warning(monkeypatch) -> None:
+    import personal_cfo_agent.providers.ibkr_connection_diagnostics as diagnostics_module
+
+    def _missing_sdk(name: str):
+        if name == "ibapi":
+            raise ImportError(name)
+        raise AssertionError(name)
+
+    monkeypatch.setattr(diagnostics_module.importlib, "import_module", _missing_sdk)
+    diagnostics = run_ibkr_connection_diagnostics(_valid_env(), timeout_seconds=0.01)
+
+    assert diagnostics.ibapi_import_ok is False
+    assert WarningCode.SDK_NOT_INSTALLED in diagnostics.warning_codes
+
+
 def test_ibapi_only_appears_as_lazy_import_string() -> None:
     adapter_text = (ROOT / "src" / "personal_cfo_agent" / "providers" / "ibkr_readonly_adapter.py").read_text(
         encoding="utf-8"
@@ -391,4 +473,15 @@ def _valid_env() -> dict[str, str]:
         "CFO_IBKR_HOST": "127.0.0.1",
         "CFO_IBKR_PORT": "7497",
         "CFO_IBKR_CLIENT_ID": "991",
+    }
+
+
+def _without_cfo_env() -> dict[str, str]:
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("CFO_IBKR_")
+        and not key.startswith("CFO_MOOMOO_")
+        and not key.startswith("CFO_TIGER_")
+        and key != "CFO_ACCOUNT_HASH_SALT"
     }
