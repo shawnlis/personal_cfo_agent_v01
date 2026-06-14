@@ -643,6 +643,14 @@ def _format_tiger_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
         f"Config dir exists: {_yes_no(bool(diagnostics.get('config_dir_exists')))}",
         f"Config file exists: {_yes_no(bool(diagnostics.get('config_file_exists')))}",
         f"Config loaded: {_yes_no(bool(diagnostics.get('config_loaded')))}",
+        f"Tiger config mode selected: {diagnostics.get('tiger_config_mode_selected', 'failed')}",
+        f"Tiger config constructed: {_yes_no(bool(diagnostics.get('tiger_config_constructed')))}",
+        f"Tiger client constructed: {_yes_no(bool(diagnostics.get('tiger_client_constructed')))}",
+        "Tiger config warning codes: "
+        + (
+            ", ".join(str(code) for code in diagnostics.get("tiger_config_warning_codes", []))
+            or "None"
+        ),
         f"Tiger ID present: {_yes_no(bool(diagnostics.get('tiger_id_present_redacted')))}, redacted",
         f"Account present: {_yes_no(bool(diagnostics.get('account_present_redacted')))}, redacted",
         f"Private key present: {_yes_no(bool(diagnostics.get('private_key_present_redacted')))}, redacted",

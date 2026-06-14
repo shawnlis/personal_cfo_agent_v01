@@ -31,9 +31,12 @@ Expected local config pattern:
 
 - `CFO_TIGER_CONFIG_DIR` should point to an external directory, for example `%USERPROFILE%\tiger_openapi_config`.
 - The expected properties filename inside that directory is `tiger_openapi_config.properties`.
-- The adapter passes `<CFO_TIGER_CONFIG_DIR>\tiger_openapi_config.properties` as TigerOpen `props_path`.
+- The adapter uses the official TigerOpen directory mode and passes `<CFO_TIGER_CONFIG_DIR>` as TigerOpen `props_path`.
+- Do not point `CFO_TIGER_CONFIG_DIR` to the properties file unless a future fallback explicitly supports that.
+- Do not use `get_client_config` as the primary adapter path.
 - TigerOpen accepts `tiger_id` and `account` properties.
 - TigerOpen accepts private-key properties named `private_key_pk1` or `private_key_pk8`; the private-key format must match the field used.
+- Current local diagnostics report private-key format category `pkcs1_like`. TigerOpen SDK versions and docs may differ between `private_key_pk1` and `private_key_pk8`; if official directory mode fails, regenerate or export the TigerOpen config according to the current Tiger docs.
 - TigerOpen can also use `TIGEROPEN_PRIVATE_KEY` or `private_key_path`, but values must remain local and must not be printed or committed.
 
 Do not put screenshots, config file contents, Tiger IDs, raw account IDs, private keys, tokens, `.env.local` values, or balances in docs or PR comments.
@@ -180,13 +183,27 @@ The SDK config compatibility probe was added after config preflight passed but t
 
 Current redacted probe result:
 
-- Working props path mode: `file`.
+- Working props path mode: `directory`.
 - SDK config constructed: yes.
 - SDK client constructed: yes.
 - Sanitized exception category: `none`.
 - Probe warning codes: `TIGER_SDK_CONFIG_CONSTRUCTED`, `TIGER_SDK_CLIENT_CONSTRUCTED`.
 - Account data APIs called by the probe: no.
 
-The adapter now uses explicit `TigerOpenClientConfig` construction with exact properties-file `props_path` and dynamic-domain loading disabled for config construction. It no longer relies on the SDK helper path that failed with sanitized `TypeError`.
+The adapter now uses official `TigerOpenClientConfig(props_path=<config directory>)` construction as the primary path. It no longer uses the SDK helper path as primary; helper/file modes are fallback-only and are marked in diagnostics when used.
 
-The supervised live read was retried once after client-initialization diagnostics were added. It failed closed during TigerOpen config load with `TIGER_CONFIG_LOAD_FAILED` and `PROVIDER_CONNECTION_FAILED`. Client initialization was not attempted. No asset query, position query, cash query, normalized rows, or report bundle was produced.
+The supervised live read was retried once after official directory-mode config became primary. It succeeded as a supervised read-only proof:
+
+- Config mode selected: `official_directory_props_path`.
+- Helper fallback used: no.
+- Config constructed: yes.
+- Client constructed: yes.
+- Account context observed: yes, redacted.
+- Account count redacted: 1.
+- Position count: 8.
+- Cash currency count: 0.
+- Normalized rows: 8.
+- Warning codes: None.
+- Report bundle generated under ignored `reports/personal_cfo_agent/tiger_v031_live_acceptance`.
+
+Generated reports remain local and ignored. Do not commit report contents, exact balances, raw account IDs, `.env.local`, Tiger config, private keys, screenshots, or cookies.

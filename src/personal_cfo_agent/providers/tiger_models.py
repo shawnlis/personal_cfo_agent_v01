@@ -13,6 +13,10 @@ class TigerReadDiagnostics:
     config_dir_exists: bool = False
     config_file_exists: bool = False
     config_loaded: bool = False
+    tiger_config_mode_selected: str = "failed"
+    tiger_config_constructed: bool = False
+    tiger_client_constructed: bool = False
+    tiger_config_warning_codes: tuple[WarningCode, ...] = ()
     tiger_id_present_redacted: bool = False
     account_present_redacted: bool = False
     private_key_present_redacted: bool = False
@@ -42,6 +46,12 @@ class TigerReadDiagnostics:
             "config_dir_exists": self.config_dir_exists,
             "config_file_exists": self.config_file_exists,
             "config_loaded": self.config_loaded,
+            "tiger_config_mode_selected": self.tiger_config_mode_selected,
+            "tiger_config_constructed": self.tiger_config_constructed,
+            "tiger_client_constructed": self.tiger_client_constructed,
+            "tiger_config_warning_codes": [
+                code.value for code in self.tiger_config_warning_codes
+            ],
             "tiger_id_present_redacted": self.tiger_id_present_redacted,
             "account_present_redacted": self.account_present_redacted,
             "private_key_present_redacted": self.private_key_present_redacted,

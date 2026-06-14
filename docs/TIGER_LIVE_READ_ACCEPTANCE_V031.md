@@ -100,7 +100,7 @@ Result:
 - Tiger account APIs called by preflight: no.
 - Expected config file pattern: `<CFO_TIGER_CONFIG_DIR>\tiger_openapi_config.properties`.
 - Expected config filename: `tiger_openapi_config.properties`.
-- Adapter `props_path` expectation: file path.
+- Adapter `props_path` expectation: directory path.
 - Config dir exists: yes.
 - Config dir is directory: yes.
 - Adapter `props_path` shape valid: yes.
@@ -142,7 +142,7 @@ Result:
 
 - Probe result: passed.
 - Props path modes tested: `directory`, `file`, `explicit_props_path`, `sdk_default`.
-- Working props path mode selected: `file`.
+- Working props path mode selected: `directory`.
 - SDK import OK: yes.
 - Config file detected: yes.
 - Required keys present: Tiger ID yes, account yes, private key yes; all redacted.
@@ -161,9 +161,11 @@ Result:
 
 Adapter update:
 
-- The adapter now uses explicit `TigerOpenClientConfig` construction with exact properties-file `props_path` and dynamic-domain loading disabled for config construction.
-- The adapter no longer relies on the SDK helper path that failed with sanitized `TypeError`.
-- No account/position/cash live-read acceptance was attempted in this task.
+- The adapter now uses official `TigerOpenClientConfig(props_path=<config directory>)` construction as the primary path.
+- `CFO_TIGER_CONFIG_DIR` should point to the directory containing `tiger_openapi_config.properties`, not the file.
+- The SDK helper path is not used as the primary path; helper/file modes are fallback-only and marked in diagnostics if used.
+- Current local diagnostics report private-key format category `pkcs1_like`. TigerOpen SDK versions and docs may differ between `private_key_pk1` and `private_key_pk8`; if official directory mode still fails, regenerate or export the TigerOpen config according to the current Tiger docs.
+- Account/position/cash live-read acceptance was attempted once after validation, config preflight, connection diagnostics, and SDK config probe passed.
 
 ## Connection Diagnostics Gate
 
@@ -193,7 +195,8 @@ Result:
 | --- | --- |
 | SDK import | `sdk_import_ok` |
 | Config dir/file | `config_dir_exists`, `config_file_exists` |
-| Config load | `config_loaded`, `stage_failures.config_load` |
+| Config load | `config_loaded`, `tiger_config_mode_selected`, `tiger_config_constructed`, `tiger_config_warning_codes`, `stage_failures.config_load` |
+| Client construction | `tiger_client_constructed`, `client_init_attempted`, `client_init_success` |
 | Private key | `private_key_present_redacted`, `private_key_format_detected_redacted` |
 | Client init | `client_init_attempted`, `client_init_success`, `stage_failures.client_init` |
 | Client auth | `client_auth_success`, `stage_failures.client_auth` |
@@ -205,7 +208,7 @@ Result:
 
 ## Supervised Live Attempt
 
-The supervised live read was attempted once after readiness and connection diagnostics passed.
+The supervised live read was attempted once after readiness, config preflight, SDK config probe, and connection diagnostics passed.
 
 Command run:
 
@@ -222,54 +225,51 @@ Result:
 - SDK import OK: yes.
 - Config dir exists: yes.
 - Config file exists: yes.
-- Config loaded: no.
+- Config loaded: yes.
+- Official directory-mode config selected: yes.
+- Helper fallback used: no.
+- Config constructed: yes.
+- Client constructed: yes.
 - Tiger ID present: yes, redacted.
 - Account present: yes, redacted.
 - Private key present: yes, redacted.
-- Private key format detected: redacted category only.
-- Client init attempted: no.
-- Client init success: no.
-- Client auth success: no.
+- Private key format detected: `pkcs1`, redacted category only.
+- Client init attempted: yes.
+- Client init success: yes.
+- Client auth success: yes.
 - Account context observed: yes.
 - Account count redacted: 1.
-- Assets query attempted: no.
-- Assets query success: no.
-- Positions query attempted: no.
-- Positions query success: no.
-- Position count: 0.
-- Cash query attempted: no.
-- Cash query success: no.
+- Assets query attempted: yes.
+- Assets query success: yes.
+- Positions query attempted: yes.
+- Positions query success: yes.
+- Position count: 8.
+- Cash query attempted: yes.
+- Cash query success: yes.
 - Cash currency count: 0.
-- Normalized rows: 0.
+- Normalized rows: 8.
 - SDK output suppressed: yes.
-- Warning codes: `TIGER_CONFIG_LOAD_FAILED`, `PROVIDER_CONNECTION_FAILED`.
-- Stage failure: `config_load=TigerOpen config load failed (TypeError)`.
-- Report bundle generated: no.
+- Warning codes: None.
+- Stage failure: None.
+- Report bundle generated: yes, under ignored `reports/personal_cfo_agent/tiger_v031_live_acceptance`.
+- Raw account IDs in committed docs: no.
+- Secrets/private keys in committed docs: no.
+- Order/cash-transfer methods used: no.
 
 ## Acceptance Status
 
-Acceptance success: no.
+Acceptance success: yes for supervised Tiger read-only live-read proof.
 
 Current counts:
 
 - Account context observed: yes.
 - Account count redacted: 1.
-- Position count: 0.
+- Position count: 8.
 - Cash currency count: 0.
-- Normalized rows: 0.
-- Live read success: no.
-- Report bundle generated: no.
+- Normalized rows: 8.
+- Live read success: yes.
+- Report bundle generated: yes, ignored and not committed.
 
 ## Next Manual Step
 
-Config preflight now passes, but no live read was run during this preflight-validation task. The operator can decide whether to run exactly one supervised live attempt next:
-
-```powershell
-python .\scripts\personal_cfo_agent.py `
-  --provider tiger `
-  --allow-live-read `
-  --tiger-data-diagnostics `
-  --out-dir .\reports\personal_cfo_agent\tiger_v031_live_acceptance
-```
-
-Do not add any write, order, unlock, or transfer method while investigating the config/client initialization failure.
+Review the ignored local report bundle manually if needed. Do not commit generated reports, `.env.local`, Tiger config, private keys, screenshots, cookies, raw account IDs, exact balances, or any write/order/transfer method.

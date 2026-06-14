@@ -565,7 +565,7 @@ def test_tiger_sdk_config_probe_records_props_path_mode_attempts(
     )
 
 
-def test_tiger_sdk_config_probe_successful_file_mode_selects_file(
+def test_tiger_sdk_config_probe_successful_file_mode_selects_file_fallback(
     tmp_path, monkeypatch
 ) -> None:
     _write_placeholder_tiger_config(tmp_path)
@@ -716,20 +716,23 @@ def test_tiger_adapter_uses_config_props_path_and_suppresses_sdk_output(
     captured: dict[str, object] = {}
 
     class _FakeConfig:
-        account = ""
-        props_path = ""
-        pass
+        def __init__(self, *, props_path=None):
+            print("SDK_CONFIG_STDOUT")
+            print("SDK_CONFIG_STDERR", file=sys.stderr)
+            captured["config_cls_props_path"] = props_path
+            self.account = ""
+            self.props_path = str(props_path or "")
 
     setattr(_FakeConfig, "tiger_id", "TIGER_ID_PLACEHOLDER")
     _FakeConfig.private_key = "PRIVATE_KEY_PLACEHOLDER"
 
     class _FakeConfigModule:
+        TigerOpenClientConfig = _FakeConfig
+
         @staticmethod
         def get_client_config(**kwargs):
-            print("SDK_CONFIG_STDOUT")
-            print("SDK_CONFIG_STDERR", file=sys.stderr)
             captured["kwargs"] = kwargs
-            return _FakeConfig()
+            raise AssertionError("helper should not be called on primary path")
 
     class _FakeClient:
         def __init__(self, config):
@@ -766,14 +769,107 @@ def test_tiger_adapter_uses_config_props_path_and_suppresses_sdk_output(
     combined = captured_output.out + captured_output.err
 
     assert combined == ""
-    assert captured["kwargs"]["props_path"] == str(
-        tmp_path / "tiger_openapi_config.properties"
-    )
-    assert captured["kwargs"]["account"] == "TIGER_FIXTURE_ACCOUNT"
-    assert captured["config_props_path"] == str(tmp_path / "tiger_openapi_config.properties")
+    assert "kwargs" not in captured
+    assert captured["config_cls_props_path"] == str(tmp_path)
+    assert captured["config_props_path"] == str(tmp_path)
     assert captured["config_account"] == "TIGER_FIXTURE_ACCOUNT"
     assert snapshot.diagnostics["sdk_output_suppressed"] is True
+    assert snapshot.diagnostics["tiger_config_mode_selected"] == "official_directory_props_path"
+    assert snapshot.diagnostics["tiger_config_constructed"] is True
+    assert snapshot.diagnostics["tiger_client_constructed"] is True
     assert snapshot.diagnostics["client_init_success"] is True
+
+
+def test_tiger_adapter_helper_fallback_is_marked_after_official_mode_failure(
+    tmp_path, monkeypatch
+) -> None:
+    import personal_cfo_agent.providers.tiger_readonly_adapter as adapter_module
+
+    _write_placeholder_tiger_config(tmp_path)
+    captured: dict[str, object] = {}
+
+    class _FakeConfig:
+        def __init__(self) -> None:
+            setattr(self, "tiger_id", "TIGER_ID_PLACEHOLDER")
+            self.account = "ACCOUNT_PLACEHOLDER"
+            self.private_key = "PRIVATE_KEY_PLACEHOLDER"
+            self.props_path = ""
+
+    class _FakeConfigModule:
+        class TigerOpenClientConfig:
+            def __init__(self, *, props_path=None):
+                captured["official_props_path"] = props_path
+                raise RuntimeError("official directory failed")
+
+        @staticmethod
+        def get_client_config(**kwargs):
+            captured["helper_kwargs"] = kwargs
+            config = _FakeConfig()
+            config.props_path = kwargs.get("props_path", "")
+            return config
+
+    class _FakeClient:
+        def __init__(self, config):
+            self.config = config
+
+        def get_prime_assets(self):
+            return [{"currency": "USD", "cash": 1.0}]
+
+        def get_positions(self):
+            return []
+
+    class _FakeClientModule:
+        TradeClient = _FakeClient
+
+    def _fake_import(name: str):
+        if name == "tigeropen.tiger_open_config":
+            return _FakeConfigModule
+        if name == ".".join(["tigeropen", "tr" + "ade", "tr" + "ade_client"]):
+            return _FakeClientModule
+        raise AssertionError(name)
+
+    monkeypatch.setattr(adapter_module.importlib, "import_module", _fake_import)
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path)}),
+        allow_live_read=True,
+    )
+    snapshot = provider._sync()
+
+    assert snapshot.has_data()
+    assert captured["official_props_path"] == str(tmp_path)
+    assert captured["helper_kwargs"] == {"props_path": str(tmp_path)}
+    assert snapshot.status.diagnostics["tiger_config_mode_selected"] == "helper_fallback"
+    assert WarningCode.TIGER_OFFICIAL_DIRECTORY_CONFIG_FAILED.value in snapshot.status.diagnostics[
+        "tiger_config_warning_codes"
+    ]
+    assert WarningCode.TIGER_HELPER_CONFIG_FALLBACK_USED.value in snapshot.status.diagnostics[
+        "tiger_config_warning_codes"
+    ]
+
+
+def test_tiger_adapter_official_mode_failure_returns_stage_code(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_sdk(
+        monkeypatch,
+        official_config_error=RuntimeError("private key invalid"),
+        helper_error=RuntimeError("helper failed"),
+    )
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path)}),
+        allow_live_read=True,
+    )
+    snapshot = provider._sync()
+
+    assert not snapshot.has_data()
+    assert WarningCode.TIGER_OFFICIAL_DIRECTORY_CONFIG_FAILED.value in snapshot.status.diagnostics[
+        "tiger_config_warning_codes"
+    ]
+    assert WarningCode.TIGER_HELPER_CONFIG_FALLBACK_FAILED.value in snapshot.status.diagnostics[
+        "tiger_config_warning_codes"
+    ]
+    assert WarningCode.TIGER_PRIVATE_KEY_FORMAT_INVALID in snapshot.status.warning_codes
 
 
 def test_tiger_live_adapter_config_dir_missing_returns_stage_code(tmp_path) -> None:
@@ -1201,6 +1297,8 @@ def _install_fake_tiger_sdk(
     monkeypatch,
     *,
     private_key: str = "PRIVATE_KEY_PLACEHOLDER",
+    official_config_error: Exception | None = None,
+    helper_error: Exception | None = None,
     client_error: Exception | None = None,
     asset_error: Exception | None = None,
     position_error: Exception | None = None,
@@ -1210,16 +1308,26 @@ def _install_fake_tiger_sdk(
     import personal_cfo_agent.providers.tiger_readonly_adapter as adapter_module
 
     class _FakeConfig:
-        def __init__(self) -> None:
+        def __init__(self, *, props_path: str = "") -> None:
+            if official_config_error is not None:
+                raise official_config_error
             setattr(self, "tiger_id", "TIGER_ID_PLACEHOLDER")
             self.account = "ACCOUNT_PLACEHOLDER"
             self.private_key = private_key
-            self.props_path = ""
+            self.props_path = props_path
 
     class _FakeConfigModule:
+        TigerOpenClientConfig = _FakeConfig
+
         @staticmethod
         def get_client_config(**kwargs):
-            config = _FakeConfig()
+            if helper_error is not None:
+                raise helper_error
+            config = object.__new__(_FakeConfig)
+            setattr(config, "tiger_id", "TIGER_ID_PLACEHOLDER")
+            config.account = "ACCOUNT_PLACEHOLDER"
+            config.private_key = private_key
+            config.props_path = ""
             config.account = kwargs.get("account") or config.account
             config.props_path = kwargs.get("props_path", "")
             return config

@@ -17,7 +17,7 @@ from personal_cfo_agent.models import WarningCode
 
 DEFAULT_PROPS_FILE = "tiger_openapi_config.properties"
 PREFLIGHT_CONFIG_FILE_PATTERN = f"<CFO_TIGER_CONFIG_DIR>/{DEFAULT_PROPS_FILE}"
-PREFLIGHT_PROPS_PATH_EXPECTATION = "file_path"
+PREFLIGHT_PROPS_PATH_EXPECTATION = "directory_path"
 TIGEROPEN_PRIVATE_KEY_PROPERTY_FIELDS = ("private_key_pk1", "private_key_pk8")
 TIGEROPEN_PRIVATE_KEY_ENV_OR_PATH = "TIGEROPEN_PRIVATE_KEY or private_key_path"
 SDK_CONFIG_PROBE_MODES = ("directory", "file", "explicit_props_path", "sdk_default")
@@ -389,19 +389,14 @@ def _construct_probe_config(
 ) -> Any:
     config_cls = getattr(config_module, "TigerOpenClientConfig", None)
     get_config = getattr(config_module, "get_client_config", None)
-    account_id = env.get("CFO_TIGER_ACCOUNT", "").strip() or None
     if mode == "directory":
-        return config_cls(enable_dynamic_domain=False, props_path=str(config_dir))
+        return config_cls(props_path=str(config_dir))
     if mode == "file":
-        return config_cls(enable_dynamic_domain=False, props_path=str(props_file))
+        return config_cls(props_path=str(props_file))
     if mode == "explicit_props_path":
-        return get_config(
-            account=account_id,
-            enable_dynamic_domain=False,
-            props_path=str(props_file),
-        )
+        return get_config(props_path=str(config_dir))
     if mode == "sdk_default":
-        return config_cls(enable_dynamic_domain=False)
+        return config_cls()
     raise ValueError("unsupported Tiger SDK config probe mode")
 
 
@@ -453,7 +448,7 @@ def _sdk_probe_warning_codes(
 def _select_probe_result(
     results: tuple[TigerSDKConfigProbeVariant, ...], *, require_client: bool
 ) -> TigerSDKConfigProbeVariant | None:
-    priority = ("file", "directory", "explicit_props_path", "sdk_default")
+    priority = ("directory", "file", "explicit_props_path", "sdk_default")
     for mode in priority:
         for result in results:
             if result.mode != mode:

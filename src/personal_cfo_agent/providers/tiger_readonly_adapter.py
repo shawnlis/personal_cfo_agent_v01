@@ -50,6 +50,10 @@ class _DiagnosticState:
     config_dir_exists: bool = False
     config_file_exists: bool = False
     config_loaded: bool = False
+    tiger_config_mode_selected: str = "failed"
+    tiger_config_constructed: bool = False
+    tiger_client_constructed: bool = False
+    tiger_config_warning_codes: list[WarningCode] = field(default_factory=list)
     tiger_id_present_redacted: bool = False
     account_present_redacted: bool = False
     private_key_present_redacted: bool = False
@@ -80,6 +84,14 @@ class _DiagnosticState:
         for code in codes:
             self.add_warning(code)
 
+    def add_config_warning(self, code: WarningCode) -> None:
+        if code not in self.tiger_config_warning_codes:
+            self.tiger_config_warning_codes.append(code)
+
+    def add_config_warnings(self, codes: list[WarningCode]) -> None:
+        for code in codes:
+            self.add_config_warning(code)
+
     def fail(self, stage: str, summary: str, codes: list[WarningCode]) -> None:
         self.stage_failures[stage] = summary
         self.add_warnings(codes)
@@ -90,6 +102,10 @@ class _DiagnosticState:
             config_dir_exists=self.config_dir_exists,
             config_file_exists=self.config_file_exists,
             config_loaded=self.config_loaded,
+            tiger_config_mode_selected=self.tiger_config_mode_selected,
+            tiger_config_constructed=self.tiger_config_constructed,
+            tiger_client_constructed=self.tiger_client_constructed,
+            tiger_config_warning_codes=tuple(self.tiger_config_warning_codes),
             tiger_id_present_redacted=self.tiger_id_present_redacted,
             account_present_redacted=self.account_present_redacted,
             private_key_present_redacted=self.private_key_present_redacted,
@@ -162,7 +178,7 @@ class TigerReadOnlyAdapter:
         source_timestamp = datetime.now(timezone.utc).isoformat()
         try:
             with _suppress_sdk_console_output():
-                config = _build_config(sdk, self.config_dir, self.account_id)
+                config = _build_config(sdk, self.config_dir, self.account_id, state)
             state.config_loaded = True
             _record_loaded_config_state(state, config)
         except Exception as exc:  # pragma: no cover - exercised with live TigerOpen only
@@ -188,6 +204,7 @@ class TigerReadOnlyAdapter:
             with _suppress_sdk_console_output():
                 client = sdk["client_cls"](config)
             state.client_init_success = True
+            state.tiger_client_constructed = True
         except Exception as exc:  # pragma: no cover - exercised with live TigerOpen only
             code = _client_failure_code(exc)
             stage = "client_auth" if code == WarningCode.TIGER_CLIENT_AUTH_FAILED else "client_init"
@@ -309,34 +326,74 @@ def _load_sdk() -> dict[str, Any]:
     }
 
 
-def _build_config(sdk: dict[str, Any], config_dir: str, account_id: str) -> Any:
+def _build_config(
+    sdk: dict[str, Any],
+    config_dir: str,
+    account_id: str,
+    state: _DiagnosticState,
+) -> Any:
     config_module = sdk["config_module"]
     config_cls = getattr(config_module, "TigerOpenClientConfig", None)
     get_config = getattr(config_module, "get_client_config", None)
-    props_path = str(Path(config_dir) / DEFAULT_PROPS_FILE)
+    directory_props_path = str(Path(config_dir))
+    file_props_path = str(Path(config_dir) / DEFAULT_PROPS_FILE)
+    official_error: BaseException | None = None
+    helper_error: BaseException | None = None
     if callable(config_cls):
         try:
-            config = config_cls(enable_dynamic_domain=False, props_path=props_path)
-        except TypeError:
-            config = config_cls(props_path=props_path)
-    elif callable(get_config):
+            config = config_cls(props_path=directory_props_path)
+            _mark_config_constructed(state, "official_directory_props_path")
+            _apply_loaded_account_context(config, account_id)
+            return config
+        except Exception as exc:
+            official_error = exc
+            state.add_config_warning(WarningCode.TIGER_OFFICIAL_DIRECTORY_CONFIG_FAILED)
+    if callable(get_config):
         try:
-            config = get_config(
-                account=account_id,
-                enable_dynamic_domain=False,
-                props_path=props_path,
+            config = get_config(props_path=directory_props_path)
+            _mark_config_constructed(
+                state,
+                "helper_fallback",
+                [WarningCode.TIGER_HELPER_CONFIG_FALLBACK_USED],
             )
-        except TypeError:
-            config = get_config()
-    else:
-        raise TigerConnectionError("TigerOpen config class is unavailable")
-    for attr_name, attr_value in {
-        "account": account_id,
-        "props_path": props_path,
-    }.items():
-        if hasattr(config, attr_name):
-            setattr(config, attr_name, attr_value)
-    return config
+            _apply_loaded_account_context(config, account_id)
+            return config
+        except Exception as exc:
+            helper_error = exc
+            state.add_config_warning(WarningCode.TIGER_HELPER_CONFIG_FALLBACK_FAILED)
+    if callable(config_cls):
+        try:
+            config = config_cls(props_path=file_props_path)
+            _mark_config_constructed(state, "file_path_fallback")
+            _apply_loaded_account_context(config, account_id)
+            return config
+        except Exception as exc:
+            state.tiger_config_mode_selected = "failed"
+            if official_error is not None:
+                raise official_error
+            raise exc
+    state.tiger_config_mode_selected = "failed"
+    if helper_error is not None:
+        raise helper_error
+    if official_error is not None:
+        raise official_error
+    raise TigerConnectionError("TigerOpen config class is unavailable")
+
+
+def _mark_config_constructed(
+    state: _DiagnosticState,
+    mode: str,
+    warning_codes: list[WarningCode] | None = None,
+) -> None:
+    state.tiger_config_mode_selected = mode
+    state.tiger_config_constructed = True
+    state.add_config_warning(WarningCode.TIGER_CONFIG_MODE_SELECTED)
+    state.add_config_warnings(warning_codes or [])
+
+
+def _apply_loaded_account_context(config: Any, account_id: str) -> None:
+    if account_id and hasattr(config, "account") and not getattr(config, "account", None):
+        setattr(config, "account", account_id)
 
 
 def _record_static_config_state(
