@@ -101,13 +101,19 @@ def _dashboard_warnings(
 
 def _assumptions_need_review(assumptions: DashboardAssumptions) -> bool:
     return (
-        assumptions.annual_spending_target is None
+        assumptions.current_age is None
+        or assumptions.current_age <= 0
+        or assumptions.target_fire_age is None
+        or assumptions.target_fire_age <= 0
+        or assumptions.annual_spending_target is None
         or assumptions.annual_spending_target <= 0
         or assumptions.safe_withdrawal_rate is None
         or assumptions.safe_withdrawal_rate <= 0
         or assumptions.expected_annual_return is None
         or assumptions.inflation_rate is None
         or assumptions.emergency_buffer_months is None
+        or assumptions.emergency_buffer_months < 0
+        or assumptions.base_currency is None
     )
 
 

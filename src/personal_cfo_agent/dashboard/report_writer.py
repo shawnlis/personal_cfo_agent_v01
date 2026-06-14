@@ -44,10 +44,22 @@ def _write_markdown(path: Path, dashboard: dict[str, Any]) -> None:
     net_worth = dashboard["net_worth"]
     liquidity = dashboard["liquidity"]
     fire = dashboard["fire"]
+    assumptions = dashboard["assumptions"]
     lines = [
         "# Personal CFO Dashboard v0.2.0",
         "",
         DASHBOARD_STATEMENT,
+        "",
+        "## Assumptions",
+        "Assumptions are user-provided inputs for deterministic scenarios, not forecasts.",
+        f"- current_age: {_stringify(assumptions.get('current_age'))}",
+        f"- target_fire_age: {_stringify(assumptions.get('target_fire_age'))}",
+        f"- annual_spending_target: {_stringify(assumptions.get('annual_spending_target'))}",
+        f"- safe_withdrawal_rate: {_stringify(assumptions.get('safe_withdrawal_rate'))}",
+        f"- expected_annual_return: {_stringify(assumptions.get('expected_annual_return'))}",
+        f"- inflation_rate: {_stringify(assumptions.get('inflation_rate'))}",
+        f"- emergency_buffer_months: {_stringify(assumptions.get('emergency_buffer_months'))}",
+        f"- base_currency: {_stringify(assumptions.get('base_currency'))}",
         "",
         "## Net Worth",
         f"- Total assets: {_money(net_worth['total_assets'])}",
