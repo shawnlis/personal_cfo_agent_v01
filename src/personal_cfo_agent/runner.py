@@ -36,6 +36,10 @@ from personal_cfo_agent.providers.ibkr_connection_diagnostics import (
     IBKRConnectionDiagnostics,
     run_ibkr_connection_diagnostics,
 )
+from personal_cfo_agent.providers.moomoo_connection_diagnostics import (
+    MoomooConnectionDiagnostics,
+    run_moomoo_connection_diagnostics,
+)
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
 
@@ -162,6 +166,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Print redacted IBKR live data-path diagnostics after a gated read.",
     )
     parser.add_argument(
+        "--moomoo-data-diagnostics",
+        action="store_true",
+        help="Print redacted Moomoo live data-path diagnostics after a gated read.",
+    )
+    parser.add_argument(
         "--allow-live-read",
         action="store_true",
         help="Allow read-only live readiness checks for enabled API providers.",
@@ -230,9 +239,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.validate_manual_snapshot is not None:
         return _validate_manual_snapshot_cli(args.validate_manual_snapshot)
     if args.connection_diagnostics:
-        if args.provider != "ibkr":
-            parser.error("--connection-diagnostics is currently implemented for --provider ibkr")
-        return _connection_diagnostics_cli()
+        if args.provider not in {"ibkr", "moomoo"}:
+            parser.error(
+                "--connection-diagnostics is currently implemented for --provider ibkr or moomoo"
+            )
+        return _connection_diagnostics_cli(args.provider, local_env_result.exists)
     if args.ibkr_data_diagnostics:
         if args.provider != "ibkr":
             parser.error("--ibkr-data-diagnostics requires --provider ibkr")
@@ -240,6 +251,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--ibkr-data-diagnostics cannot be combined with --readiness-check")
         if not args.allow_live_read:
             parser.error("--ibkr-data-diagnostics requires --allow-live-read")
+    if args.moomoo_data_diagnostics:
+        if args.provider != "moomoo":
+            parser.error("--moomoo-data-diagnostics requires --provider moomoo")
+        if args.readiness_check:
+            parser.error("--moomoo-data-diagnostics cannot be combined with --readiness-check")
+        if not args.allow_live_read:
+            parser.error("--moomoo-data-diagnostics requires --allow-live-read")
     if args.readiness_check and args.provider not in {"ibkr", "moomoo", "tiger"}:
         parser.error(
             "--readiness-check is currently implemented for --provider ibkr, moomoo, or tiger"
@@ -258,6 +276,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             provider=args.provider,
             readiness_check=args.readiness_check,
             ibkr_data_diagnostics=args.ibkr_data_diagnostics,
+            moomoo_data_diagnostics=args.moomoo_data_diagnostics,
             manual_snapshot_path=args.manual_snapshot,
             dashboard=args.dashboard,
             dashboard_assumptions_path=args.dashboard_assumptions,
@@ -271,6 +290,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{status.provider_name}: {status.connection_mode.value}; warnings={warnings}")
         if args.ibkr_data_diagnostics and status.provider_name == "ibkr":
             for line in _format_ibkr_data_diagnostics(status.diagnostics):
+                print(line)
+        if args.moomoo_data_diagnostics and status.provider_name == "moomoo":
+            for line in _format_moomoo_data_diagnostics(status.diagnostics):
                 print(line)
     if result.output_dir is None:
         print("No provider produced data; no reports generated.")
@@ -310,9 +332,17 @@ def _print_manual_validation_issues(issues, severity: str) -> None:
         print(f"{severity}: {issue.path}: {issue.code.value}: {issue.message}")
 
 
-def _connection_diagnostics_cli() -> int:
-    diagnostics = run_ibkr_connection_diagnostics(dict(os.environ))
-    for line in _format_ibkr_connection_diagnostics(diagnostics):
+def _connection_diagnostics_cli(provider: str, local_env_loaded: bool) -> int:
+    if provider == "ibkr":
+        diagnostics = run_ibkr_connection_diagnostics(dict(os.environ))
+        lines = _format_ibkr_connection_diagnostics(diagnostics)
+    else:
+        diagnostics = run_moomoo_connection_diagnostics(
+            dict(os.environ),
+            local_env_loaded=local_env_loaded,
+        )
+        lines = _format_moomoo_connection_diagnostics(diagnostics)
+    for line in lines:
         print(line)
     return 0
 
@@ -332,6 +362,24 @@ def _format_ibkr_connection_diagnostics(
         f"Python executable: {diagnostics.python_executable}",
         f"ibapi import status: {'OK' if diagnostics.ibapi_import_ok else 'MISSING'}",
         f"TCP socket reachable host/port: {_yes_no(diagnostics.tcp_socket_reachable)}",
+        f"diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _format_moomoo_connection_diagnostics(
+    diagnostics: MoomooConnectionDiagnostics,
+) -> list[str]:
+    warning_text = ", ".join(code.value for code in diagnostics.warning_codes) or "None"
+    return [
+        "Moomoo connection diagnostics (values redacted)",
+        f"{LOCAL_ENV_FILENAME} loaded: {_yes_no(diagnostics.local_env_loaded)}",
+        f"CFO_MOOMOO_ENABLED present and true: {_yes_no(diagnostics.enabled_present and diagnostics.enabled_true)}",
+        f"CFO_MOOMOO_HOST present: {_yes_no(diagnostics.host_present)}",
+        f"CFO_MOOMOO_PORT present: {_yes_no(diagnostics.port_present)}",
+        f"CFO_ACCOUNT_HASH_SALT present: {_yes_no(diagnostics.hash_salt_present)}, redacted",
+        f"Python executable: {diagnostics.python_executable}",
+        f"futu import status: {'OK' if diagnostics.futu_import_ok else 'MISSING'}",
+        f"OpenD socket reachable host/port: {_yes_no(diagnostics.opend_socket_reachable)}",
         f"diagnostic warning codes: {warning_text}",
     ]
 
@@ -356,6 +404,27 @@ def _format_ibkr_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
         f"Position count: {diagnostics.get('position_count', 0)}",
         f"Account summary callback observed: {_yes_no(bool(diagnostics.get('account_summary_callback_seen')))}",
         f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
+        f"Timeout seconds: {diagnostics.get('timeout_seconds', 0)}",
+        f"Data diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _format_moomoo_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
+    if not diagnostics:
+        return ["Moomoo data-path diagnostics (values redacted): unavailable"]
+    warning_codes = diagnostics.get("warning_codes") or []
+    warning_text = ", ".join(str(code) for code in warning_codes) or "None"
+    return [
+        "Moomoo data-path diagnostics (values redacted)",
+        f"Connected to OpenD: {_yes_no(bool(diagnostics.get('connected_to_opend')))}",
+        f"Connection established: {_yes_no(bool(diagnostics.get('connection_established')))}",
+        f"Account list observed: {_yes_no(bool(diagnostics.get('account_list_seen')))}",
+        f"Account count redacted: {diagnostics.get('account_count_redacted', 0)}",
+        f"Positions observed: {_yes_no(bool(diagnostics.get('positions_seen')))}",
+        f"Position count: {diagnostics.get('position_count', 0)}",
+        f"Cash/balance observed: {_yes_no(bool(diagnostics.get('cash_seen')))}",
+        f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
+        f"Normalized rows count: {diagnostics.get('normalized_row_count', 0)}",
         f"Timeout seconds: {diagnostics.get('timeout_seconds', 0)}",
         f"Data diagnostic warning codes: {warning_text}",
     ]

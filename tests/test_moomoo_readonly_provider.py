@@ -14,10 +14,15 @@ from personal_cfo_agent.providers.moomoo_models import (
     MoomooAccountRow,
     MoomooCashRow,
     MoomooPositionRow,
+    MoomooReadDiagnostics,
     MoomooReadOnlySnapshot,
+)
+from personal_cfo_agent.providers.moomoo_connection_diagnostics import (
+    run_moomoo_connection_diagnostics,
 )
 from personal_cfo_agent.providers.moomoo_provider import MoomooProvider
 from personal_cfo_agent.runner import collect_provider_snapshots
+from personal_cfo_agent.runner import _format_moomoo_data_diagnostics
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +42,7 @@ FORBIDDEN_PUBLIC_METHODS = {
     "roll",
     "open_position",
     "close_position",
+    "unlock_trade",
 }
 
 
@@ -91,7 +97,73 @@ def test_missing_futu_sdk_returns_sdk_not_installed(monkeypatch) -> None:
     provider = MoomooProvider(_valid_config(), allow_live_read=True)
     snapshot = provider._sync()
     assert not snapshot.has_data()
+    assert WarningCode.MOOMOO_SDK_NOT_INSTALLED in snapshot.status.warning_codes
     assert WarningCode.SDK_NOT_INSTALLED in snapshot.status.warning_codes
+
+
+def test_connection_diagnostics_does_not_initiate_live_read(monkeypatch) -> None:
+    import personal_cfo_agent.providers.moomoo_connection_diagnostics as diagnostics_module
+
+    def _unreachable(*args, **kwargs):
+        raise OSError("not reachable")
+
+    monkeypatch.setattr(diagnostics_module.socket, "create_connection", _unreachable)
+    diagnostics = run_moomoo_connection_diagnostics(
+        _valid_env(),
+        local_env_loaded=True,
+        timeout_seconds=0.01,
+    )
+
+    assert diagnostics.local_env_loaded is True
+    assert diagnostics.enabled_true is True
+    assert diagnostics.opend_socket_reachable is False
+    assert WarningCode.MOOMOO_OPEND_UNREACHABLE in diagnostics.warning_codes
+    assert WarningCode.PROVIDER_CONNECTION_FAILED in diagnostics.warning_codes
+
+
+def test_cli_moomoo_connection_diagnostics_redacts_values_and_does_not_live_read(
+    tmp_path,
+) -> None:
+    local_env = tmp_path / ".env.local"
+    local_env.write_text(
+        "\n".join(
+            [
+                "CFO_MOOMOO_ENABLED=true",
+                "CFO_MOOMOO_HOST=192.0.2.55",
+                "CFO_MOOMOO_PORT=not-a-port",
+                "CFO_ACCOUNT_HASH_SALT" + "=" + "REDACTED_SALT_PLACEHOLDER",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "personal_cfo_agent.py"),
+            "--provider",
+            "moomoo",
+            "--connection-diagnostics",
+        ],
+        cwd=tmp_path,
+        env=_without_cfo_env(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    combined = result.stdout + result.stderr
+
+    assert result.returncode == 0
+    assert "Loaded local environment from .env.local; values redacted" in result.stdout
+    assert "Moomoo connection diagnostics (values redacted)" in result.stdout
+    assert ".env.local loaded: yes" in result.stdout
+    assert "CFO_MOOMOO_ENABLED present and true: yes" in result.stdout
+    assert "CFO_ACCOUNT_HASH_SALT present: yes, redacted" in result.stdout
+    assert "OpenD socket reachable host/port:" in result.stdout
+    assert "Read-only Moomoo sync only" not in result.stdout
+    assert "No provider produced data" not in result.stdout
+    for raw_value in ("192.0.2.55", "not-a-port", "REDACTED_SALT_PLACEHOLDER"):
+        assert raw_value not in combined
 
 
 def test_moomoo_provider_public_api_has_no_forbidden_methods() -> None:
@@ -104,6 +176,7 @@ def test_moomoo_provider_public_callable_api_is_allowlisted() -> None:
     provider = MoomooProvider(load_moomoo_config({}))
     allowed = {
         "validate_config",
+        "connection_diagnostics",
         "connect_read_only",
         "fetch_accounts",
         "fetch_cash",
@@ -141,6 +214,119 @@ def test_fixture_moomoo_snapshot_normalizes_and_hashes_account_id() -> None:
     assert "account_id_hash" in output_text
 
 
+def test_moomoo_data_diagnostics_schema_is_stable() -> None:
+    diagnostics = MoomooReadDiagnostics(
+        connected_to_opend=True,
+        connection_established=True,
+        account_list_seen=True,
+        account_count_redacted=1,
+        positions_seen=True,
+        position_count=2,
+        cash_seen=True,
+        cash_currency_count=1,
+        normalized_row_count=3,
+        timeout_seconds=10.0,
+        warning_codes=[WarningCode.MOOMOO_POSITIONS_EMPTY],
+    ).to_redacted_dict()
+
+    assert tuple(diagnostics.keys()) == (
+        "connected_to_opend",
+        "connection_established",
+        "account_list_seen",
+        "account_count_redacted",
+        "positions_seen",
+        "position_count",
+        "cash_seen",
+        "cash_currency_count",
+        "normalized_row_count",
+        "timeout_seconds",
+        "warning_codes",
+    )
+    text = "\n".join(_format_moomoo_data_diagnostics(diagnostics))
+    assert "Connection established: yes" in text
+    assert "Account count redacted: 1" in text
+    assert "Normalized rows count: 3" in text
+    assert "MOOMOO_POSITIONS_EMPTY" in text
+
+
+def test_empty_moomoo_account_list_warning_is_handled() -> None:
+    diagnostics = MoomooReadDiagnostics(
+        connected_to_opend=True,
+        connection_established=True,
+        account_list_seen=True,
+        account_count_redacted=0,
+        warning_codes=[
+            WarningCode.MOOMOO_ACCOUNT_LIST_EMPTY,
+            WarningCode.MOOMOO_NO_DATA_RETURNED,
+        ],
+    )
+    provider = MoomooProvider(
+        _valid_config(),
+        allow_live_read=True,
+        live_adapter=_FakeAdapter(MoomooReadOnlySnapshot(diagnostics=diagnostics)),
+    )
+    snapshot = provider._sync()
+
+    assert WarningCode.MOOMOO_ACCOUNT_LIST_EMPTY in snapshot.status.warning_codes
+    assert WarningCode.MOOMOO_NO_DATA_RETURNED in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["account_list_seen"] is True
+    assert snapshot.status.diagnostics["account_count_redacted"] == 0
+
+
+def test_empty_moomoo_positions_warning_is_handled() -> None:
+    diagnostics = MoomooReadDiagnostics(
+        connected_to_opend=True,
+        connection_established=True,
+        account_list_seen=True,
+        account_count_redacted=1,
+        positions_seen=True,
+        position_count=0,
+        warning_codes=[WarningCode.MOOMOO_POSITIONS_EMPTY],
+    )
+    provider = MoomooProvider(
+        _valid_config(),
+        allow_live_read=True,
+        live_adapter=_FakeAdapter(
+            MoomooReadOnlySnapshot(
+                accounts=[MoomooAccountRow(account_id="MOOMOO-EMPTY-ACCOUNT-123456")],
+                diagnostics=diagnostics,
+            )
+        ),
+    )
+    snapshot = provider._sync()
+
+    assert WarningCode.MOOMOO_POSITIONS_EMPTY in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["positions_seen"] is True
+    assert snapshot.status.diagnostics["position_count"] == 0
+
+
+def test_empty_moomoo_cash_warning_is_handled() -> None:
+    diagnostics = MoomooReadDiagnostics(
+        connected_to_opend=True,
+        connection_established=True,
+        account_list_seen=True,
+        account_count_redacted=1,
+        cash_seen=True,
+        cash_currency_count=0,
+        warning_codes=[WarningCode.MOOMOO_CASH_EMPTY],
+    )
+    provider = MoomooProvider(
+        _valid_config(),
+        allow_live_read=True,
+        live_adapter=_FakeAdapter(
+            MoomooReadOnlySnapshot(
+                accounts=[MoomooAccountRow(account_id="MOOMOO-EMPTY-ACCOUNT-123456")],
+                diagnostics=diagnostics,
+            )
+        ),
+    )
+    snapshot = provider._sync()
+
+    assert WarningCode.MOOMOO_CASH_EMPTY in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["cash_seen"] is True
+    assert snapshot.status.diagnostics["cash_currency_count"] == 0
+
+
 def test_moomoo_connection_failure_returns_warning_code_without_crashing() -> None:
     provider = MoomooProvider(
         _valid_config(),
@@ -149,6 +335,7 @@ def test_moomoo_connection_failure_returns_warning_code_without_crashing() -> No
     )
     snapshot = provider._sync()
     assert not snapshot.has_data()
+    assert WarningCode.MOOMOO_CONNECTION_FAILED in snapshot.status.warning_codes
     assert WarningCode.PROVIDER_CONNECTION_FAILED in snapshot.status.warning_codes
 
 
@@ -215,6 +402,27 @@ def test_cli_moomoo_live_read_refuses_without_explicit_flag(tmp_path) -> None:
     assert not (tmp_path / "reports").exists()
 
 
+def test_cli_moomoo_data_diagnostics_requires_explicit_live_flag(tmp_path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "personal_cfo_agent.py"),
+            "--provider",
+            "moomoo",
+            "--moomoo-data-diagnostics",
+        ],
+        cwd=tmp_path,
+        env={**_without_cfo_env(), **_valid_env()},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "--moomoo-data-diagnostics requires --allow-live-read" in result.stderr
+    assert "Read-only Moomoo sync only" not in result.stdout
+
+
 def test_generated_moomoo_outputs_stay_under_ignored_reports_path() -> None:
     report_path = "reports/personal_cfo_agent/moomoo_v012_live_smoke/provider_sync_summary.json"
     result = subprocess.run(
@@ -226,6 +434,16 @@ def test_generated_moomoo_outputs_stay_under_ignored_reports_path() -> None:
     )
     assert result.returncode == 0
     assert "reports/" in result.stdout
+
+
+def test_env_local_remains_ignored() -> None:
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", "--", ".env.local"],
+        cwd=ROOT,
+        check=False,
+    )
+
+    assert result.returncode == 0
 
 
 def test_moomoo_source_has_no_forbidden_call_markers() -> None:
@@ -259,7 +477,15 @@ class _FailingAdapter:
         )
 
         if self.mode == "connection":
-            raise MoomooConnectionError("OpenD unavailable")
+            raise MoomooConnectionError(
+                "OpenD unavailable",
+                MoomooReadDiagnostics(
+                    warning_codes=[
+                        WarningCode.MOOMOO_OPEND_UNREACHABLE,
+                        WarningCode.MOOMOO_CONNECTION_FAILED,
+                    ]
+                ),
+            )
         if self.mode == "fetch":
             raise MoomooFetchError("fetch failed")
         raise RuntimeError("unexpected adapter failure")
@@ -307,4 +533,15 @@ def _valid_env() -> dict[str, str]:
         "CFO_MOOMOO_ENABLED": "true",
         "CFO_MOOMOO_HOST": "127.0.0.1",
         "CFO_MOOMOO_PORT": "11111",
+    }
+
+
+def _without_cfo_env() -> dict[str, str]:
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("CFO_IBKR_")
+        and not key.startswith("CFO_MOOMOO_")
+        and not key.startswith("CFO_TIGER_")
+        and key != "CFO_ACCOUNT_HASH_SALT"
     }

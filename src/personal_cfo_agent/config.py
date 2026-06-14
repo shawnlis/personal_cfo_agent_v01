@@ -19,6 +19,7 @@ class RuntimeConfig:
     provider: str = "all"
     readiness_check: bool = False
     ibkr_data_diagnostics: bool = False
+    moomoo_data_diagnostics: bool = False
     manual_snapshot_path: Path | None = None
     dashboard: bool = False
     dashboard_assumptions_path: Path | None = None
@@ -60,7 +61,7 @@ CONNECTOR_STATUS_MATRIX: dict[str, dict[str, object]] = {
         "position_read": "likely_yes",
         "cash_read": "likely_yes",
         "implementation_priority": 1,
-        "notes": "v0.1.2 guarded read-only proof; OpenD must be started manually",
+        "notes": "v0.3.0 supervised read-only proof path with redacted diagnostics; OpenD must be started manually",
     },
     "tiger": {
         "status": "read_only_live_proof_candidate",
