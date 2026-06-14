@@ -1,0 +1,6 @@
+provider,account_id_hash,asset_id,asset_type,symbol,name,quantity,currency,market_value,cost_basis,unrealized_pnl,liquidity_bucket,risk_bucket,source_timestamp,source_confidence,needs_review,warning_codes,notes
+manual_snapshot,acct_cash,manual-cash,cash,SGD,SGD cash,50000.00,SGD,50000.00,,,cash,cash,2026-06-14,manual_snapshot,false,ACCOUNT_ID_HASHED,Fixture only.
+manual_snapshot,acct_etf,manual-etf,etf,VT,Global ETF,100.00,USD,150000.00,100000.00,,liquid,equity,2026-06-14,manual_snapshot,false,ACCOUNT_ID_HASHED,Fixture only.
+manual_snapshot,acct_property,manual-property,residential_property,,Primary residence,1.00,SGD,1000000.00,,,illiquid,real_estate,2026-06-14,manual_snapshot,true,ACCOUNT_ID_HASHED;MANUAL_VALUE_NEEDS_REVIEW;NEEDS_REVIEW,Fixture only.
+manual_snapshot,acct_unsupported,manual-poems,unsupported_broker,,POEMS aggregate,1.00,SGD,30000.00,,,liquid,equity,2025-01-01,manual_poems,true,ACCOUNT_ID_HASHED;MANUAL_VALUE_NEEDS_REVIEW;NEEDS_REVIEW,Fixture only.
+manual_snapshot,acct_mortgage,manual-mortgage,mortgage,,Primary mortgage,,SGD,-400000.00,,,liability,mortgage,2026-06-14,manual_snapshot,true,ACCOUNT_ID_HASHED;MANUAL_VALUE_NEEDS_REVIEW;NEEDS_REVIEW,Fixture only.
