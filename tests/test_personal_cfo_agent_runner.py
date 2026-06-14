@@ -76,6 +76,26 @@ def test_moomoo_live_read_requires_explicit_provider_and_flag() -> None:
     assert WarningCode.LIVE_READ_NOT_ALLOWED in moomoo_status.warning_codes
 
 
+def test_tiger_live_read_requires_explicit_provider_and_flag() -> None:
+    env = {
+        "CFO_TIGER_ENABLED": "1",
+        "CFO_TIGER_CONFIG_DIR": r"C:\tmp\tigeropen_config",
+        "CFO_TIGER_ACCOUNT": "TIGER_TEST",
+    }
+    blocked_without_flag = collect_provider_snapshots(
+        RuntimeConfig(env=env, allow_live_read=False, provider="tiger")
+    )
+    assert WarningCode.LIVE_READ_NOT_ALLOWED in blocked_without_flag[0].status.warning_codes
+
+    blocked_without_provider = collect_provider_snapshots(
+        RuntimeConfig(env=env, allow_live_read=True, provider="all")
+    )
+    tiger_status = next(
+        snapshot.status for snapshot in blocked_without_provider if snapshot.provider_name == "tiger"
+    )
+    assert WarningCode.LIVE_READ_NOT_ALLOWED in tiger_status.warning_codes
+
+
 def test_manual_fixture_runner_writes_required_output_bundle(tmp_path) -> None:
     result = run(
         RuntimeConfig(
