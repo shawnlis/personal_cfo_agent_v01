@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 from personal_cfo_agent.config import connector_status
@@ -36,7 +37,14 @@ SECRET_PATTERNS = [
     r"gh[opsu]_[A-Za-z0-9_]{20,}",
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
     r"xox[baprs]-[A-Za-z0-9-]{20,}",
+    r"(?im)^\s*CFO_IBKR_ACCOUNT\s*=\s*(?!\s*(?:#.*)?$)\S+",
+    r"(?im)^\s*CFO_ACCOUNT_HASH_SALT\s*=\s*(?!\s*(?:#.*)?$)\S+",
+    r"(?im)^\s*password\s*=\s*(?!\s*(?:#.*)?$)\S+",
+    r"(?im)^\s*private_key\s*=\s*(?!\s*(?:#.*)?$)\S+",
+    r"(?im)^\s*token\s*=\s*(?!\s*(?:#.*)?$)\S+",
 ]
+
+ENV_ACCOUNT_NUMBER_PATTERN = r"(?im)^\s*[A-Z0-9_]*ACCOUNT[A-Z0-9_]*\s*=\s*[A-Z]{1,5}[A-Z0-9_-]*\d{5,}"
 
 
 def test_provider_source_has_no_forbidden_operational_imports_or_calls() -> None:
@@ -83,6 +91,20 @@ def test_generated_outputs_stay_under_ignored_reports_path() -> None:
     assert "reports/" in gitignore
 
 
+def test_local_env_files_cannot_be_tracked_and_example_is_placeholder_only() -> None:
+    tracked = _tracked_paths()
+    assert Path(".env.local") not in tracked
+    assert Path(".env.example") in tracked
+
+    tracked_env_files = [path for path in tracked if path.name.startswith(".env")]
+    assert tracked_env_files == [Path(".env.example")]
+
+    text = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "CFO_IBKR_ACCOUNT=\n" in text
+    assert "CFO_ACCOUNT_HASH_SALT=\n" in text
+    assert re.search(ENV_ACCOUNT_NUMBER_PATTERN, text) is None
+
+
 def _source_files() -> list[Path]:
     return [
         *sorted((ROOT / "src" / "personal_cfo_agent").rglob("*.py")),
@@ -91,13 +113,22 @@ def _source_files() -> list[Path]:
 
 
 def _repo_text_files() -> list[Path]:
-    ignored_parts = {".git", "__pycache__", ".pytest_cache", "reports"}
     files: list[Path] = []
-    for path in ROOT.rglob("*"):
-        if not path.is_file():
+    for path in _tracked_paths():
+        absolute_path = ROOT / path
+        if not absolute_path.is_file():
             continue
-        if any(part in ignored_parts for part in path.parts):
-            continue
-        if path.suffix.lower() in {".py", ".md", ".toml", ".json", ".txt", ".csv"}:
-            files.append(path)
+        if absolute_path.suffix.lower() in {".py", ".md", ".toml", ".json", ".txt", ".csv"}:
+            files.append(absolute_path)
     return files
+
+
+def _tracked_paths() -> list[Path]:
+    result = subprocess.run(
+        ["git", "ls-files"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [Path(line) for line in result.stdout.splitlines() if line]

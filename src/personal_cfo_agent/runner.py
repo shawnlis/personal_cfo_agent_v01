@@ -22,6 +22,7 @@ from personal_cfo_agent.manual_snapshot import (
     load_manual_snapshot_document,
     write_manual_snapshot_template,
 )
+from personal_cfo_agent.local_env import LOCAL_ENV_FILENAME, load_local_env_file
 from personal_cfo_agent.models import NormalizedAsset, ProviderStatus, RawProviderSnapshot
 from personal_cfo_agent.normalizer import normalize_snapshots
 from personal_cfo_agent.providers import (
@@ -202,6 +203,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    local_env_result = load_local_env_file()
+    if local_env_result.exists:
+        print(f"Loaded local environment from {LOCAL_ENV_FILENAME}; values redacted")
     if args.write_manual_template is not None and args.validate_manual_snapshot is not None:
         parser.error("--write-manual-template and --validate-manual-snapshot cannot be combined")
     if args.write_manual_template is not None:
