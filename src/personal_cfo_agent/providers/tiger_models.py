@@ -21,6 +21,7 @@ class TigerReadDiagnostics:
     position_count: int = 0
     cash_currency_count: int = 0
     normalized_rows: int = 0
+    sdk_output_suppressed: bool = False
     warning_codes: tuple[WarningCode, ...] = ()
     stage_failures: dict[str, str] = field(default_factory=dict)
 
@@ -38,6 +39,7 @@ class TigerReadDiagnostics:
             "position_count": self.position_count,
             "cash_currency_count": self.cash_currency_count,
             "normalized_rows": self.normalized_rows,
+            "sdk_output_suppressed": self.sdk_output_suppressed,
             "warning_codes": [code.value for code in self.warning_codes],
             "stage_failures": dict(self.stage_failures),
         }

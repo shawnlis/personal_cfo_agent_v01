@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib
+import io
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from typing import Any
 
 from personal_cfo_agent.models import WarningCode
@@ -17,6 +19,9 @@ from personal_cfo_agent.providers.tiger_models import (
     TigerReadDiagnostics,
     TigerReadOnlySnapshot,
 )
+
+
+DEFAULT_PROPS_FILE = "tiger_openapi_config.properties"
 
 
 class TigerReadError(RuntimeError):
@@ -50,6 +55,7 @@ class _DiagnosticState:
     position_query_success: bool = False
     position_count: int = 0
     cash_currency_count: int = 0
+    sdk_output_suppressed: bool = False
     warning_codes: list[WarningCode] = field(default_factory=list)
     stage_failures: dict[str, str] = field(default_factory=dict)
 
@@ -74,6 +80,7 @@ class _DiagnosticState:
             position_query_success=self.position_query_success,
             position_count=self.position_count,
             cash_currency_count=self.cash_currency_count,
+            sdk_output_suppressed=self.sdk_output_suppressed,
             warning_codes=tuple(self.warning_codes),
             stage_failures=dict(self.stage_failures),
         )
@@ -91,6 +98,7 @@ class TigerReadOnlyAdapter:
 
     def collect(self) -> TigerReadOnlySnapshot:
         state = _DiagnosticState()
+        state.sdk_output_suppressed = True
         try:
             sdk = _load_sdk()
         except TigerSDKNotInstalledError as exc:
@@ -106,8 +114,9 @@ class TigerReadOnlyAdapter:
             )
         source_timestamp = datetime.now(timezone.utc).isoformat()
         try:
-            config = _build_config(sdk, self.config_dir, self.account_id)
-            client = sdk["client_cls"](config)
+            with _suppress_sdk_console_output():
+                config = _build_config(sdk, self.config_dir, self.account_id)
+                client = sdk["client_cls"](config)
             state.config_loaded = True
         except Exception as exc:  # pragma: no cover - exercised with live TigerOpen only
             state.fail(
@@ -121,7 +130,8 @@ class TigerReadOnlyAdapter:
 
         try:
             state.asset_query_attempted = True
-            asset_payload = _call_first(client, ["get_prime_assets", "get_assets"])
+            with _suppress_sdk_console_output():
+                asset_payload = _call_first(client, ["get_prime_assets", "get_assets"])
             state.asset_query_success = True
         except TigerFetchError as exc:
             state.fail("assets", "TigerOpen asset query failed", WarningCode.PROVIDER_FETCH_FAILED)
@@ -132,9 +142,10 @@ class TigerReadOnlyAdapter:
 
         try:
             state.position_query_attempted = True
-            position_payload = _call_first(
-                client, ["get_positions", "get_prime_positions", "get_positions_v2"]
-            )
+            with _suppress_sdk_console_output():
+                position_payload = _call_first(
+                    client, ["get_positions", "get_prime_positions", "get_positions_v2"]
+                )
             state.position_query_success = True
         except TigerFetchError as exc:
             state.fail(
@@ -188,15 +199,27 @@ def _load_sdk() -> dict[str, Any]:
 def _build_config(sdk: dict[str, Any], config_dir: str, account_id: str) -> Any:
     config_module = sdk["config_module"]
     get_config = getattr(config_module, "get_client_config", None)
-    config = get_config() if callable(get_config) else config_module.TigerOpenClientConfig()
+    props_path = str(Path(config_dir) / DEFAULT_PROPS_FILE)
+    if callable(get_config):
+        try:
+            config = get_config(account=account_id, props_path=props_path)
+        except TypeError:
+            config = get_config()
+    else:
+        config = config_module.TigerOpenClientConfig()
     for attr_name, attr_value in {
         "account": account_id,
-        "config_dir": str(Path(config_dir)),
-        "private_key_path": str(Path(config_dir)),
+        "props_path": props_path,
     }.items():
         if hasattr(config, attr_name):
             setattr(config, attr_name, attr_value)
     return config
+
+
+@contextmanager
+def _suppress_sdk_console_output():
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        yield
 
 
 def _call_first(client: Any, method_names: list[str]) -> Any:

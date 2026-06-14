@@ -98,4 +98,6 @@ Successful live reads use the existing normalized asset ledger schema and provid
 
 ## v0.3.1 Status
 
-On the first v0.3.1 setup pass, `tigeropen` imported successfully and readiness passed, but connection diagnostics reported `PROVIDER_CONFIG_MISSING` because the configured local TigerOpen config directory/file was not present. No live read was attempted and no report bundle was generated.
+On the first v0.3.1 setup pass, `tigeropen` imported successfully and readiness passed. After pointing `CFO_TIGER_CONFIG_DIR` at the directory containing the local TigerOpen properties file, connection diagnostics passed with no warning codes.
+
+The supervised live read was then attempted once. It failed closed during TigerOpen config/client initialization with `PROVIDER_CONNECTION_FAILED`. No asset query, position query, cash query, normalized rows, or report bundle was produced.

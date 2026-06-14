@@ -37,10 +37,21 @@ Result:
 
 Only boolean/redacted checks were printed.
 
+Initial environment value:
+
 - `CFO_TIGER_ENABLED` present and true: yes.
 - `CFO_TIGER_CONFIG_DIR` present: yes.
 - Config dir exists: no.
 - Config file exists: no.
+- `CFO_TIGER_ACCOUNT` present: yes, redacted.
+- `CFO_ACCOUNT_HASH_SALT` present: yes, redacted.
+
+After pointing `CFO_TIGER_CONFIG_DIR` at the directory containing the local TigerOpen properties file:
+
+- `CFO_TIGER_ENABLED` present and true: yes.
+- `CFO_TIGER_CONFIG_DIR` present: yes.
+- Config dir exists: yes.
+- Config file exists: yes.
 - `CFO_TIGER_ACCOUNT` present: yes, redacted.
 - `CFO_ACCOUNT_HASH_SALT` present: yes, redacted.
 
@@ -76,22 +87,17 @@ Result:
 - TigerOpen import status: OK.
 - Tiger provider enabled: yes.
 - Tiger config directory configured: yes.
-- Config dir exists: no.
-- Config file exists: no.
+- Config dir exists: yes.
+- Config file exists: yes.
 - Account configured: yes, redacted.
 - Account hash salt configured: yes, redacted.
-- Warning codes: `PROVIDER_CONFIG_MISSING`.
+- Warning codes: None.
 
 ## Supervised Live Attempt
 
-The supervised live read was not attempted.
+The supervised live read was attempted once after readiness and connection diagnostics passed.
 
-Reason:
-
-- Connection diagnostics did not pass because the configured local TigerOpen config directory/file was not present.
-- The v0.3.1 live-read command remains gated behind successful readiness and connection diagnostics.
-
-Command not run:
+Command run:
 
 ```powershell
 python .\scripts\personal_cfo_agent.py `
@@ -101,14 +107,32 @@ python .\scripts\personal_cfo_agent.py `
   --out-dir .\reports\personal_cfo_agent\tiger_v031_live_acceptance
 ```
 
+Result:
+
+- SDK import OK: yes.
+- Config loaded: no.
+- Account context observed: yes.
+- Account count redacted: 1.
+- Asset query attempted: no.
+- Asset query success: no.
+- Position query attempted: no.
+- Position query success: no.
+- Position count: 0.
+- Cash currency count: 0.
+- Normalized rows: 0.
+- SDK output suppressed: yes.
+- Warning codes: `PROVIDER_CONNECTION_FAILED`.
+- Stage failure: `config_load=TigerOpen config/client initialization failed`.
+- Report bundle generated: no.
+
 ## Acceptance Status
 
 Acceptance success: no.
 
 Current counts:
 
-- Account context observed: no live attempt.
-- Account count redacted: 0.
+- Account context observed: yes.
+- Account count redacted: 1.
 - Position count: 0.
 - Cash currency count: 0.
 - Normalized rows: 0.
@@ -116,10 +140,14 @@ Current counts:
 
 ## Next Manual Step
 
-Configure the local TigerOpen config directory and expected config file on this machine, then rerun:
+Review local TigerOpen client configuration outside Git, then rerun:
 
 ```powershell
-python .\scripts\personal_cfo_agent.py --provider tiger --connection-diagnostics
+python .\scripts\personal_cfo_agent.py `
+  --provider tiger `
+  --allow-live-read `
+  --tiger-data-diagnostics `
+  --out-dir .\reports\personal_cfo_agent\tiger_v031_live_acceptance
 ```
 
-Only after diagnostics return no warning codes should the supervised read-only live command be run once.
+Do not add any write, order, unlock, or transfer method while investigating the config/client initialization failure.

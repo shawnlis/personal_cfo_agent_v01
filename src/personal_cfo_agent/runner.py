@@ -450,6 +450,7 @@ def _format_tiger_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
         f"Position count: {diagnostics.get('position_count', 0)}",
         f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
         f"Normalized rows: {diagnostics.get('normalized_rows', 0)}",
+        f"SDK output suppressed: {_yes_no(bool(diagnostics.get('sdk_output_suppressed')))}",
         f"Data diagnostic warning codes: {warning_text}",
         f"Stage failures: {stage_text}",
     ]

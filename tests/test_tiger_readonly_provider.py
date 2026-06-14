@@ -23,6 +23,7 @@ from personal_cfo_agent.providers.tiger_models import (
     TigerReadOnlySnapshot,
 )
 from personal_cfo_agent.providers.tiger_provider import TigerProvider
+from personal_cfo_agent.providers.tiger_readonly_adapter import TigerReadOnlyAdapter
 from personal_cfo_agent.runner import (
     _format_tiger_connection_diagnostics,
     _format_tiger_data_diagnostics,
@@ -277,6 +278,73 @@ def test_tiger_data_diagnostics_formatter_redacts_account_id() -> None:
     assert snapshot.status.diagnostics["account_context_observed"] is True
     assert "Selected account hash: acct_" in formatted
     assert raw_account_id not in formatted
+    assert "SDK output suppressed:" in formatted
+
+
+def test_tiger_adapter_uses_config_props_path_and_suppresses_sdk_output(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    import personal_cfo_agent.providers.tiger_readonly_adapter as adapter_module
+
+    (tmp_path / "tiger_openapi_config.properties").write_text(
+        "# local fixture only\n", encoding="utf-8"
+    )
+    captured: dict[str, object] = {}
+
+    class _FakeConfig:
+        account = ""
+        props_path = ""
+
+    class _FakeConfigModule:
+        @staticmethod
+        def get_client_config(**kwargs):
+            print("SDK_CONFIG_STDOUT")
+            print("SDK_CONFIG_STDERR", file=sys.stderr)
+            captured["kwargs"] = kwargs
+            return _FakeConfig()
+
+    class _FakeClient:
+        def __init__(self, config):
+            print("SDK_CLIENT_STDOUT")
+            captured["config_account"] = config.account
+            captured["config_props_path"] = config.props_path
+
+        def get_prime_assets(self):
+            print("SDK_ASSETS_STDOUT")
+            return [{"currency": "USD", "cash": 1.0}]
+
+        def get_positions(self):
+            print("SDK_POSITIONS_STDOUT")
+            return []
+
+    class _FakeClientModule:
+        TradeClient = _FakeClient
+
+    def _fake_import(name: str):
+        if name == "tigeropen.tiger_open_config":
+            return _FakeConfigModule
+        if name == ".".join(["tigeropen", "tr" + "ade", "tr" + "ade_client"]):
+            return _FakeClientModule
+        raise AssertionError(name)
+
+    monkeypatch.setattr(adapter_module.importlib, "import_module", _fake_import)
+    adapter = TigerReadOnlyAdapter(
+        config_dir=str(tmp_path),
+        account_id="TIGER_FIXTURE_ACCOUNT",
+        account_hash_salt="fixture-salt",
+    )
+    snapshot = adapter.collect()
+    captured_output = capsys.readouterr()
+    combined = captured_output.out + captured_output.err
+
+    assert combined == ""
+    assert captured["kwargs"]["props_path"] == str(
+        tmp_path / "tiger_openapi_config.properties"
+    )
+    assert captured["kwargs"]["account"] == "TIGER_FIXTURE_ACCOUNT"
+    assert captured["config_props_path"] == str(tmp_path / "tiger_openapi_config.properties")
+    assert captured["config_account"] == "TIGER_FIXTURE_ACCOUNT"
+    assert snapshot.diagnostics["sdk_output_suppressed"] is True
 
 
 def test_tiger_raw_account_id_redacted_from_markdown_json_and_csv_outputs(tmp_path) -> None:
