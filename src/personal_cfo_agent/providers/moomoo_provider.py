@@ -170,6 +170,7 @@ class MoomooProvider(ProviderBase):
         return MoomooReadOnlyAdapter(
             host=str(settings["CFO_MOOMOO_HOST"]),
             port=int(settings["CFO_MOOMOO_PORT"]),
+            account_hash_salt=settings.get("CFO_ACCOUNT_HASH_SALT"),
         )
 
     def _numeric_config_is_valid(self) -> bool:
@@ -186,7 +187,7 @@ class MoomooProvider(ProviderBase):
 
     def _record_snapshot_diagnostics(self, snapshot: MoomooReadOnlySnapshot) -> None:
         diagnostics = snapshot.diagnostics.to_redacted_dict()
-        if diagnostics["warning_codes"] or diagnostics["connection_established"]:
+        if diagnostics["warning_codes"] or diagnostics["context_opened"]:
             self.diagnostics = diagnostics
 
     def _record_adapter_diagnostics(self, exc: Exception) -> None:

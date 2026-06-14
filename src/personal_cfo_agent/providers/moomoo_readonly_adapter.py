@@ -6,10 +6,12 @@ import io
 import importlib
 import logging
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
 from personal_cfo_agent.models import WarningCode
+from personal_cfo_agent.normalizer import hash_account_id
 from personal_cfo_agent.providers.moomoo_models import (
     MoomooAccountRow,
     MoomooCashRow,
@@ -37,6 +39,68 @@ class MoomooFetchError(_MoomooError):
     pass
 
 
+@dataclass
+class _DiagnosticState:
+    sdk_import_ok: bool = False
+    opend_socket_reachable: bool = False
+    context_opened: bool = False
+    account_list_query_attempted: bool = False
+    account_list_query_success: bool = False
+    account_count_redacted: int = 0
+    selected_account_hash: str | None = None
+    account_filter_mismatch: bool = False
+    account_info_query_attempted: bool = False
+    account_info_query_success: bool = False
+    position_query_attempted: bool = False
+    position_query_success: bool = False
+    position_count: int = 0
+    cash_query_attempted: bool = False
+    cash_query_success: bool = False
+    cash_currency_count: int = 0
+    normalized_rows: int = 0
+    sdk_output_suppressed: bool = False
+    timeout_seconds: float = 0.0
+    warning_codes: list[WarningCode] = field(default_factory=list)
+    stage_failures: dict[str, str] = field(default_factory=dict)
+
+    def add_warning(self, code: WarningCode) -> None:
+        if code not in self.warning_codes:
+            self.warning_codes.append(code)
+
+    def add_warnings(self, codes: list[WarningCode]) -> None:
+        for code in codes:
+            self.add_warning(code)
+
+    def fail(self, stage: str, summary: str, codes: list[WarningCode]) -> None:
+        self.stage_failures[stage] = summary
+        self.add_warnings(codes)
+
+    def to_diagnostics(self) -> MoomooReadDiagnostics:
+        return MoomooReadDiagnostics(
+            sdk_import_ok=self.sdk_import_ok,
+            opend_socket_reachable=self.opend_socket_reachable,
+            context_opened=self.context_opened,
+            account_list_query_attempted=self.account_list_query_attempted,
+            account_list_query_success=self.account_list_query_success,
+            account_count_redacted=self.account_count_redacted,
+            selected_account_hash=self.selected_account_hash,
+            account_filter_mismatch=self.account_filter_mismatch,
+            account_info_query_attempted=self.account_info_query_attempted,
+            account_info_query_success=self.account_info_query_success,
+            position_query_attempted=self.position_query_attempted,
+            position_query_success=self.position_query_success,
+            position_count=self.position_count,
+            cash_query_attempted=self.cash_query_attempted,
+            cash_query_success=self.cash_query_success,
+            cash_currency_count=self.cash_currency_count,
+            normalized_rows=self.normalized_rows,
+            sdk_output_suppressed=self.sdk_output_suppressed,
+            timeout_seconds=self.timeout_seconds,
+            warning_codes=_dedupe_warning_codes(self.warning_codes),
+            stage_failures=dict(self.stage_failures),
+        )
+
+
 class MoomooReadOnlyAdapter:
     """Collects account data from a manually started OpenD session."""
 
@@ -45,89 +109,76 @@ class MoomooReadOnlyAdapter:
         host: str,
         port: int,
         account_id: str = "moomoo_default",
+        account_hash_salt: str | None = None,
         timeout_seconds: float = 10.0,
     ) -> None:
         self.host = host
         self.port = port
         self.account_id = account_id
+        self.account_hash_salt = account_hash_salt
         self.timeout_seconds = timeout_seconds
 
     def collect(self) -> MoomooReadOnlySnapshot:
         sdk = _load_sdk()
         _quiet_sdk_logging(sdk)
+        state = _DiagnosticState(
+            sdk_import_ok=True,
+            sdk_output_suppressed=True,
+            timeout_seconds=self.timeout_seconds,
+        )
+        state.add_warning(WarningCode.MOOMOO_SDK_OUTPUT_SUPPRESSED)
         context = None
         source_timestamp = datetime.now(timezone.utc).isoformat()
         try:
             with _suppress_sdk_console_output():
                 context = sdk.OpenSecTradeContext(host=self.host, port=self.port)
+            state.opend_socket_reachable = True
+            state.context_opened = True
         except Exception as exc:  # pragma: no cover - exercised with live OpenD only
-            diagnostics = _build_diagnostics(
-                connected_to_opend=False,
-                connection_established=False,
-                account_list_seen=False,
-                account_count=0,
-                positions_seen=False,
-                position_count=0,
-                cash_seen=False,
-                cash_currency_count=0,
-                normalized_row_count=0,
-                timeout_seconds=self.timeout_seconds,
-                warning_codes=[
+            state.fail(
+                "context_open",
+                "SDK context open failed",
+                [
+                    WarningCode.MOOMOO_CONTEXT_OPEN_FAILED,
                     WarningCode.MOOMOO_OPEND_UNREACHABLE,
                     WarningCode.MOOMOO_CONNECTION_FAILED,
                     WarningCode.PROVIDER_CONNECTION_FAILED,
                 ],
             )
-            raise MoomooConnectionError("Moomoo OpenD connection failed", diagnostics) from exc
+            raise MoomooConnectionError(
+                "Moomoo OpenD connection failed", state.to_diagnostics()
+            ) from exc
 
         account_ids: list[str] = []
-        account_list_seen = False
         cash_rows: list[MoomooCashRow] = []
-        cash_seen = False
         position_rows: list[MoomooPositionRow] = []
-        positions_seen = False
+        selected_account_id = self.account_id
         try:
             with _suppress_sdk_console_output():
-                account_ids, account_list_seen = self._collect_account_ids(context, sdk)
-                cash_rows, cash_seen = self._collect_cash(context, sdk, source_timestamp)
-                position_rows, positions_seen = self._collect_positions(
-                    context, sdk, source_timestamp
+                account_ids = self._collect_account_ids(context, sdk, state)
+                selected_account_id = self._select_account_id(account_ids, state)
+                cash_rows = self._collect_cash(
+                    context, sdk, source_timestamp, selected_account_id, state
+                )
+                position_rows = self._collect_positions(
+                    context, sdk, source_timestamp, selected_account_id, state
                 )
         except MoomooFetchError as exc:
             if exc.diagnostics is not None:
                 raise
-            diagnostics = _build_diagnostics(
-                connected_to_opend=True,
-                connection_established=True,
-                account_list_seen=account_list_seen,
-                account_count=len(account_ids),
-                positions_seen=positions_seen,
-                position_count=len(position_rows),
-                cash_seen=cash_seen,
-                cash_currency_count=len({row.currency for row in cash_rows if row.currency}),
-                normalized_row_count=len(cash_rows) + len(position_rows),
-                timeout_seconds=self.timeout_seconds,
-                warning_codes=[WarningCode.PROVIDER_FETCH_FAILED],
-            )
-            raise MoomooFetchError("Moomoo read requests failed", diagnostics) from exc
+            state.add_warning(WarningCode.PROVIDER_FETCH_FAILED)
+            raise MoomooFetchError(
+                "Moomoo read requests failed", state.to_diagnostics()
+            ) from exc
         except Exception as exc:  # pragma: no cover - exercised with live OpenD only
-            diagnostics = _build_diagnostics(
-                connected_to_opend=True,
-                connection_established=True,
-                account_list_seen=False,
-                account_count=0,
-                positions_seen=False,
-                position_count=0,
-                cash_seen=False,
-                cash_currency_count=0,
-                normalized_row_count=0,
-                timeout_seconds=self.timeout_seconds,
-                warning_codes=[
-                    WarningCode.MOOMOO_CALLBACK_TIMEOUT,
-                    WarningCode.PROVIDER_FETCH_FAILED,
-                ],
+            state.fail(
+                "fetch",
+                f"SDK read stage raised {_safe_exception_name(exc)}",
+                [WarningCode.MOOMOO_CALLBACK_TIMEOUT, WarningCode.PROVIDER_FETCH_FAILED],
             )
-            raise MoomooFetchError("Moomoo read requests failed", diagnostics) from exc
+            raise MoomooFetchError(
+                "Moomoo read requests failed", state.to_diagnostics()
+            ) from exc
         finally:
             close = getattr(context, "close", None)
             if callable(close):
@@ -136,66 +187,118 @@ class MoomooReadOnlyAdapter:
 
         currencies = [row.currency for row in cash_rows if row.currency]
         account_currency = currencies[0] if currencies else None
-        account_count = len(account_ids)
-        if not account_ids and (cash_rows or position_rows):
-            account_ids = [self.account_id]
-        warnings = _data_path_warnings(
-            account_list_seen=account_list_seen,
-            account_count=account_count,
-            cash_seen=cash_seen,
-            cash_rows=cash_rows,
-            positions_seen=positions_seen,
-            position_rows=position_rows,
-        )
-        diagnostics = _build_diagnostics(
-            connected_to_opend=True,
-            connection_established=True,
-            account_list_seen=account_list_seen,
-            account_count=account_count,
-            positions_seen=positions_seen,
-            position_count=len(position_rows),
-            cash_seen=cash_seen,
-            cash_currency_count=len({row.currency for row in cash_rows if row.currency}),
-            normalized_row_count=len(cash_rows) + len(position_rows),
-            timeout_seconds=self.timeout_seconds,
-            warning_codes=warnings,
+        state.position_count = len(position_rows)
+        state.cash_currency_count = len({row.currency for row in cash_rows if row.currency})
+        state.normalized_rows = len(cash_rows) + len(position_rows)
+        state.add_warnings(
+            _data_path_warnings(
+                state=state,
+                cash_rows=cash_rows,
+                position_rows=position_rows,
+            )
         )
         return MoomooReadOnlySnapshot(
             accounts=[
                 MoomooAccountRow(
-                    account_id=account_ids[0] if account_ids else self.account_id,
+                    account_id=selected_account_id,
                     currency=account_currency,
                     notes="Moomoo OpenD read-only account",
                 )
             ],
             cash=cash_rows,
             positions=position_rows,
-            diagnostics=diagnostics,
+            diagnostics=state.to_diagnostics(),
         )
 
-    def _collect_account_ids(self, context: Any, sdk: Any) -> tuple[list[str], bool]:
+    def _collect_account_ids(
+        self, context: Any, sdk: Any, state: "_DiagnosticState"
+    ) -> list[str]:
         query = _first_callable(context, ["acc_list_query", "get_acc_list"])
         if query is None:
-            return [], False
+            state.fail(
+                "account_list",
+                "SDK account list query unavailable",
+                [WarningCode.MOOMOO_ACCOUNT_LIST_FAILED, WarningCode.PROVIDER_FETCH_FAILED],
+            )
+            raise MoomooFetchError("Moomoo account list query unavailable")
+        state.account_list_query_attempted = True
         ret_code, data = query()
         if ret_code != _ret_ok(sdk):
-            raise MoomooFetchError(str(data))
+            state.fail(
+                "account_list",
+                "SDK returned nonzero ret code",
+                [WarningCode.MOOMOO_ACCOUNT_LIST_FAILED, WarningCode.PROVIDER_FETCH_FAILED],
+            )
+            raise MoomooFetchError("Moomoo account list query failed", state.to_diagnostics())
         account_ids: list[str] = []
         for row in _rows(data):
             account_id = _first_value(row, ["acc_id", "accID", "account_id", "account"], "")
             if account_id:
                 account_ids.append(str(account_id))
-        return account_ids, True
+        state.account_list_query_success = True
+        state.account_count_redacted = len(account_ids)
+        return account_ids
+
+    def _select_account_id(
+        self, account_ids: list[str], state: "_DiagnosticState"
+    ) -> str:
+        if self.account_id != "moomoo_default":
+            if account_ids and self.account_id not in account_ids:
+                state.account_filter_mismatch = True
+                state.fail(
+                    "account_filter",
+                    "Configured account filter not found in account list",
+                    [
+                        WarningCode.MOOMOO_ACCOUNT_FILTER_MISMATCH,
+                        WarningCode.PROVIDER_FETCH_FAILED,
+                    ],
+                )
+                raise MoomooFetchError(
+                    "Moomoo account filter mismatch", state.to_diagnostics()
+                )
+            selected = self.account_id
+        elif account_ids:
+            selected = account_ids[0]
+        else:
+            selected = self.account_id
+        if selected != "moomoo_default":
+            state.selected_account_hash = hash_account_id(selected, self.account_hash_salt)
+        return selected
 
     def _collect_cash(
-        self, context: Any, sdk: Any, source_timestamp: str
-    ) -> tuple[list[MoomooCashRow], bool]:
+        self,
+        context: Any,
+        sdk: Any,
+        source_timestamp: str,
+        account_id: str,
+        state: "_DiagnosticState",
+    ) -> list[MoomooCashRow]:
         query = _first_callable(context, ["accinfo_query"])
         if query is None:
-            return [], False
+            state.fail(
+                "account_info",
+                "SDK account info query unavailable",
+                [
+                    WarningCode.MOOMOO_ACCOUNT_INFO_FAILED,
+                    WarningCode.MOOMOO_CASH_QUERY_FAILED,
+                    WarningCode.PROVIDER_FETCH_FAILED,
+                ],
+            )
+            raise MoomooFetchError("Moomoo account info query unavailable")
+        state.account_info_query_attempted = True
+        state.cash_query_attempted = True
         ret_code, data = query(trd_env=_real_env(sdk))
         if ret_code != _ret_ok(sdk):
-            raise MoomooFetchError(str(data))
+            state.fail(
+                "account_info",
+                "SDK returned nonzero ret code",
+                [
+                    WarningCode.MOOMOO_ACCOUNT_INFO_FAILED,
+                    WarningCode.MOOMOO_CASH_QUERY_FAILED,
+                    WarningCode.PROVIDER_FETCH_FAILED,
+                ],
+            )
+            raise MoomooFetchError("Moomoo account info query failed", state.to_diagnostics())
         rows = _rows(data)
         cash_rows: list[MoomooCashRow] = []
         for row in rows:
@@ -204,24 +307,49 @@ class MoomooReadOnlyAdapter:
             if cash_amount is not None:
                 cash_rows.append(
                     MoomooCashRow(
-                        account_id=self.account_id,
+                        account_id=account_id,
                         currency=currency,
                         amount=cash_amount,
                         source_timestamp=source_timestamp,
                         notes="Moomoo OpenD account info cash",
                     )
                 )
-        return cash_rows, True
+        state.account_info_query_success = True
+        state.cash_query_success = True
+        state.cash_currency_count = len({row.currency for row in cash_rows if row.currency})
+        return cash_rows
 
     def _collect_positions(
-        self, context: Any, sdk: Any, source_timestamp: str
-    ) -> tuple[list[MoomooPositionRow], bool]:
+        self,
+        context: Any,
+        sdk: Any,
+        source_timestamp: str,
+        account_id: str,
+        state: "_DiagnosticState",
+    ) -> list[MoomooPositionRow]:
         query = _first_callable(context, ["position_list_query"])
         if query is None:
-            return [], False
+            state.fail(
+                "positions",
+                "SDK position query unavailable",
+                [
+                    WarningCode.MOOMOO_POSITION_LIST_FAILED,
+                    WarningCode.PROVIDER_FETCH_FAILED,
+                ],
+            )
+            raise MoomooFetchError("Moomoo position query unavailable")
+        state.position_query_attempted = True
         ret_code, data = query(trd_env=_real_env(sdk))
         if ret_code != _ret_ok(sdk):
-            raise MoomooFetchError(str(data))
+            state.fail(
+                "positions",
+                "SDK returned nonzero ret code",
+                [
+                    WarningCode.MOOMOO_POSITION_LIST_FAILED,
+                    WarningCode.PROVIDER_FETCH_FAILED,
+                ],
+            )
+            raise MoomooFetchError("Moomoo position query failed", state.to_diagnostics())
         positions: list[MoomooPositionRow] = []
         for row in _rows(data):
             code = str(_first_value(row, ["code", "stock_code", "symbol"], ""))
@@ -232,7 +360,7 @@ class MoomooReadOnlyAdapter:
             currency = _first_value(row, ["currency"], None)
             positions.append(
                 MoomooPositionRow(
-                    account_id=self.account_id,
+                    account_id=account_id,
                     asset_id=f"MOOMOO-{code}",
                     asset_type="equity",
                     symbol=code,
@@ -245,7 +373,9 @@ class MoomooReadOnlyAdapter:
                     notes="Moomoo OpenD position list",
                 )
             )
-        return positions, True
+        state.position_query_success = True
+        state.position_count = len(positions)
+        return positions
 
 
 def _load_sdk() -> Any:
@@ -325,23 +455,25 @@ def _first_float(row: dict[str, Any], keys: list[str]) -> float | None:
 
 def _data_path_warnings(
     *,
-    account_list_seen: bool,
-    account_count: int,
-    cash_seen: bool,
+    state: _DiagnosticState,
     cash_rows: list[MoomooCashRow],
-    positions_seen: bool,
     position_rows: list[MoomooPositionRow],
 ) -> list[WarningCode]:
     warnings: list[WarningCode] = []
-    if not account_list_seen and not cash_seen and not positions_seen:
+    if not (
+        state.account_list_query_attempted
+        or state.cash_query_attempted
+        or state.position_query_attempted
+    ):
         warnings.append(WarningCode.MOOMOO_DATA_PATH_NOT_IMPLEMENTED)
-    if account_list_seen and account_count == 0:
+    if state.account_list_query_success and state.account_count_redacted == 0:
         warnings.append(WarningCode.MOOMOO_ACCOUNT_LIST_EMPTY)
-    if positions_seen and not position_rows:
+    if state.position_query_success and not position_rows:
+        warnings.append(WarningCode.MOOMOO_POSITION_LIST_EMPTY)
         warnings.append(WarningCode.MOOMOO_POSITIONS_EMPTY)
-    if cash_seen and not cash_rows:
+    if state.cash_query_success and not cash_rows:
         warnings.append(WarningCode.MOOMOO_CASH_EMPTY)
-    if not cash_seen or not positions_seen:
+    if not state.cash_query_attempted or not state.position_query_attempted:
         warnings.append(WarningCode.MOOMOO_CALLBACK_TIMEOUT)
     if not cash_rows and not position_rows:
         warnings.extend(
@@ -350,33 +482,8 @@ def _data_path_warnings(
     return _dedupe_warning_codes(warnings)
 
 
-def _build_diagnostics(
-    *,
-    connected_to_opend: bool,
-    connection_established: bool,
-    account_list_seen: bool,
-    account_count: int,
-    positions_seen: bool,
-    position_count: int,
-    cash_seen: bool,
-    cash_currency_count: int,
-    normalized_row_count: int,
-    timeout_seconds: float,
-    warning_codes: list[WarningCode],
-) -> MoomooReadDiagnostics:
-    return MoomooReadDiagnostics(
-        connected_to_opend=connected_to_opend,
-        connection_established=connection_established,
-        account_list_seen=account_list_seen,
-        account_count_redacted=account_count,
-        positions_seen=positions_seen,
-        position_count=position_count,
-        cash_seen=cash_seen,
-        cash_currency_count=cash_currency_count,
-        normalized_row_count=normalized_row_count,
-        timeout_seconds=timeout_seconds,
-        warning_codes=_dedupe_warning_codes(warning_codes),
-    )
+def _safe_exception_name(exc: Exception) -> str:
+    return exc.__class__.__name__
 
 
 def _dedupe_warning_codes(codes: list[WarningCode]) -> list[WarningCode]:

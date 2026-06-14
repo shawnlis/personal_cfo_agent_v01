@@ -51,6 +51,56 @@ python .\scripts\personal_cfo_agent.py `
 - `normalized_asset_ledger.csv`: not generated
 - Generated report files committed: no
 
+## Second Diagnostic Attempt
+
+- Date/time: 2026-06-14 16:27:50 +08:00
+- Validation before retry: `python .\scripts\dev_validate.py` passed with 159 tests and 101 warnings
+- Connection diagnostics: SDK import OK, OpenD socket reachable, warning codes none
+- Readiness result: passed with warnings `None`; no reports generated
+- Live diagnostic retry attempted: yes, exactly once
+- Live diagnostic retry success: no
+- Live diagnostic retry command: `python .\scripts\personal_cfo_agent.py --provider moomoo --allow-live-read --moomoo-data-diagnostics --out-dir .\reports\personal_cfo_agent\moomoo_v030_live_acceptance`
+- SDK import OK: yes
+- OpenD reachable: yes
+- Context opened: yes
+- Account list attempted: yes
+- Account list success: yes
+- Account count redacted: 2
+- Selected account hash produced: yes, value omitted from committed docs
+- Account filter mismatch: no
+- Account info attempted: yes
+- Account info success: no
+- Positions attempted: no
+- Positions success: no
+- Position count: 0
+- Cash/balance attempted: yes
+- Cash/balance success: no
+- Cash currency count: 0
+- Normalized rows count: 0
+- SDK output suppressed: yes
+- Warning codes: `MOOMOO_SDK_OUTPUT_SUPPRESSED`, `MOOMOO_ACCOUNT_INFO_FAILED`, `MOOMOO_CASH_QUERY_FAILED`, `PROVIDER_FETCH_FAILED`
+- Stage failures: account info query failed because the SDK returned a nonzero ret code
+- Output path requested: `reports/personal_cfo_agent/moomoo_v030_live_acceptance`
+- Output directory created: no
+- `provider_sync_summary.json`: not generated
+- `normalized_asset_ledger.csv`: not generated
+- Acceptance success: no
+- Generated report files committed: no
+
+## Diagnostic Stage Table
+
+| Stage | Second attempt result | Warning codes |
+| --- | --- | --- |
+| SDK import | success | none |
+| Socket reachability | success | none |
+| Context open | success | none |
+| Account list | success with redacted count | none |
+| Account filter | no mismatch | none |
+| Account info | failed | `MOOMOO_ACCOUNT_INFO_FAILED` |
+| Positions | not attempted after account info failure | none |
+| Cash/balance | failed with account info query | `MOOMOO_CASH_QUERY_FAILED` |
+| Normalization | no rows to normalize | `PROVIDER_FETCH_FAILED` |
+
 ## Redaction Checks
 
 - Raw account IDs in committed outputs: none
@@ -62,10 +112,11 @@ python .\scripts\personal_cfo_agent.py `
 - Reports path ignored by git: yes
 - Local `.env.local` ignored by git and untracked: yes
 - Third-party SDK connection logging was observed locally during the single live attempt; code was hardened afterward to suppress SDK console output and preserve only redacted diagnostics for future attempts.
+- The second diagnostic attempt printed only redacted stage diagnostics; no raw SDK output was observed.
 
 ## Safety Confirmation
 
-- One supervised read-only Moomoo live attempt was run after explicit OpenD readiness and redacted diagnostics gates.
+- Two supervised read-only Moomoo live attempts were run across the full PR #11 acceptance process. The second attempt was run only after stage diagnostics hardening, validation, connection diagnostics, and readiness passed.
 - No successful report bundle was produced.
 - No order placement, order preview, order modification, order cancellation, cash transfer, or cash withdrawal method was used or exposed.
 - No Moomoo recommendation workflow was added.
@@ -75,5 +126,6 @@ python .\scripts\personal_cfo_agent.py `
 ## Known Limitations
 
 - Acceptance is not successful yet because the live attempt returned `PROVIDER_FETCH_FAILED` before account, position, cash, or normalized rows were observed.
-- No generated output files were available for raw-account-id or secret scanning because the report bundle was not written.
+- Acceptance remains unsuccessful after the second attempt because account info and cash/balance query stages failed before positions or normalized rows were produced.
+- No generated output files were available for raw-account-id or secret scanning because the report bundle was not written in either attempt.
 - A zero-row or fetch-failed live run is not accepted as a successful proof unless redacted diagnostics explain the result safely and no SDK or broker output leaks sensitive identifiers.

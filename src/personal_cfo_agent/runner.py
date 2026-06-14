@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -24,7 +24,12 @@ from personal_cfo_agent.manual_snapshot import (
     write_manual_snapshot_template,
 )
 from personal_cfo_agent.local_env import LOCAL_ENV_FILENAME, load_local_env_file
-from personal_cfo_agent.models import NormalizedAsset, ProviderStatus, RawProviderSnapshot
+from personal_cfo_agent.models import (
+    NormalizedAsset,
+    ProviderStatus,
+    RawProviderSnapshot,
+    WarningCode,
+)
 from personal_cfo_agent.normalizer import normalize_snapshots
 from personal_cfo_agent.providers import (
     IBKRProvider,
@@ -61,7 +66,18 @@ def run(config: RuntimeConfig) -> RunnerResult:
     snapshots = collect_provider_snapshots(config)
     statuses = [snapshot.status for snapshot in snapshots]
     data_snapshots = [snapshot for snapshot in snapshots if snapshot.has_data()]
-    normalized_assets = normalize_snapshots(data_snapshots)
+    try:
+        normalized_assets = normalize_snapshots(data_snapshots)
+    except Exception:
+        if any(snapshot.provider_name == "moomoo" for snapshot in data_snapshots):
+            return RunnerResult(
+                exit_code=1,
+                statuses=_mark_moomoo_normalization_failed(statuses),
+                normalized_assets=[],
+                output_dir=None,
+                output_paths={},
+            )
+        raise
     if not normalized_assets:
         return RunnerResult(
             exit_code=0,
@@ -94,6 +110,59 @@ def run(config: RuntimeConfig) -> RunnerResult:
         output_dir=output_dir,
         output_paths=output_paths,
     )
+
+
+def _mark_moomoo_normalization_failed(
+    statuses: list[ProviderStatus],
+) -> list[ProviderStatus]:
+    updated_statuses: list[ProviderStatus] = []
+    for status in statuses:
+        if status.provider_name != "moomoo":
+            updated_statuses.append(status)
+            continue
+        warning_codes = _dedupe_warning_codes(
+            [
+                *status.warning_codes,
+                WarningCode.MOOMOO_NORMALIZATION_FAILED,
+                WarningCode.PROVIDER_FETCH_FAILED,
+            ]
+        )
+        diagnostics = dict(status.diagnostics)
+        stage_failures = dict(diagnostics.get("stage_failures") or {})
+        stage_failures["normalization"] = "Normalization failed"
+        diagnostics["stage_failures"] = stage_failures
+        diagnostics["normalized_rows"] = 0
+        diagnostics["warning_codes"] = _dedupe_text(
+            [
+                *[str(code) for code in diagnostics.get("warning_codes", [])],
+                WarningCode.MOOMOO_NORMALIZATION_FAILED.value,
+                WarningCode.PROVIDER_FETCH_FAILED.value,
+            ]
+        )
+        updated_statuses.append(
+            replace(status, warning_codes=warning_codes, diagnostics=diagnostics)
+        )
+    return updated_statuses
+
+
+def _dedupe_warning_codes(codes: list[WarningCode]) -> list[WarningCode]:
+    seen: set[WarningCode] = set()
+    result: list[WarningCode] = []
+    for code in codes:
+        if code not in seen:
+            result.append(code)
+            seen.add(code)
+    return result
+
+
+def _dedupe_text(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value not in seen:
+            result.append(value)
+            seen.add(value)
+    return result
 
 
 def run_readiness_check(config: RuntimeConfig) -> RunnerResult:
@@ -414,19 +483,38 @@ def _format_moomoo_data_diagnostics(diagnostics: dict[str, object]) -> list[str]
         return ["Moomoo data-path diagnostics (values redacted): unavailable"]
     warning_codes = diagnostics.get("warning_codes") or []
     warning_text = ", ".join(str(code) for code in warning_codes) or "None"
+    stage_failures = diagnostics.get("stage_failures") or {}
+    if isinstance(stage_failures, dict):
+        stage_failure_text = (
+            ", ".join(f"{stage}={summary}" for stage, summary in stage_failures.items())
+            or "None"
+        )
+    else:
+        stage_failure_text = "None"
+    selected_account_hash = diagnostics.get("selected_account_hash") or "not selected"
     return [
         "Moomoo data-path diagnostics (values redacted)",
-        f"Connected to OpenD: {_yes_no(bool(diagnostics.get('connected_to_opend')))}",
-        f"Connection established: {_yes_no(bool(diagnostics.get('connection_established')))}",
-        f"Account list observed: {_yes_no(bool(diagnostics.get('account_list_seen')))}",
+        f"SDK import OK: {_yes_no(bool(diagnostics.get('sdk_import_ok')))}",
+        f"OpenD reachable: {_yes_no(bool(diagnostics.get('opend_socket_reachable')))}",
+        f"Context opened: {_yes_no(bool(diagnostics.get('context_opened')))}",
+        f"Account list attempted: {_yes_no(bool(diagnostics.get('account_list_query_attempted')))}",
+        f"Account list success: {_yes_no(bool(diagnostics.get('account_list_query_success')))}",
         f"Account count redacted: {diagnostics.get('account_count_redacted', 0)}",
-        f"Positions observed: {_yes_no(bool(diagnostics.get('positions_seen')))}",
+        f"Selected account hash: {selected_account_hash}",
+        f"Account filter mismatch: {_yes_no(bool(diagnostics.get('account_filter_mismatch')))}",
+        f"Account info attempted: {_yes_no(bool(diagnostics.get('account_info_query_attempted')))}",
+        f"Account info success: {_yes_no(bool(diagnostics.get('account_info_query_success')))}",
+        f"Positions attempted: {_yes_no(bool(diagnostics.get('position_query_attempted')))}",
+        f"Positions success: {_yes_no(bool(diagnostics.get('position_query_success')))}",
         f"Position count: {diagnostics.get('position_count', 0)}",
-        f"Cash/balance observed: {_yes_no(bool(diagnostics.get('cash_seen')))}",
+        f"Cash/balance attempted: {_yes_no(bool(diagnostics.get('cash_query_attempted')))}",
+        f"Cash/balance success: {_yes_no(bool(diagnostics.get('cash_query_success')))}",
         f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
-        f"Normalized rows count: {diagnostics.get('normalized_row_count', 0)}",
+        f"Normalized rows count: {diagnostics.get('normalized_rows', 0)}",
+        f"SDK output suppressed: {_yes_no(bool(diagnostics.get('sdk_output_suppressed')))}",
         f"Timeout seconds: {diagnostics.get('timeout_seconds', 0)}",
         f"Data diagnostic warning codes: {warning_text}",
+        f"Stage failures: {stage_failure_text}",
     ]
 
 
