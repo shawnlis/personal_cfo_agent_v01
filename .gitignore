@@ -19,6 +19,7 @@ manual_snapshots/
 *.pem
 .env
 .env.*
+!.env.example
 
 # Browser/session artifacts must never be committed.
 cookies/

@@ -64,18 +64,26 @@ class IBKRProvider(ProviderBase):
         except IBKRSDKNotInstalledError:
             self.warning_codes = _dedupe([*self.warning_codes, WarningCode.SDK_NOT_INSTALLED])
             return False
-        except IBKRConnectionError:
+        except IBKRConnectionError as exc:
+            self._record_adapter_diagnostics(exc)
             self.warning_codes = _dedupe(
-                [*self.warning_codes, WarningCode.PROVIDER_CONNECTION_FAILED]
+                [*self.warning_codes, *_diagnostic_warning_codes(exc), WarningCode.PROVIDER_CONNECTION_FAILED]
             )
             return False
-        except IBKRFetchError:
-            self.warning_codes = _dedupe([*self.warning_codes, WarningCode.PROVIDER_FETCH_FAILED])
+        except IBKRFetchError as exc:
+            self._record_adapter_diagnostics(exc)
+            self.warning_codes = _dedupe(
+                [*self.warning_codes, *_diagnostic_warning_codes(exc), WarningCode.PROVIDER_FETCH_FAILED]
+            )
             return False
         except Exception:
             self.warning_codes = _dedupe([*self.warning_codes, WarningCode.PROVIDER_FETCH_FAILED])
             return False
 
+        self._record_snapshot_diagnostics(self._snapshot)
+        self.warning_codes = _dedupe(
+            [*self.warning_codes, *self._snapshot.diagnostics.warning_codes]
+        )
         self.provider_level = ProviderLevel.LEVEL_2
         self.connection_mode = ConnectionMode.LIVE_READ
         return True
@@ -144,6 +152,7 @@ class IBKRProvider(ProviderBase):
             port=int(settings["CFO_IBKR_PORT"]),
             client_id=int(settings["CFO_IBKR_CLIENT_ID"]),
             account_filter=str(settings.get("CFO_IBKR_ACCOUNT") or "") or None,
+            account_hash_salt=str(settings.get("CFO_ACCOUNT_HASH_SALT") or "") or None,
         )
 
     def _numeric_config_is_valid(self) -> bool:
@@ -159,6 +168,16 @@ class IBKRProvider(ProviderBase):
             raise RuntimeError("IBKR live snapshot was not collected")
         return self._snapshot
 
+    def _record_snapshot_diagnostics(self, snapshot: IBKRReadOnlySnapshot) -> None:
+        diagnostics = snapshot.diagnostics.to_redacted_dict()
+        if diagnostics["warning_codes"] or diagnostics["api_handshake_seen"]:
+            self.diagnostics = diagnostics
+
+    def _record_adapter_diagnostics(self, exc: Exception) -> None:
+        diagnostics = getattr(exc, "diagnostics", None)
+        if diagnostics is not None:
+            self.diagnostics = diagnostics.to_redacted_dict()
+
 
 def _dedupe(codes: list[WarningCode]) -> list[WarningCode]:
     seen: set[WarningCode] = set()
@@ -168,3 +187,10 @@ def _dedupe(codes: list[WarningCode]) -> list[WarningCode]:
             result.append(code)
             seen.add(code)
     return result
+
+
+def _diagnostic_warning_codes(exc: Exception) -> list[WarningCode]:
+    diagnostics = getattr(exc, "diagnostics", None)
+    if diagnostics is None:
+        return []
+    return list(diagnostics.warning_codes)

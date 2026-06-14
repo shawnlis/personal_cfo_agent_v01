@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from personal_cfo_agent.manual_snapshot import (
     load_manual_snapshot_document,
     write_manual_snapshot_template,
 )
+from personal_cfo_agent.local_env import LOCAL_ENV_FILENAME, load_local_env_file
 from personal_cfo_agent.models import NormalizedAsset, ProviderStatus, RawProviderSnapshot
 from personal_cfo_agent.normalizer import normalize_snapshots
 from personal_cfo_agent.providers import (
@@ -29,6 +31,10 @@ from personal_cfo_agent.providers import (
     ManualSnapshotProvider,
     MoomooProvider,
     TigerProvider,
+)
+from personal_cfo_agent.providers.ibkr_connection_diagnostics import (
+    IBKRConnectionDiagnostics,
+    run_ibkr_connection_diagnostics,
 )
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
@@ -146,6 +152,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Validate selected provider config without live connection.",
     )
     parser.add_argument(
+        "--connection-diagnostics",
+        action="store_true",
+        help="Run redacted provider connection diagnostics without live API messages.",
+    )
+    parser.add_argument(
+        "--ibkr-data-diagnostics",
+        action="store_true",
+        help="Print redacted IBKR live data-path diagnostics after a gated read.",
+    )
+    parser.add_argument(
         "--allow-live-read",
         action="store_true",
         help="Allow read-only live readiness checks for enabled API providers.",
@@ -202,6 +218,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    local_env_result = load_local_env_file()
+    if local_env_result.exists:
+        print(f"Loaded local environment from {LOCAL_ENV_FILENAME}; values redacted")
     if args.write_manual_template is not None and args.validate_manual_snapshot is not None:
         parser.error("--write-manual-template and --validate-manual-snapshot cannot be combined")
     if args.write_manual_template is not None:
@@ -210,6 +229,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.validate_manual_snapshot is not None:
         return _validate_manual_snapshot_cli(args.validate_manual_snapshot)
+    if args.connection_diagnostics:
+        if args.provider != "ibkr":
+            parser.error("--connection-diagnostics is currently implemented for --provider ibkr")
+        return _connection_diagnostics_cli()
+    if args.ibkr_data_diagnostics:
+        if args.provider != "ibkr":
+            parser.error("--ibkr-data-diagnostics requires --provider ibkr")
+        if args.readiness_check:
+            parser.error("--ibkr-data-diagnostics cannot be combined with --readiness-check")
+        if not args.allow_live_read:
+            parser.error("--ibkr-data-diagnostics requires --allow-live-read")
     if args.readiness_check and args.provider not in {"ibkr", "moomoo", "tiger"}:
         parser.error(
             "--readiness-check is currently implemented for --provider ibkr, moomoo, or tiger"
@@ -227,6 +257,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             allow_live_read=args.allow_live_read,
             provider=args.provider,
             readiness_check=args.readiness_check,
+            ibkr_data_diagnostics=args.ibkr_data_diagnostics,
             manual_snapshot_path=args.manual_snapshot,
             dashboard=args.dashboard,
             dashboard_assumptions_path=args.dashboard_assumptions,
@@ -238,6 +269,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     for status in result.statuses:
         warnings = ", ".join(code.value for code in status.warning_codes) or "None"
         print(f"{status.provider_name}: {status.connection_mode.value}; warnings={warnings}")
+        if args.ibkr_data_diagnostics and status.provider_name == "ibkr":
+            for line in _format_ibkr_data_diagnostics(status.diagnostics):
+                print(line)
     if result.output_dir is None:
         print("No provider produced data; no reports generated.")
     else:
@@ -274,3 +308,58 @@ def _validate_manual_snapshot_cli(path: Path) -> int:
 def _print_manual_validation_issues(issues, severity: str) -> None:
     for issue in issues:
         print(f"{severity}: {issue.path}: {issue.code.value}: {issue.message}")
+
+
+def _connection_diagnostics_cli() -> int:
+    diagnostics = run_ibkr_connection_diagnostics(dict(os.environ))
+    for line in _format_ibkr_connection_diagnostics(diagnostics):
+        print(line)
+    return 0
+
+
+def _format_ibkr_connection_diagnostics(
+    diagnostics: IBKRConnectionDiagnostics,
+) -> list[str]:
+    warning_text = ", ".join(code.value for code in diagnostics.warning_codes) or "None"
+    return [
+        "IBKR connection diagnostics (values redacted)",
+        f"CFO_IBKR_ENABLED present and true: {_yes_no(diagnostics.enabled_present and diagnostics.enabled_true)}",
+        f"CFO_IBKR_HOST present: {_yes_no(diagnostics.host_present)}",
+        f"CFO_IBKR_PORT present: {_yes_no(diagnostics.port_present)}",
+        f"CFO_IBKR_CLIENT_ID present: {_yes_no(diagnostics.client_id_present)}",
+        f"CFO_IBKR_ACCOUNT present: {_yes_no(diagnostics.account_present)}, redacted",
+        f"CFO_ACCOUNT_HASH_SALT present: {_yes_no(diagnostics.hash_salt_present)}, redacted",
+        f"Python executable: {diagnostics.python_executable}",
+        f"ibapi import status: {'OK' if diagnostics.ibapi_import_ok else 'MISSING'}",
+        f"TCP socket reachable host/port: {_yes_no(diagnostics.tcp_socket_reachable)}",
+        f"diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _format_ibkr_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
+    if not diagnostics:
+        return ["IBKR data-path diagnostics (values redacted): unavailable"]
+    warning_codes = diagnostics.get("warning_codes") or []
+    warning_text = ", ".join(str(code) for code in warning_codes) or "None"
+    requested_hash = diagnostics.get("requested_account_hash") or "not configured"
+    requested_seen = diagnostics.get("requested_account_seen")
+    requested_seen_text = "not configured" if requested_seen is None else _yes_no(bool(requested_seen))
+    return [
+        "IBKR data-path diagnostics (values redacted)",
+        f"Connected to socket: {_yes_no(bool(diagnostics.get('connected_to_socket')))}",
+        f"API handshake observed: {_yes_no(bool(diagnostics.get('api_handshake_seen')))}",
+        f"Managed accounts callback observed: {_yes_no(bool(diagnostics.get('managed_accounts_seen')))}",
+        f"Managed account count redacted: {diagnostics.get('managed_account_count_redacted', 0)}",
+        f"Requested account hash: {requested_hash}",
+        f"Requested account observed in managed accounts: {requested_seen_text}",
+        f"Positions callback observed: {_yes_no(bool(diagnostics.get('positions_callback_seen')))}",
+        f"Position count: {diagnostics.get('position_count', 0)}",
+        f"Account summary callback observed: {_yes_no(bool(diagnostics.get('account_summary_callback_seen')))}",
+        f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
+        f"Timeout seconds: {diagnostics.get('timeout_seconds', 0)}",
+        f"Data diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _yes_no(value: bool) -> str:
+    return "yes" if value else "no"

@@ -48,6 +48,15 @@ class WarningCode(str, Enum):
     FORBIDDEN_METHOD_EXPOSED = "FORBIDDEN_METHOD_EXPOSED"
     UNOFFICIAL_API_BLOCKED = "UNOFFICIAL_API_BLOCKED"
     SDK_NOT_INSTALLED = "SDK_NOT_INSTALLED"
+    IBKR_HANDSHAKE_TIMEOUT = "IBKR_HANDSHAKE_TIMEOUT"
+    IBKR_MANAGED_ACCOUNTS_EMPTY = "IBKR_MANAGED_ACCOUNTS_EMPTY"
+    IBKR_POSITIONS_EMPTY = "IBKR_POSITIONS_EMPTY"
+    IBKR_ACCOUNT_SUMMARY_EMPTY = "IBKR_ACCOUNT_SUMMARY_EMPTY"
+    IBKR_ACCOUNT_FILTER_MISMATCH = "IBKR_ACCOUNT_FILTER_MISMATCH"
+    IBKR_CALLBACK_TIMEOUT = "IBKR_CALLBACK_TIMEOUT"
+    IBKR_NO_DATA_RETURNED = "IBKR_NO_DATA_RETURNED"
+    IBKR_DATA_PATH_NOT_IMPLEMENTED = "IBKR_DATA_PATH_NOT_IMPLEMENTED"
+    IBKR_READ_SUCCEEDED_EMPTY = "IBKR_READ_SUCCEEDED_EMPTY"
 
 
 LEDGER_FIELDNAMES = [
@@ -85,9 +94,10 @@ class ProviderStatus:
     warning_codes: list[WarningCode] = field(default_factory=list)
     raw_snapshot_path: str | None = None
     normalized_positions: list[dict[str, Any]] = field(default_factory=list)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "provider_name": self.provider_name,
             "provider_level": self.provider_level.value,
             "connection_mode": self.connection_mode.value,
@@ -100,6 +110,9 @@ class ProviderStatus:
             "raw_snapshot_path": self.raw_snapshot_path,
             "normalized_positions": self.normalized_positions,
         }
+        if self.diagnostics:
+            payload["diagnostics"] = self.diagnostics
+        return payload
 
 
 @dataclass(frozen=True)
