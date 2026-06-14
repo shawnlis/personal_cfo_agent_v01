@@ -12,6 +12,7 @@ tmp/
 
 # Generated local outputs and real personal finance data.
 reports/
+manual_snapshots/
 *.local
 *.secret
 *.key

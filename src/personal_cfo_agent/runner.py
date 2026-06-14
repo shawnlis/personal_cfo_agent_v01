@@ -15,6 +15,12 @@ from personal_cfo_agent.config import (
     load_moomoo_config,
     load_tiger_config,
 )
+from personal_cfo_agent.manual_snapshot import (
+    ManualSnapshotReadError,
+    ManualSnapshotValidationError,
+    load_manual_snapshot_document,
+    write_manual_snapshot_template,
+)
 from personal_cfo_agent.models import NormalizedAsset, ProviderStatus, RawProviderSnapshot
 from personal_cfo_agent.normalizer import normalize_snapshots
 from personal_cfo_agent.providers import (
@@ -141,6 +147,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Path to a manual snapshot JSON fixture or export.",
     )
     parser.add_argument(
+        "--write-manual-template",
+        type=Path,
+        default=None,
+        help="Write an empty structured manual snapshot JSON template.",
+    )
+    parser.add_argument(
+        "--validate-manual-snapshot",
+        type=Path,
+        default=None,
+        help="Validate a structured manual snapshot JSON file without writing reports.",
+    )
+    parser.add_argument(
         "--output-root",
         type=Path,
         default=Path("reports/personal_cfo_agent/v01"),
@@ -163,6 +181,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    if args.write_manual_template is not None and args.validate_manual_snapshot is not None:
+        parser.error("--write-manual-template and --validate-manual-snapshot cannot be combined")
+    if args.write_manual_template is not None:
+        path = write_manual_snapshot_template(args.write_manual_template)
+        print(f"Manual snapshot template written to {path}")
+        return 0
+    if args.validate_manual_snapshot is not None:
+        return _validate_manual_snapshot_cli(args.validate_manual_snapshot)
     if args.readiness_check and args.provider not in {"ibkr", "moomoo", "tiger"}:
         parser.error(
             "--readiness-check is currently implemented for --provider ibkr, moomoo, or tiger"
@@ -202,3 +228,25 @@ def _validate_as_of_date(value: str, parser: argparse.ArgumentParser) -> None:
         datetime.strptime(value, "%Y%m%d")
     except ValueError:
         parser.error("--as-of-date must use YYYYMMDD")
+
+
+def _validate_manual_snapshot_cli(path: Path) -> int:
+    try:
+        document = load_manual_snapshot_document(path)
+    except ManualSnapshotValidationError as exc:
+        _print_manual_validation_issues(exc.result.errors, "error")
+        _print_manual_validation_issues(exc.result.warnings, "warning")
+        print("Manual snapshot validation failed.")
+        return 1
+    except ManualSnapshotReadError as exc:
+        print(f"Manual snapshot validation failed: {exc}")
+        return 1
+
+    _print_manual_validation_issues(document.validation_result.warnings, "warning")
+    print("Manual snapshot validation passed.")
+    return 0
+
+
+def _print_manual_validation_issues(issues, severity: str) -> None:
+    for issue in issues:
+        print(f"{severity}: {issue.path}: {issue.code.value}: {issue.message}")

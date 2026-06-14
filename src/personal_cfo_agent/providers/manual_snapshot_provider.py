@@ -7,6 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from personal_cfo_agent.config import ProviderConfig
+from personal_cfo_agent.manual_snapshot import (
+    ManualSnapshotReadError,
+    ManualSnapshotValidationError,
+    is_structured_manual_snapshot,
+    load_manual_snapshot_document,
+    manual_snapshot_to_provider_payload,
+)
 from personal_cfo_agent.models import (
     ConnectionMode,
     ProviderLevel,
@@ -44,9 +51,37 @@ class ManualSnapshotProvider(ProviderBase):
         if WarningCode.PROVIDER_CONFIG_MISSING in self.warning_codes:
             return False
         try:
-            self._data = json.loads(self._snapshot_path().read_text(encoding="utf-8"))
+            path = self._snapshot_path()
+            loaded_data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded_data, dict) and is_structured_manual_snapshot(loaded_data):
+                document = load_manual_snapshot_document(path)
+                self.warning_codes = _dedupe(
+                    [
+                        *self.warning_codes,
+                        *(issue.code for issue in document.validation_result.warnings),
+                    ]
+                )
+                self._data = manual_snapshot_to_provider_payload(document)
+            else:
+                self._data = loaded_data
         except (OSError, json.JSONDecodeError):
-            self.warning_codes.append(WarningCode.PROVIDER_FETCH_FAILED)
+            self.warning_codes = _dedupe(
+                [*self.warning_codes, WarningCode.PROVIDER_FETCH_FAILED]
+            )
+            return False
+        except ManualSnapshotReadError:
+            self.warning_codes = _dedupe(
+                [*self.warning_codes, WarningCode.PROVIDER_FETCH_FAILED]
+            )
+            return False
+        except ManualSnapshotValidationError as exc:
+            self.warning_codes = _dedupe(
+                [
+                    *self.warning_codes,
+                    WarningCode.PROVIDER_FETCH_FAILED,
+                    *(issue.code for issue in exc.result.issues),
+                ]
+            )
             return False
         return True
 
@@ -163,3 +198,13 @@ def _parse_warning_codes(values: object) -> list[WarningCode]:
         except ValueError:
             parsed.append(WarningCode.NEEDS_REVIEW)
     return parsed
+
+
+def _dedupe(codes: list[WarningCode]) -> list[WarningCode]:
+    seen: set[WarningCode] = set()
+    result: list[WarningCode] = []
+    for code in codes:
+        if code not in seen:
+            result.append(code)
+            seen.add(code)
+    return result

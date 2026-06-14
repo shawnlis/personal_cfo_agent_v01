@@ -1,0 +1,76 @@
+{
+  "snapshot_date": "2026-06-14",
+  "base_currency": "SGD",
+  "source_note": "Manual user-entered snapshot for unsupported assets.",
+  "assets": [
+    {
+      "asset_id": "manual-primary-residence",
+      "asset_type": "residential_property",
+      "provider": "manual",
+      "name": "Primary residence estimate",
+      "currency": "SGD",
+      "estimated_value": 1000000.0,
+      "valuation_date": "2026-06-14",
+      "valuation_source": "manual valuation estimate",
+      "liquidity_bucket": "illiquid",
+      "risk_bucket": "real_estate",
+      "notes": "Fixture value only."
+    },
+    {
+      "asset_id": "manual-cpf-oa",
+      "asset_type": "cpf_oa",
+      "provider": "cpf",
+      "name": "CPF OA manual summary",
+      "currency": "SGD",
+      "estimated_value": 50000.0,
+      "valuation_date": "2026-06-14",
+      "valuation_source": "manual SGFinDex-derived summary",
+      "liquidity_bucket": "restricted",
+      "risk_bucket": "cpf",
+      "notes": "Fixture value only."
+    },
+    {
+      "asset_id": "manual-webull-aggregate",
+      "asset_type": "unsupported_broker",
+      "provider": "webull",
+      "name": "Webull aggregate manual value",
+      "currency": "USD",
+      "estimated_value": 25000.0,
+      "valuation_date": "2026-06-14",
+      "valuation_source": "manual broker statement summary",
+      "liquidity_bucket": "liquid",
+      "risk_bucket": "equity",
+      "notes": "Fixture value only."
+    },
+    {
+      "asset_id": "manual-insurance-cash-value",
+      "asset_type": "insurance_cash_value",
+      "provider": "manual",
+      "name": "Insurance cash value",
+      "currency": "SGD",
+      "estimated_value": 12000.0,
+      "valuation_date": "2026-06-14",
+      "valuation_source": "manual statement summary",
+      "liquidity_bucket": "near_cash",
+      "risk_bucket": "insurance",
+      "notes": "Fixture value only."
+    }
+  ],
+  "liabilities": [
+    {
+      "liability_id": "manual-primary-mortgage",
+      "liability_type": "mortgage",
+      "provider": "manual",
+      "name": "Primary mortgage",
+      "currency": "SGD",
+      "outstanding_balance": 400000.0,
+      "interest_rate": 3.2,
+      "monthly_payment": 2500.0,
+      "repricing_date": "2027-01-01",
+      "maturity_date": "2045-01-01",
+      "collateral": "Primary residence",
+      "notes": "Fixture value only."
+    }
+  ],
+  "warnings_acknowledged": true
+}
