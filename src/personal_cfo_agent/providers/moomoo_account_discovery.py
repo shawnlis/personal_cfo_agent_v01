@@ -41,7 +41,7 @@ class MoomooAccountDiscoveryDiagnostics:
     terminal_warning_codes: list[WarningCode] = field(default_factory=list)
     variant_warning_codes: list[WarningCode] = field(default_factory=list)
     warning_codes: list[WarningCode] = field(default_factory=list)
-    selected_account_id: str | None = field(default=None, repr=False, compare=False)
+    selected_account_id: Any | None = field(default=None, repr=False, compare=False)
     selected_filter_name: str | None = field(default=None, repr=False, compare=False)
     selected_security_firm_name: str | None = field(default=None, repr=False, compare=False)
     selected_need_general_sec_acc: bool = field(default=False, repr=False, compare=False)
@@ -94,7 +94,7 @@ class _ContextVariant:
 
 @dataclass(frozen=True)
 class _AccountCandidate:
-    account_id: str = field(repr=False, compare=False)
+    account_id: Any = field(repr=False, compare=False)
     account_hash: str
     variant: _ContextVariant = field(repr=False, compare=False)
     context_mode: str
@@ -241,6 +241,8 @@ def run_moomoo_account_discovery(
         )
     else:
         status_warnings.append(WarningCode.MOOMOO_ACCOUNT_DISCOVERY_OK)
+        status_warnings.append(WarningCode.MOOMOO_SELECTED_ACCOUNT_HASHED)
+        status_warnings.append(WarningCode.MOOMOO_EXPLICIT_ACC_ID_SELECTED)
         if not _has_active_status(selected.acc_status_values):
             terminal_warnings.append(WarningCode.MOOMOO_ACCOUNT_STATUS_NOT_ACTIVE)
         if not _has_market_auth(selected.trdmarket_auth_values):
@@ -387,7 +389,7 @@ def _candidate_from_row(
     if not _has_value(account_id):
         return None
     return _AccountCandidate(
-        account_id=str(account_id),
+        account_id=account_id,
         account_hash=hash_account_id(str(account_id), account_hash_salt),
         variant=variant,
         context_mode=variant.mode,

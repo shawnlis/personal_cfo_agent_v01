@@ -977,6 +977,63 @@ def test_moomoo_live_adapter_uses_selected_acc_id_and_not_acc_index(monkeypatch)
     assert "MOOMOO_SELECTED_ACCOUNT_SENTINEL" not in payload
 
 
+def test_moomoo_live_adapter_preserves_numeric_selected_acc_id_for_sdk(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+    raw_account = 987654321
+
+    class _NumericAccountContext:
+        def __init__(self, *, host: str, port: int) -> None:
+            pass
+
+        def acc_list_query(self):
+            return 0, [
+                {
+                    "acc_id": raw_account,
+                    "trd_env": "REAL",
+                    "trdmarket_auth": ["US"],
+                    "acc_status": "ACTIVE",
+                }
+            ]
+
+        def accinfo_query(self, *, trd_env, acc_id=0, acc_index=0):
+            calls.append(("accinfo_query", {"acc_id": acc_id, "acc_index": acc_index}))
+            return 0, [{"currency": "USD", "cash": 1.0}]
+
+        def position_list_query(self, *, trd_env, acc_id=0, acc_index=0):
+            calls.append(
+                ("position_list_query", {"acc_id": acc_id, "acc_index": acc_index})
+            )
+            return 0, [{"code": "US.NUMERIC", "qty": 1}]
+
+        def close(self) -> None:
+            pass
+
+    _install_fake_sdk(monkeypatch, _NumericAccountContext)
+    provider = MoomooProvider(_valid_config(), allow_live_read=True)
+
+    snapshot = provider._sync()
+    payload = json.dumps(snapshot.status.diagnostics)
+
+    assert snapshot.has_data()
+    account_call_values = [
+        call[1]["acc_id"]
+        for call in calls
+        if call[0] in {"accinfo_query", "position_list_query"}
+    ]
+    assert account_call_values
+    assert all(value == raw_account for value in account_call_values)
+    assert all(isinstance(value, int) for value in account_call_values)
+    assert all(
+        call[1]["acc_index"] == 0
+        for call in calls
+        if call[0] in {"accinfo_query", "position_list_query"}
+    )
+    assert WarningCode.MOOMOO_ACC_INDEX_FALLBACK_USED not in snapshot.status.warning_codes
+    assert str(raw_account) not in payload
+
+
 def test_moomoo_live_adapter_does_not_query_data_when_discovery_fails(
     monkeypatch,
 ) -> None:

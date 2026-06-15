@@ -217,7 +217,10 @@ class MoomooReadOnlyAdapter:
             raise MoomooFetchError(
                 "Moomoo account discovery failed", state.to_diagnostics()
             )
-        if self.account_id != "moomoo_default" and selected_account_id != self.account_id:
+        if (
+            self.account_id != "moomoo_default"
+            and str(selected_account_id) != self.account_id
+        ):
             state.account_filter_mismatch = True
             state.fail(
                 "account_filter",
@@ -449,7 +452,7 @@ class MoomooReadOnlyAdapter:
         context: Any,
         sdk: Any,
         source_timestamp: str,
-        account_id: str,
+        account_id: Any,
         state: "_DiagnosticState",
     ) -> list[MoomooCashRow]:
         query = _first_callable(context, ["accinfo_query"])
@@ -547,7 +550,7 @@ class MoomooReadOnlyAdapter:
         context: Any,
         sdk: Any,
         source_timestamp: str,
-        account_id: str,
+        account_id: Any,
         state: "_DiagnosticState",
     ) -> list[MoomooPositionRow]:
         query = _first_callable(context, ["position_list_query"])
@@ -685,7 +688,7 @@ def _call_account_query(
     query: Any,
     sdk: Any,
     *,
-    account_id: str,
+    account_id: Any,
     state: _DiagnosticState,
     stage: str,
 ) -> tuple[Any, Any]:

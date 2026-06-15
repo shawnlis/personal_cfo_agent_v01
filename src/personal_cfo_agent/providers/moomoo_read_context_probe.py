@@ -91,7 +91,7 @@ class MoomooReadContextProbeDiagnostics:
     variant_warning_codes: list[WarningCode] = field(default_factory=list)
     warning_codes: list[WarningCode] = field(default_factory=list)
     forbidden_api_called: bool = False
-    selected_account_id: str | None = field(default=None, repr=False, compare=False)
+    selected_account_id: Any | None = field(default=None, repr=False, compare=False)
     selected_filter_name: str | None = field(default=None, repr=False, compare=False)
     selected_security_firm_name: str | None = field(
         default=None, repr=False, compare=False
@@ -329,10 +329,10 @@ def _probe_candidate(
                 port=port,
             )
             accinfo_success, accinfo_ret_code, accinfo_exc_category, cash_field_count, accinfo_warnings = (
-                _probe_accinfo(context, sdk, str(discovery.selected_account_id))
+                _probe_accinfo(context, sdk, discovery.selected_account_id)
             )
             position_success, position_ret_code, position_exc_category, position_count, position_warnings = (
-                _probe_positions(context, sdk, str(discovery.selected_account_id))
+                _probe_positions(context, sdk, discovery.selected_account_id)
             )
             warning_codes.extend(accinfo_warnings)
             warning_codes.extend(position_warnings)
@@ -415,7 +415,7 @@ def open_moomoo_candidate_context(
 
 
 def _probe_accinfo(
-    context: Any, sdk: Any, account_id: str
+    context: Any, sdk: Any, account_id: Any
 ) -> tuple[bool, str | None, str | None, int, list[WarningCode]]:
     query = getattr(context, "accinfo_query", None)
     if not callable(query):
@@ -449,7 +449,7 @@ def _probe_accinfo(
 
 
 def _probe_positions(
-    context: Any, sdk: Any, account_id: str
+    context: Any, sdk: Any, account_id: Any
 ) -> tuple[bool, str | None, str | None, int, list[WarningCode]]:
     query = getattr(context, "position_list_query", None)
     if not callable(query):
@@ -583,7 +583,7 @@ def _context_kwargs(
     return kwargs
 
 
-def _call_account_query(query: Any, sdk: Any, *, account_id: str) -> tuple[Any, Any]:
+def _call_account_query(query: Any, sdk: Any, *, account_id: Any) -> tuple[Any, Any]:
     kwargs: dict[str, Any] = {}
     supported = _supported_kwargs(query)
     _set_supported_kwarg(kwargs, supported, "trd_env", _real_env(sdk))

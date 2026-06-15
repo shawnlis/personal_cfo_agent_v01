@@ -73,7 +73,7 @@ python .\scripts\personal_cfo_agent.py `
 - The read-context probe runs discovery first, then tests read-only account info and position query contexts with the discovered account internally.
 - Failed discovery variants are non-terminal once a selected account hash exists.
 - No trading capability is enabled by this probe.
-- Acceptance remains unsuccessful until a later supervised funds/positions/cash read produces normalized rows.
+- Acceptance is successful only when a supervised read produces normalized rows under ignored `reports/` without exposing raw IDs or enabling trading capability.
 - PR #11 remains draft.
 
 ## Account Discovery Diagnostic Attempt
@@ -194,6 +194,44 @@ python .\scripts\personal_cfo_agent.py `
 - Report bundle generated: no
 - Live-read acceptance success: no
 
+## Final Read-Only Acceptance Attempt
+
+- Date/time: 2026-06-15 final continuation pass
+- Validation before supervised fetch: `python .\scripts\dev_validate.py` passed with 175 tests and 101 warnings
+- Supervised read-only fetch attempted: yes, exactly once in this continuation
+- Supervised read-only fetch success: yes
+- Command: `python .\scripts\personal_cfo_agent.py --provider moomoo --allow-live-read --moomoo-data-diagnostics --out-dir .\reports\personal_cfo_agent\moomoo_v030_live_acceptance`
+- SDK import OK: yes
+- OpenD socket reachable: yes
+- Discovery success: yes
+- Account count redacted: 9
+- Selected account hash: `acct_f63d870d837b3c3d`
+- Selected discovery context mode: `filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False`
+- Selected read context mode: `filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False`
+- Explicit selected account used internally: yes
+- Account info query attempted: yes
+- Account info query success: yes
+- Position query attempted: yes
+- Position query success: yes
+- Position count: 0
+- Cash currency count: 4
+- Normalized rows count: 5
+- Terminal warning codes: none
+- Variant warning codes: `MOOMOO_SDK_DISCOVERY_ARG_UNSUPPORTED`, `MOOMOO_ACCOUNT_DISCOVERY_FAILED`, `MOOMOO_SECURITY_FIRM_MISMATCH`, `MOOMOO_MARKET_FILTER_MISMATCH`, `MOOMOO_DISCOVERY_SUCCESS_WITH_VARIANT_WARNINGS`
+- Data-path warning/status codes: `MOOMOO_SDK_OUTPUT_SUPPRESSED`, `MOOMOO_ACCOUNT_DISCOVERY_OK`, `MOOMOO_SELECTED_ACCOUNT_HASHED`, `MOOMOO_EXPLICIT_ACC_ID_SELECTED`, `MOOMOO_SDK_DISCOVERY_ARG_UNSUPPORTED`, `MOOMOO_ACCOUNT_DISCOVERY_FAILED`, `MOOMOO_SECURITY_FIRM_MISMATCH`, `MOOMOO_MARKET_FILTER_MISMATCH`, `MOOMOO_DISCOVERY_SUCCESS_WITH_VARIANT_WARNINGS`, `MOOMOO_READ_CONTEXT_PROBE_OK`, `MOOMOO_READ_ONLY_FETCH_OK`, `MOOMOO_ACCINFO_QUERY_OK`, `MOOMOO_POSITION_QUERY_OK`, `MOOMOO_POSITION_DATA_EMPTY`, `MOOMOO_POSITION_LIST_EMPTY`, `MOOMOO_POSITIONS_EMPTY`
+- Report bundle generated: yes, under ignored path `reports/personal_cfo_agent/moomoo_v030_live_acceptance`
+- `provider_sync_summary.json`: generated locally under ignored `reports/`
+- `normalized_asset_ledger.csv`: generated locally under ignored `reports/`
+- Generated report files committed: no
+- Raw account IDs in committed docs/tests: none
+- Exact balances in committed docs: none
+- Raw positions in committed docs: none
+- Unlock performed: no
+- Order, order-history, deal-history, transfer, or withdrawal APIs called: no
+- Forbidden API called: no
+- Live-read acceptance success: yes
+- PR #11 remains draft
+
 ## Second Diagnostic Attempt
 
 - Date/time: 2026-06-14 16:27:50 +08:00
@@ -268,8 +306,7 @@ python .\scripts\personal_cfo_agent.py `
 
 ## Known Limitations
 
-- Acceptance is not successful yet because the live attempt returned `PROVIDER_FETCH_FAILED` before account, position, cash, or normalized rows were observed.
-- Acceptance remains unsuccessful after the second attempt because account info and cash/balance query stages failed before positions or normalized rows were produced.
-- Account discovery identified context candidates and a selected account hash, but it is not a successful live-read acceptance by itself.
-- No generated output files were available for raw-account-id or secret scanning because the report bundle was not written in either attempt.
-- A zero-row or fetch-failed live run is not accepted as a successful proof unless redacted diagnostics explain the result safely and no SDK or broker output leaks sensitive identifiers.
+- The final successful proof produced normalized rows from account-info/cash data while the position query returned success with zero positions.
+- Account discovery remains a required prerequisite; OpenD socket reachability alone is still not accepted.
+- Generated report files may contain private financial data and must remain local under ignored `reports/`.
+- PR #11 remains draft until the user separately approves finalization.
