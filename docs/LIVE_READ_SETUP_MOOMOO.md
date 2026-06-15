@@ -9,6 +9,7 @@ Personal CFO Agent v0.3.0 adds a supervised Moomoo / Futu OpenD read-only proof 
 - Readiness checks do not connect to OpenD.
 - Connection diagnostics are explicit and redacted; they do not send live read requests.
 - Account discovery is explicit and redacted; it may connect to OpenD but only calls `get_acc_list()`.
+- Read-context diagnostics are explicit and redacted; they run account discovery first and then test read-only account info and position queries with the discovered account hash context.
 - No order, preview, modify, cancel, submit, cash-transfer, or withdrawal methods are exposed on the provider object.
 - No unlock flow is performed or added.
 - First live read should be supervised.
@@ -78,7 +79,7 @@ Failed context variants are non-terminal when discovery also returns `discovery_
 
 ## Supervised Live Proof
 
-After manually starting OpenD and completing redacted account discovery, the supervised live proof runs account discovery first, then uses the selected account context for the read-only data calls:
+After manually starting OpenD and completing redacted account discovery, the supervised live proof runs account discovery first, probes a read context, then uses the selected read context for the read-only data calls:
 
 ```powershell
 python .\scripts\personal_cfo_agent.py `
@@ -94,9 +95,19 @@ The CLI prints:
 Read-only Moomoo sync only. No order methods are exposed.
 ```
 
-If `futu` is not installed, the provider fails closed with `MOOMOO_SDK_NOT_INSTALLED` and `SDK_NOT_INSTALLED`. If OpenD is not reachable, it fails closed with `MOOMOO_OPEND_UNREACHABLE` or `PROVIDER_CONNECTION_FAILED`. If read requests fail, it reports `PROVIDER_FETCH_FAILED` with a Moomoo stage-specific code such as `MOOMOO_ACCOUNT_LIST_FAILED`, `MOOMOO_ACCOUNT_INFO_FAILED`, `MOOMOO_POSITION_LIST_FAILED`, or `MOOMOO_CASH_QUERY_FAILED`.
+If `futu` is not installed, the provider fails closed with `MOOMOO_SDK_NOT_INSTALLED` and `SDK_NOT_INSTALLED`. If OpenD is not reachable, it fails closed with `MOOMOO_OPEND_UNREACHABLE` or `PROVIDER_CONNECTION_FAILED`. If read requests fail, terminal warning codes now include stage-specific read failures such as `MOOMOO_ACCINFO_QUERY_FAILED`, `MOOMOO_POSITION_QUERY_FAILED`, `MOOMOO_READ_ONLY_FETCH_FAILED`, and `MOOMOO_NORMALIZED_ROWS_EMPTY`.
 
 The supervised data fetch is limited to `get_acc_list`, `accinfo_query`, and `position_list_query`. It uses explicit selected `acc_id` internally when the installed SDK signature supports it, never prints or writes the raw account ID, and does not use `acc_index` unless a future fallback is unavoidable and reported with `MOOMOO_ACC_INDEX_FALLBACK_USED`.
+
+## Redacted Read-Context Probe
+
+Discovery can succeed with `filter_trdmarket=NONE` while later account info or position queries require a concrete market filter. The read-context probe tests installed-SDK-valid `HK`, `US`, `SG`, and `NONE` filters using the discovered `security_firm` and explicit selected account internally:
+
+```powershell
+python .\scripts\personal_cfo_agent.py --provider moomoo --read-context-probe
+```
+
+The probe runs account discovery first, then calls only `accinfo_query` and `position_list_query` for redacted context diagnostics. It does not perform unlock, order, history, transfer, or withdrawal operations. It prints only redacted success flags, selected account hash, selected discovery context mode, selected read context mode if found, position count, cash field count, normalized rows possible, terminal warning codes, variant warning codes, and forbidden-API status.
 
 ## Redacted Data-Path Diagnostics
 
@@ -106,6 +117,8 @@ The `--moomoo-data-diagnostics` mode still requires `--allow-live-read`. It repo
 - OpenD socket reachability
 - discovery success status
 - selected context mode
+- selected discovery context mode
+- selected read context mode, if selected
 - context open status
 - account-list query attempted and success status
 - account count redacted
@@ -134,6 +147,7 @@ Zero-row outcomes are not accepted as a successful live proof unless the diagnos
 | Context open | `context_opened: true` | `MOOMOO_CONTEXT_OPEN_FAILED` |
 | Account list | `account_list_query_success: true` | `MOOMOO_ACCOUNT_LIST_FAILED` or `MOOMOO_ACCOUNT_LIST_EMPTY` |
 | Account filter | selected account hash present or not configured | `MOOMOO_ACCOUNT_FILTER_MISMATCH` |
+| Read context | selected read context mode present | `MOOMOO_READ_CONTEXT_NOT_FOUND` or `MOOMOO_SELECTED_READ_CONTEXT_MISSING` |
 | Account info | `account_info_query_success: true` | `MOOMOO_ACCOUNT_INFO_FAILED` or `MOOMOO_ACCINFO_QUERY_FAILED` |
 | Positions | `position_query_success: true` | `MOOMOO_POSITION_LIST_FAILED`, `MOOMOO_POSITION_QUERY_FAILED`, or `MOOMOO_POSITION_LIST_EMPTY` |
 | Cash/balance | `cash_query_success: true` | `MOOMOO_CASH_QUERY_FAILED`, `MOOMOO_CASH_EMPTY`, or `MOOMOO_CASH_NORMALIZATION_SHAPE_WARNING` |
@@ -147,7 +161,15 @@ PR #11 remains draft. Account discovery is now required before any later supervi
 
 The 2026-06-15 account-discovery run succeeded for context discovery only: SDK import OK, OpenD socket reachable, redacted account count `9`, selected account hash `acct_f63d870d837b3c3d`, selected context mode `filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False`, and `MOOMOO_ACCOUNT_DISCOVERY_OK`. Failed discovery variants are non-terminal once a selected account hash exists. That discovery run did not read balances, positions, cash, orders, or trading history.
 
-The 2026-06-15 selected-context supervised read-only fetch was attempted exactly once after validation passed with 170 tests and 101 warnings. Discovery succeeded with redacted account count `9`, selected account hash `acct_f63d870d837b3c3d`, and selected context mode `filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False`. The fetch then attempted `accinfo_query` and `position_list_query`; both returned nonzero SDK ret codes. Position count was `0`, cash currency count was `0`, normalized rows were `0`, terminal warning codes were none, variant warnings remained non-terminal, and live-read acceptance success remains no.
+The 2026-06-15 selected-context supervised read-only fetch was attempted exactly once after validation passed with 170 tests and 101 warnings. Discovery succeeded with redacted account count `9`, selected account hash `acct_f63d870d837b3c3d`, and selected discovery context mode `filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False`. The fetch then attempted `accinfo_query` and `position_list_query`; both returned nonzero SDK ret codes. Position count was `0`, cash currency count was `0`, normalized rows were `0`, variant warnings remained non-terminal, and live-read acceptance success remains no.
+
+That fetch previously reported empty terminal warning codes despite failed read stages. This is now fixed: if account info fails, terminal warnings include `MOOMOO_ACCINFO_QUERY_FAILED`; if positions fail, terminal warnings include `MOOMOO_POSITION_QUERY_FAILED`; if both fail and no rows normalize, terminal warnings include `MOOMOO_READ_ONLY_FETCH_FAILED` and `MOOMOO_NORMALIZED_ROWS_EMPTY`.
+
+The next diagnostic step added a read-context probe that tests `HK`, `US`, `SG`, and `NONE` contexts with discovered `FUTUSG` and the explicit selected account internally. Live-read acceptance remains no unless a later supervised read produces normalized rows.
+
+The 2026-06-15 read-context probe was attempted exactly once after validation passed with 174 tests and 101 warnings. Discovery succeeded, SDK import was OK, OpenD socket was reachable, redacted account count was `9`, selected account hash was `acct_f63d870d837b3c3d`, and selected discovery context mode remained `filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False`. The probe tested `HK`, `US`, `SG`, and `NONE` read contexts with `FUTUSG`; all tested contexts returned sanitized nonzero account info and position ret codes, position count was `0`, cash field count detected was `0`, normalized rows possible was `0`, and no selected read context was found.
+
+Terminal warning codes from the read-context probe were `MOOMOO_ACCINFO_QUERY_FAILED`, `MOOMOO_POSITION_QUERY_FAILED`, `MOOMOO_READ_CONTEXT_NOT_FOUND`, `MOOMOO_SELECTED_READ_CONTEXT_MISSING`, `MOOMOO_READ_CONTEXT_PROBE_FAILED`, `MOOMOO_READ_ONLY_FETCH_FAILED`, and `MOOMOO_NORMALIZED_ROWS_EMPTY`. Variant warning codes remained discovery-matrix-only: `MOOMOO_SDK_DISCOVERY_ARG_UNSUPPORTED`, `MOOMOO_ACCOUNT_DISCOVERY_FAILED`, `MOOMOO_SECURITY_FIRM_MISMATCH`, `MOOMOO_MARKET_FILTER_MISMATCH`, and `MOOMOO_DISCOVERY_SUCCESS_WITH_VARIANT_WARNINGS`. Because no working read context was found, no supervised data fetch was run in this continuation.
 
 No report bundle was generated, no reports were committed, no unlock was performed, no orders were requested, and no cash transfer was attempted.
 

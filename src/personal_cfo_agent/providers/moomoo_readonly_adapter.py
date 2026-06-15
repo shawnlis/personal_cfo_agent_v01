@@ -14,8 +14,11 @@ from typing import Any
 from personal_cfo_agent.models import WarningCode
 from personal_cfo_agent.normalizer import hash_account_id
 from personal_cfo_agent.providers.moomoo_account_discovery import (
-    open_moomoo_discovered_context,
     run_moomoo_account_discovery,
+)
+from personal_cfo_agent.providers.moomoo_read_context_probe import (
+    open_moomoo_read_context,
+    run_moomoo_read_context_probe,
 )
 from personal_cfo_agent.providers.moomoo_models import (
     MoomooAccountRow,
@@ -55,13 +58,21 @@ class _DiagnosticState:
     account_count_redacted: int = 0
     selected_account_hash: str | None = None
     selected_context_mode: str | None = None
+    selected_discovery_context_mode: str | None = None
+    selected_read_context_mode: str | None = None
     account_filter_mismatch: bool = False
     account_info_query_attempted: bool = False
     account_info_query_success: bool = False
     accinfo_query_attempted: bool = False
     accinfo_query_success: bool = False
+    accinfo_failure_stage: str | None = None
+    accinfo_sdk_ret_code_sanitized: str | None = None
+    accinfo_exception_category_sanitized: str | None = None
     position_query_attempted: bool = False
     position_query_success: bool = False
+    position_failure_stage: str | None = None
+    position_sdk_ret_code_sanitized: str | None = None
+    position_exception_category_sanitized: str | None = None
     position_count: int = 0
     cash_query_attempted: bool = False
     cash_query_success: bool = False
@@ -83,6 +94,15 @@ class _DiagnosticState:
         for code in codes:
             self.add_warning(code)
 
+    def add_terminal_warning(self, code: WarningCode) -> None:
+        if code not in self.terminal_warning_codes:
+            self.terminal_warning_codes.append(code)
+        self.add_warning(code)
+
+    def add_terminal_warnings(self, codes: list[WarningCode]) -> None:
+        for code in codes:
+            self.add_terminal_warning(code)
+
     def fail(self, stage: str, summary: str, codes: list[WarningCode]) -> None:
         self.stage_failures[stage] = summary
         self.add_warnings(codes)
@@ -98,13 +118,25 @@ class _DiagnosticState:
             account_count_redacted=self.account_count_redacted,
             selected_account_hash=self.selected_account_hash,
             selected_context_mode=self.selected_context_mode,
+            selected_discovery_context_mode=self.selected_discovery_context_mode,
+            selected_read_context_mode=self.selected_read_context_mode,
             account_filter_mismatch=self.account_filter_mismatch,
             account_info_query_attempted=self.account_info_query_attempted,
             account_info_query_success=self.account_info_query_success,
             accinfo_query_attempted=self.accinfo_query_attempted,
             accinfo_query_success=self.accinfo_query_success,
+            accinfo_failure_stage=self.accinfo_failure_stage,
+            accinfo_sdk_ret_code_sanitized=self.accinfo_sdk_ret_code_sanitized,
+            accinfo_exception_category_sanitized=(
+                self.accinfo_exception_category_sanitized
+            ),
             position_query_attempted=self.position_query_attempted,
             position_query_success=self.position_query_success,
+            position_failure_stage=self.position_failure_stage,
+            position_sdk_ret_code_sanitized=self.position_sdk_ret_code_sanitized,
+            position_exception_category_sanitized=(
+                self.position_exception_category_sanitized
+            ),
             position_count=self.position_count,
             cash_query_attempted=self.cash_query_attempted,
             cash_query_success=self.cash_query_success,
@@ -157,6 +189,7 @@ class MoomooReadOnlyAdapter:
         state.account_count_redacted = discovery.account_count_redacted
         state.selected_account_hash = discovery.selected_account_hash
         state.selected_context_mode = discovery.selected_context_mode
+        state.selected_discovery_context_mode = discovery.selected_context_mode
         state.terminal_warning_codes = list(discovery.terminal_warning_codes)
         state.variant_warning_codes = list(discovery.variant_warning_codes)
         state.add_warnings(list(discovery.warning_codes))
@@ -175,6 +208,12 @@ class MoomooReadOnlyAdapter:
                     WarningCode.PROVIDER_FETCH_FAILED,
                 ],
             )
+            state.add_terminal_warnings(
+                [
+                    WarningCode.MOOMOO_SELECTED_ACCOUNT_MISSING,
+                    WarningCode.MOOMOO_READ_ONLY_FETCH_FAILED,
+                ]
+            )
             raise MoomooFetchError(
                 "Moomoo account discovery failed", state.to_diagnostics()
             )
@@ -189,15 +228,57 @@ class MoomooReadOnlyAdapter:
                     WarningCode.PROVIDER_FETCH_FAILED,
                 ],
             )
+            state.add_terminal_warnings(
+                [
+                    WarningCode.MOOMOO_ACCOUNT_FILTER_MISMATCH,
+                    WarningCode.MOOMOO_READ_ONLY_FETCH_FAILED,
+                ]
+            )
             raise MoomooFetchError(
                 "Moomoo account filter mismatch", state.to_diagnostics()
             )
 
+        read_probe = run_moomoo_read_context_probe(
+            self._discovery_env(),
+            discovery=discovery,
+        )
+        state.selected_read_context_mode = read_probe.selected_read_context_mode
+        if read_probe.selected_read_context_mode:
+            state.selected_context_mode = read_probe.selected_read_context_mode
+        state.add_warnings(list(read_probe.warning_codes))
+        state.add_terminal_warnings(list(read_probe.terminal_warning_codes))
+        if read_probe.variant_warning_codes:
+            state.variant_warning_codes = _dedupe_warning_codes(
+                [*state.variant_warning_codes, *read_probe.variant_warning_codes]
+            )
+        if not read_probe.probe_success:
+            state.fail(
+                "read_context",
+                "No read context succeeded",
+                [
+                    WarningCode.MOOMOO_SELECTED_READ_CONTEXT_MISSING,
+                    WarningCode.MOOMOO_READ_CONTEXT_NOT_FOUND,
+                    WarningCode.MOOMOO_READ_ONLY_FETCH_FAILED,
+                    WarningCode.PROVIDER_FETCH_FAILED,
+                ],
+            )
+            state.add_terminal_warnings(
+                [
+                    WarningCode.MOOMOO_SELECTED_READ_CONTEXT_MISSING,
+                    WarningCode.MOOMOO_READ_CONTEXT_NOT_FOUND,
+                    WarningCode.MOOMOO_READ_ONLY_FETCH_FAILED,
+                    WarningCode.MOOMOO_NORMALIZED_ROWS_EMPTY,
+                ]
+            )
+            raise MoomooFetchError(
+                "Moomoo read context probe failed", state.to_diagnostics()
+            )
+
         try:
             with _suppress_sdk_console_output():
-                context = open_moomoo_discovered_context(
+                context = open_moomoo_read_context(
                     sdk,
-                    discovery,
+                    read_probe,
                     host=self.host,
                     port=self.port,
                 )
@@ -213,6 +294,12 @@ class MoomooReadOnlyAdapter:
                     WarningCode.MOOMOO_CONNECTION_FAILED,
                     WarningCode.PROVIDER_CONNECTION_FAILED,
                 ],
+            )
+            state.add_terminal_warnings(
+                [
+                    WarningCode.MOOMOO_CONTEXT_OPEN_FAILED,
+                    WarningCode.MOOMOO_CONNECTION_FAILED,
+                ]
             )
             raise MoomooConnectionError(
                 "Moomoo OpenD connection failed", state.to_diagnostics()
@@ -263,15 +350,22 @@ class MoomooReadOnlyAdapter:
             )
         )
         if state.normalized_rows:
-            state.add_warning(WarningCode.MOOMOO_READ_ONLY_FETCH_OK)
+            if state.accinfo_query_success and state.position_query_success:
+                state.add_warning(WarningCode.MOOMOO_READ_ONLY_FETCH_OK)
+            else:
+                state.add_warning(WarningCode.MOOMOO_PARTIAL_READ_ONLY_FETCH_OK)
         else:
-            state.add_warning(WarningCode.MOOMOO_READ_ONLY_FETCH_FAILED)
-            state.add_warning(WarningCode.MOOMOO_NORMALIZED_ROWS_EMPTY)
+            state.add_terminal_warning(WarningCode.MOOMOO_READ_ONLY_FETCH_FAILED)
+            state.add_terminal_warning(WarningCode.MOOMOO_NORMALIZED_ROWS_EMPTY)
         if (
             not state.account_info_query_success
             and not state.position_query_success
             and not state.normalized_rows
         ):
+            state.add_terminal_warning(WarningCode.MOOMOO_ACCINFO_QUERY_FAILED)
+            state.add_terminal_warning(WarningCode.MOOMOO_POSITION_QUERY_FAILED)
+            state.add_terminal_warning(WarningCode.MOOMOO_READ_ONLY_FETCH_FAILED)
+            state.add_terminal_warning(WarningCode.MOOMOO_NORMALIZED_ROWS_EMPTY)
             state.add_warning(WarningCode.PROVIDER_FETCH_FAILED)
             raise MoomooFetchError("Moomoo read requests failed", state.to_diagnostics())
         return MoomooReadOnlySnapshot(
@@ -360,6 +454,7 @@ class MoomooReadOnlyAdapter:
     ) -> list[MoomooCashRow]:
         query = _first_callable(context, ["accinfo_query"])
         if query is None:
+            state.accinfo_failure_stage = "account_info"
             state.fail(
                 "account_info",
                 "SDK account info query unavailable",
@@ -370,6 +465,7 @@ class MoomooReadOnlyAdapter:
                     WarningCode.PROVIDER_FETCH_FAILED,
                 ],
             )
+            state.add_terminal_warning(WarningCode.MOOMOO_ACCINFO_QUERY_FAILED)
             return []
         state.account_info_query_attempted = True
         state.accinfo_query_attempted = True
@@ -383,6 +479,8 @@ class MoomooReadOnlyAdapter:
                 stage="account_info",
             )
         except Exception as exc:
+            state.accinfo_failure_stage = "account_info"
+            state.accinfo_exception_category_sanitized = _safe_exception_name(exc)
             state.fail(
                 "account_info",
                 f"SDK account info query raised {_safe_exception_name(exc)}",
@@ -393,8 +491,13 @@ class MoomooReadOnlyAdapter:
                     *_unlock_warning(exc),
                 ],
             )
+            state.add_terminal_warnings(
+                [WarningCode.MOOMOO_ACCINFO_QUERY_FAILED, *_unlock_warning(exc)]
+            )
             return []
         if ret_code != _ret_ok(sdk):
+            state.accinfo_failure_stage = "account_info"
+            state.accinfo_sdk_ret_code_sanitized = _sanitize_ret_code(ret_code)
             state.fail(
                 "account_info",
                 "SDK returned nonzero ret code",
@@ -404,6 +507,9 @@ class MoomooReadOnlyAdapter:
                     WarningCode.MOOMOO_CASH_QUERY_FAILED,
                     *_unlock_warning(data),
                 ],
+            )
+            state.add_terminal_warnings(
+                [WarningCode.MOOMOO_ACCINFO_QUERY_FAILED, *_unlock_warning(data)]
             )
             return []
         rows = _rows(data)
@@ -428,6 +534,7 @@ class MoomooReadOnlyAdapter:
         state.account_info_query_success = True
         state.accinfo_query_success = True
         state.cash_query_success = True
+        state.add_warning(WarningCode.MOOMOO_ACCINFO_QUERY_OK)
         state.cash_currency_count = len({row.currency for row in cash_rows if row.currency})
         if rows and not cash_rows:
             state.add_warning(WarningCode.MOOMOO_CASH_NORMALIZATION_SHAPE_WARNING)
@@ -445,6 +552,7 @@ class MoomooReadOnlyAdapter:
     ) -> list[MoomooPositionRow]:
         query = _first_callable(context, ["position_list_query"])
         if query is None:
+            state.position_failure_stage = "positions"
             state.fail(
                 "positions",
                 "SDK position query unavailable",
@@ -453,6 +561,7 @@ class MoomooReadOnlyAdapter:
                     WarningCode.MOOMOO_POSITION_QUERY_FAILED,
                 ],
             )
+            state.add_terminal_warning(WarningCode.MOOMOO_POSITION_QUERY_FAILED)
             return []
         state.position_query_attempted = True
         try:
@@ -464,6 +573,8 @@ class MoomooReadOnlyAdapter:
                 stage="positions",
             )
         except Exception as exc:
+            state.position_failure_stage = "positions"
+            state.position_exception_category_sanitized = _safe_exception_name(exc)
             state.fail(
                 "positions",
                 f"SDK position query raised {_safe_exception_name(exc)}",
@@ -473,8 +584,13 @@ class MoomooReadOnlyAdapter:
                     *_unlock_warning(exc),
                 ],
             )
+            state.add_terminal_warnings(
+                [WarningCode.MOOMOO_POSITION_QUERY_FAILED, *_unlock_warning(exc)]
+            )
             return []
         if ret_code != _ret_ok(sdk):
+            state.position_failure_stage = "positions"
+            state.position_sdk_ret_code_sanitized = _sanitize_ret_code(ret_code)
             state.fail(
                 "positions",
                 "SDK returned nonzero ret code",
@@ -483,6 +599,9 @@ class MoomooReadOnlyAdapter:
                     WarningCode.MOOMOO_POSITION_QUERY_FAILED,
                     *_unlock_warning(data),
                 ],
+            )
+            state.add_terminal_warnings(
+                [WarningCode.MOOMOO_POSITION_QUERY_FAILED, *_unlock_warning(data)]
             )
             return []
         positions: list[MoomooPositionRow] = []
@@ -510,6 +629,7 @@ class MoomooReadOnlyAdapter:
             )
         state.position_query_success = True
         state.position_count = len(positions)
+        state.add_warning(WarningCode.MOOMOO_POSITION_QUERY_OK)
         if not positions:
             state.add_warning(WarningCode.MOOMOO_POSITION_DATA_EMPTY)
         return positions
@@ -683,9 +803,18 @@ def _cash_field_currency_pairs(row: dict[str, Any]) -> list[tuple[str, str]]:
 
 def _unlock_warning(value: Any) -> list[WarningCode]:
     text = str(value).lower()
-    if "unlock" in text or "password" in text:
+    if "unlock" in text or "password" in text or "locked" in text:
         return [WarningCode.MOOMOO_READ_REQUIRES_MANUAL_UNLOCK_REVIEW]
     return []
+
+
+def _sanitize_ret_code(ret_code: Any) -> str:
+    if isinstance(ret_code, (bool, int, float)):
+        return str(ret_code)
+    name = getattr(ret_code, "name", None)
+    if isinstance(name, str):
+        return name
+    return type(ret_code).__name__
 
 
 def _data_path_warnings(

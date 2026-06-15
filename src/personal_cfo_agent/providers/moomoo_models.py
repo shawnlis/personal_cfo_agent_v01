@@ -50,13 +50,21 @@ class MoomooReadDiagnostics:
     account_count_redacted: int = 0
     selected_account_hash: str | None = None
     selected_context_mode: str | None = None
+    selected_discovery_context_mode: str | None = None
+    selected_read_context_mode: str | None = None
     account_filter_mismatch: bool = False
     account_info_query_attempted: bool = False
     account_info_query_success: bool = False
     accinfo_query_attempted: bool = False
     accinfo_query_success: bool = False
+    accinfo_failure_stage: str | None = None
+    accinfo_sdk_ret_code_sanitized: str | None = None
+    accinfo_exception_category_sanitized: str | None = None
     position_query_attempted: bool = False
     position_query_success: bool = False
+    position_failure_stage: str | None = None
+    position_sdk_ret_code_sanitized: str | None = None
+    position_exception_category_sanitized: str | None = None
     position_count: int = 0
     cash_query_attempted: bool = False
     cash_query_success: bool = False
@@ -81,13 +89,25 @@ class MoomooReadDiagnostics:
             "account_count_redacted": self.account_count_redacted,
             "selected_account_hash": self.selected_account_hash,
             "selected_context_mode": self.selected_context_mode,
+            "selected_discovery_context_mode": self.selected_discovery_context_mode,
+            "selected_read_context_mode": self.selected_read_context_mode,
             "account_filter_mismatch": self.account_filter_mismatch,
             "account_info_query_attempted": self.account_info_query_attempted,
             "account_info_query_success": self.account_info_query_success,
             "accinfo_query_attempted": self.accinfo_query_attempted,
             "accinfo_query_success": self.accinfo_query_success,
+            "accinfo_failure_stage": self.accinfo_failure_stage,
+            "accinfo_sdk_ret_code_sanitized": self.accinfo_sdk_ret_code_sanitized,
+            "accinfo_exception_category_sanitized": (
+                self.accinfo_exception_category_sanitized
+            ),
             "position_query_attempted": self.position_query_attempted,
             "position_query_success": self.position_query_success,
+            "position_failure_stage": self.position_failure_stage,
+            "position_sdk_ret_code_sanitized": self.position_sdk_ret_code_sanitized,
+            "position_exception_category_sanitized": (
+                self.position_exception_category_sanitized
+            ),
             "position_count": self.position_count,
             "cash_query_attempted": self.cash_query_attempted,
             "cash_query_success": self.cash_query_success,

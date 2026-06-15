@@ -27,6 +27,12 @@ Redacted account discovery, to run before any later funds, positions, or cash re
 python .\scripts\personal_cfo_agent.py --provider moomoo --account-discovery
 ```
 
+Redacted read-context probe, to run after discovery succeeds and before another supervised data fetch:
+
+```powershell
+python .\scripts\personal_cfo_agent.py --provider moomoo --read-context-probe
+```
+
 Supervised read-only live read, explicitly gated:
 
 ```powershell
@@ -64,6 +70,8 @@ python .\scripts\personal_cfo_agent.py `
 - The discovery probe tests account context only: `security_firm`, `filter_trdmarket`, universal account mode, trading environment, account status, and market authority.
 - The discovery probe does not call `accinfo_query`, `position_list_query`, unlock APIs, order APIs, transfer APIs, or withdrawal APIs.
 - The discovery probe does not read balances, positions, cash, orders, or trading history.
+- The read-context probe runs discovery first, then tests read-only account info and position query contexts with the discovered account internally.
+- Failed discovery variants are non-terminal once a selected account hash exists.
 - No trading capability is enabled by this probe.
 - Acceptance remains unsuccessful until a later supervised funds/positions/cash read produces normalized rows.
 - PR #11 remains draft.
@@ -132,6 +140,58 @@ python .\scripts\personal_cfo_agent.py `
 - Report bundle generated: no
 - `provider_sync_summary.json`: not generated
 - `normalized_asset_ledger.csv`: not generated
+- Live-read acceptance success: no
+
+## Read-Context Diagnostic Hardening
+
+- Date/time: 2026-06-15 continuation pass before the next live probe
+- Discovery status: succeeded previously
+- Account count redacted: 9
+- Selected account hash: `acct_f63d870d837b3c3d`
+- Selected discovery context mode: `filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False`
+- Data fetch status before this hardening: failed
+- Prior account info query success: no
+- Prior position query success: no
+- Prior normalized rows: 0
+- Prior terminal warning issue: terminal warning codes were empty even though both read stages failed
+- Terminal warning fix: read failures now emit `MOOMOO_ACCINFO_QUERY_FAILED`, `MOOMOO_POSITION_QUERY_FAILED`, `MOOMOO_READ_ONLY_FETCH_FAILED`, and `MOOMOO_NORMALIZED_ROWS_EMPTY` as applicable
+- Read-context probe added: yes
+- Probe filters: installed-SDK-valid `HK`, `US`, `SG`, and `NONE`
+- Probe selected firm: discovered `FUTUSG`
+- Probe account handling: explicit selected account internally, selected account hash externally
+- Unlock performed: no
+- Order paths touched: no
+- Cash transfer paths touched: no
+- Raw account IDs in committed docs: none
+- Exact balances or raw positions in committed docs: none
+- Reports committed: no
+- Live-read acceptance success: no unless normalized rows are produced by a later supervised fetch
+
+## Read-Context Probe Attempt
+
+- Date/time: 2026-06-15 continuation pass
+- Validation before probe: `python .\scripts\dev_validate.py` passed with 174 tests and 101 warnings
+- Read-context probe command: `python .\scripts\personal_cfo_agent.py --provider moomoo --read-context-probe`
+- Read-context probe attempted: yes, exactly once
+- Read-context probe success: no
+- Discovery success: yes
+- SDK import OK: yes
+- OpenD socket reachable: yes
+- Account count redacted: 9
+- Selected account hash: `acct_f63d870d837b3c3d`
+- Selected discovery context mode: `filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False`
+- Selected read context mode: none
+- Read contexts tested: `HK`, `US`, `SG`, `NONE`
+- Account info query success: no for all tested read contexts
+- Position query success: no for all tested read contexts
+- Position count: 0
+- Cash field count detected: 0
+- Normalized rows possible: 0
+- Terminal warning codes: `MOOMOO_ACCINFO_QUERY_FAILED`, `MOOMOO_POSITION_QUERY_FAILED`, `MOOMOO_READ_CONTEXT_NOT_FOUND`, `MOOMOO_SELECTED_READ_CONTEXT_MISSING`, `MOOMOO_READ_CONTEXT_PROBE_FAILED`, `MOOMOO_READ_ONLY_FETCH_FAILED`, `MOOMOO_NORMALIZED_ROWS_EMPTY`
+- Variant warning codes: `MOOMOO_SDK_DISCOVERY_ARG_UNSUPPORTED`, `MOOMOO_ACCOUNT_DISCOVERY_FAILED`, `MOOMOO_SECURITY_FIRM_MISMATCH`, `MOOMOO_MARKET_FILTER_MISMATCH`, `MOOMOO_DISCOVERY_SUCCESS_WITH_VARIANT_WARNINGS`
+- Forbidden API called: no
+- Supervised data fetch attempted after probe: no, because no working read context was found
+- Report bundle generated: no
 - Live-read acceptance success: no
 
 ## Second Diagnostic Attempt

@@ -23,6 +23,9 @@ from personal_cfo_agent.providers.moomoo_connection_diagnostics import (
 from personal_cfo_agent.providers.moomoo_account_discovery import (
     run_moomoo_account_discovery,
 )
+from personal_cfo_agent.providers.moomoo_read_context_probe import (
+    run_moomoo_read_context_probe,
+)
 from personal_cfo_agent.providers.moomoo_provider import MoomooProvider
 from personal_cfo_agent.providers.moomoo_readonly_adapter import MoomooReadOnlyAdapter
 from personal_cfo_agent.runner import build_arg_parser, collect_provider_snapshots, main, run
@@ -130,6 +133,13 @@ def test_cli_moomoo_account_discovery_command_exists() -> None:
 
     assert args.provider == "moomoo"
     assert args.account_discovery is True
+
+
+def test_cli_moomoo_read_context_probe_command_exists() -> None:
+    args = build_arg_parser().parse_args(["--provider", "moomoo", "--read-context-probe"])
+
+    assert args.provider == "moomoo"
+    assert args.read_context_probe is True
 
 
 def test_moomoo_account_discovery_calls_get_acc_list_only_and_redacts(
@@ -482,13 +492,21 @@ def test_moomoo_data_diagnostics_schema_is_stable() -> None:
         account_count_redacted=1,
         selected_account_hash="acct_test_hash",
         selected_context_mode="filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False",
+        selected_discovery_context_mode="filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False",
+        selected_read_context_mode="filter_trdmarket=US;security_firm=FUTUSG;need_general_sec_acc=False",
         account_filter_mismatch=False,
         account_info_query_attempted=True,
         account_info_query_success=True,
         accinfo_query_attempted=True,
         accinfo_query_success=True,
+        accinfo_failure_stage=None,
+        accinfo_sdk_ret_code_sanitized=None,
+        accinfo_exception_category_sanitized=None,
         position_query_attempted=True,
         position_query_success=True,
+        position_failure_stage=None,
+        position_sdk_ret_code_sanitized=None,
+        position_exception_category_sanitized=None,
         position_count=2,
         cash_query_attempted=True,
         cash_query_success=True,
@@ -513,13 +531,21 @@ def test_moomoo_data_diagnostics_schema_is_stable() -> None:
         "account_count_redacted",
         "selected_account_hash",
         "selected_context_mode",
+        "selected_discovery_context_mode",
+        "selected_read_context_mode",
         "account_filter_mismatch",
         "account_info_query_attempted",
         "account_info_query_success",
         "accinfo_query_attempted",
         "accinfo_query_success",
+        "accinfo_failure_stage",
+        "accinfo_sdk_ret_code_sanitized",
+        "accinfo_exception_category_sanitized",
         "position_query_attempted",
         "position_query_success",
+        "position_failure_stage",
+        "position_sdk_ret_code_sanitized",
+        "position_exception_category_sanitized",
         "position_count",
         "cash_query_attempted",
         "cash_query_success",
@@ -538,6 +564,8 @@ def test_moomoo_data_diagnostics_schema_is_stable() -> None:
     assert "Context opened: yes" in text
     assert "Account count redacted: 1" in text
     assert "Selected context mode: filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False" in text
+    assert "Selected discovery context mode: filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False" in text
+    assert "Selected read context mode: filter_trdmarket=US;security_firm=FUTUSG;need_general_sec_acc=False" in text
     assert "Normalized rows count: 3" in text
     assert "Forbidden API called: no" in text
     assert "Variant warning codes: MOOMOO_DISCOVERY_SUCCESS_WITH_VARIANT_WARNINGS" in text
@@ -740,11 +768,12 @@ def test_moomoo_context_open_failure_returns_stage_code(monkeypatch) -> None:
     snapshot = provider._sync()
 
     assert not snapshot.has_data()
-    assert WarningCode.MOOMOO_CONTEXT_OPEN_FAILED in snapshot.status.warning_codes
-    assert WarningCode.PROVIDER_CONNECTION_FAILED in snapshot.status.warning_codes
+    assert WarningCode.MOOMOO_READ_CONTEXT_PROBE_FAILED in snapshot.status.warning_codes
+    assert WarningCode.MOOMOO_READ_CONTEXT_NOT_FOUND in snapshot.status.warning_codes
+    assert WarningCode.PROVIDER_FETCH_FAILED in snapshot.status.warning_codes
     assert snapshot.status.diagnostics["context_opened"] is False
     assert snapshot.status.diagnostics["stage_failures"] == {
-        "context_open": "SDK context open failed"
+        "read_context": "No read context succeeded"
     }
 
 
@@ -890,14 +919,15 @@ def test_moomoo_cash_query_failure_returns_stage_code(monkeypatch) -> None:
     snapshot = provider._sync()
 
     assert not snapshot.has_data()
-    assert WarningCode.MOOMOO_ACCOUNT_INFO_FAILED in snapshot.status.warning_codes
-    assert WarningCode.MOOMOO_CASH_QUERY_FAILED in snapshot.status.warning_codes
+    assert WarningCode.MOOMOO_ACCINFO_QUERY_FAILED in snapshot.status.warning_codes
+    assert WarningCode.MOOMOO_POSITION_QUERY_FAILED in snapshot.status.warning_codes
+    assert WarningCode.MOOMOO_READ_CONTEXT_NOT_FOUND in snapshot.status.warning_codes
     assert WarningCode.PROVIDER_FETCH_FAILED in snapshot.status.warning_codes
-    assert snapshot.status.diagnostics["cash_query_attempted"] is True
-    assert snapshot.status.diagnostics["cash_query_success"] is False
+    assert WarningCode.MOOMOO_ACCINFO_QUERY_FAILED.value in snapshot.status.diagnostics[
+        "terminal_warning_codes"
+    ]
     assert snapshot.status.diagnostics["stage_failures"] == {
-        "account_info": "SDK returned nonzero ret code",
-        "positions": "SDK position query unavailable",
+        "read_context": "No read context succeeded",
     }
 
 
@@ -1017,6 +1047,201 @@ def test_moomoo_unlock_required_error_warns_without_unlock(monkeypatch) -> None:
 
     assert not snapshot.has_data()
     assert WarningCode.MOOMOO_READ_REQUIRES_MANUAL_UNLOCK_REVIEW in snapshot.status.warning_codes
+
+
+def test_moomoo_read_context_probe_selects_us_after_hk_failure(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+    raw_account = "MOOMOO_READ_PROBE_RAW_ACCOUNT_SENTINEL"
+
+    class _FilterAwareContext:
+        def __init__(
+            self,
+            *,
+            host: str,
+            port: int,
+            filter_trdmarket=None,
+            security_firm=None,
+            need_general_sec_acc: bool = False,
+        ) -> None:
+            self.filter_trdmarket = filter_trdmarket
+            self.security_firm = security_firm
+            calls.append(
+                (
+                    "context",
+                    {
+                        "filter_trdmarket": filter_trdmarket,
+                        "security_firm": security_firm,
+                        "need_general_sec_acc": need_general_sec_acc,
+                    },
+                )
+            )
+
+        def get_acc_list(self):
+            return 0, [
+                {
+                    "acc_id": raw_account,
+                    "trd_env": "REAL",
+                    "trdmarket_auth": ["HK", "US"],
+                    "acc_status": "ACTIVE",
+                }
+            ]
+
+        def accinfo_query(self, *, trd_env, acc_id=0):
+            calls.append(("accinfo_query", {"acc_id": acc_id}))
+            if self.filter_trdmarket == "HK":
+                return 1, "redacted failure"
+            return 0, [{"us_cash": 1}]
+
+        def position_list_query(self, *, trd_env, acc_id=0):
+            calls.append(("position_list_query", {"acc_id": acc_id}))
+            if self.filter_trdmarket == "HK":
+                return 1, "redacted failure"
+            return 0, [{"code": "US.TEST", "qty": 1}]
+
+        def close(self) -> None:
+            pass
+
+    _install_fake_discovery_sdk(
+        monkeypatch,
+        _FilterAwareContext,
+        market_names=("HK", "US"),
+        security_names=("FUTUSG",),
+    )
+    _set_valid_moomoo_env(monkeypatch)
+
+    diagnostics = run_moomoo_read_context_probe(_valid_env())
+    payload = diagnostics.to_redacted_dict()
+
+    assert diagnostics.probe_success is True
+    assert payload["selected_read_context_mode"] == (
+        "filter_trdmarket=US;security_firm=FUTUSG;need_general_sec_acc=False"
+    )
+    assert payload["position_query_success"] is True
+    assert payload["accinfo_query_success"] is True
+    assert payload["position_count"] == 1
+    assert payload["cash_field_count_detected"] == 1
+    assert [candidate["context_mode"] for candidate in payload["candidate_contexts"]] == [
+        "filter_trdmarket=HK;security_firm=FUTUSG;need_general_sec_acc=False",
+        "filter_trdmarket=US;security_firm=FUTUSG;need_general_sec_acc=False",
+    ]
+    assert all(call[1]["security_firm"] == "FUTUSG" for call in calls if call[0] == "context")
+    assert any(call[1]["acc_id"] == raw_account for call in calls if call[0] == "accinfo_query")
+    assert raw_account not in json.dumps(payload)
+
+
+def test_moomoo_read_context_probe_cli_redacts_and_suppresses_sdk_output(
+    monkeypatch,
+    capsys,
+) -> None:
+    raw_account = "MOOMOO_READ_CONTEXT_CLI_RAW_ACCOUNT_SENTINEL"
+
+    class _NoisyReadProbeContext:
+        def __init__(
+            self,
+            *,
+            host: str,
+            port: int,
+            filter_trdmarket=None,
+            security_firm=None,
+        ) -> None:
+            self.filter_trdmarket = filter_trdmarket
+            print("SDK_READ_CONTEXT_STDOUT_SENTINEL")
+            print("SDK_READ_CONTEXT_STDERR_SENTINEL", file=sys.stderr)
+
+        def get_acc_list(self):
+            print("SDK_GET_ACC_LIST_STDOUT_SENTINEL")
+            return 0, [
+                {
+                    "acc_id": raw_account,
+                    "card_num": "CARD_SENTINEL",
+                    "uni_card_num": "UNI_CARD_SENTINEL",
+                    "trd_env": "REAL",
+                    "trdmarket_auth": ["US"],
+                    "acc_status": "ACTIVE",
+                }
+            ]
+
+        def accinfo_query(self, *, trd_env, acc_id=0):
+            print("SDK_ACCINFO_STDOUT_SENTINEL")
+            return 0, [{"us_cash": 1}]
+
+        def position_list_query(self, *, trd_env, acc_id=0):
+            print("SDK_POSITION_STDOUT_SENTINEL")
+            return 0, []
+
+        def close(self) -> None:
+            print("SDK_CLOSE_STDOUT_SENTINEL")
+
+    _install_fake_discovery_sdk(
+        monkeypatch,
+        _NoisyReadProbeContext,
+        market_names=("US",),
+        security_names=("FUTUSG",),
+    )
+    _set_valid_moomoo_env(monkeypatch)
+
+    exit_code = main(["--provider", "moomoo", "--read-context-probe"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    combined = captured.out + captured.err
+
+    assert exit_code == 0
+    assert payload["selected_read_context_mode"] == (
+        "filter_trdmarket=US;security_firm=FUTUSG;need_general_sec_acc=False"
+    )
+    assert raw_account not in combined
+    assert "CARD_SENTINEL" not in combined
+    assert "UNI_CARD_SENTINEL" not in combined
+    assert "SDK_READ_CONTEXT_STDOUT_SENTINEL" not in combined
+    assert "SDK_ACCINFO_STDOUT_SENTINEL" not in combined
+
+
+def test_moomoo_partial_fetch_positions_survive_accinfo_failure(monkeypatch) -> None:
+    class _PositionOnlyReadContext:
+        def __init__(self, *, host: str, port: int, filter_trdmarket=None, security_firm=None) -> None:
+            self.filter_trdmarket = filter_trdmarket
+
+        def acc_list_query(self):
+            return 0, [
+                {
+                    "acc_id": "MOOMOO_PARTIAL_POSITION_ACCOUNT",
+                    "trd_env": "REAL",
+                    "trdmarket_auth": ["US"],
+                    "acc_status": "ACTIVE",
+                }
+            ]
+
+        def accinfo_query(self, *, trd_env, acc_id=0):
+            return 1, "manual review required"
+
+        def position_list_query(self, *, trd_env, acc_id=0):
+            return 0, [
+                {
+                    "code": "US.PARTIAL",
+                    "stock_name": "Partial Inc",
+                    "qty": 2,
+                    "market_val": 20.0,
+                    "currency": "USD",
+                }
+            ]
+
+        def close(self) -> None:
+            pass
+
+    _install_fake_sdk(monkeypatch, _PositionOnlyReadContext)
+    provider = MoomooProvider(_valid_config(), allow_live_read=True)
+
+    snapshot = provider._sync()
+
+    assert snapshot.has_data()
+    assert snapshot.status.diagnostics["selected_read_context_mode"] == (
+        "filter_trdmarket=HK;security_firm=FUTUSG;need_general_sec_acc=False"
+    )
+    assert WarningCode.MOOMOO_ACCINFO_QUERY_FAILED in snapshot.status.warning_codes
+    assert WarningCode.MOOMOO_PARTIAL_READ_ONLY_FETCH_OK in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["position_query_success"] is True
+    assert snapshot.status.diagnostics["accinfo_query_success"] is False
+    assert snapshot.status.diagnostics["normalized_rows"] == 1
 
 
 def test_moomoo_cash_parser_maps_currency_cash_fields(monkeypatch) -> None:
@@ -1389,6 +1614,7 @@ def _install_fake_discovery_sdk(
     security_names: tuple[str, ...] = ("RIGHT_SECURITIES",),
 ):
     import personal_cfo_agent.providers.moomoo_account_discovery as discovery_module
+    import personal_cfo_agent.providers.moomoo_read_context_probe as read_probe_module
 
     class _FakeLogger:
         console_level = 20
@@ -1420,6 +1646,7 @@ def _install_fake_discovery_sdk(
         OpenSecTradeContext = context_cls
 
     monkeypatch.setattr(discovery_module.importlib, "import_module", lambda name: _FakeSdk)
+    monkeypatch.setattr(read_probe_module.importlib, "import_module", lambda name: _FakeSdk)
     return _FakeSdk
 
 
@@ -1447,6 +1674,7 @@ def _set_valid_moomoo_env(monkeypatch) -> None:
 def _install_fake_sdk(monkeypatch, context_cls):
     import personal_cfo_agent.providers.moomoo_readonly_adapter as adapter_module
     import personal_cfo_agent.providers.moomoo_account_discovery as discovery_module
+    import personal_cfo_agent.providers.moomoo_read_context_probe as read_probe_module
 
     class _WrappedContext(context_cls):
         def __init__(self, *args, **kwargs):
@@ -1493,6 +1721,7 @@ def _install_fake_sdk(monkeypatch, context_cls):
 
     monkeypatch.setattr(adapter_module.importlib, "import_module", lambda name: _FakeSdk)
     monkeypatch.setattr(discovery_module.importlib, "import_module", lambda name: _FakeSdk)
+    monkeypatch.setattr(read_probe_module.importlib, "import_module", lambda name: _FakeSdk)
     _patch_discovery_socket(monkeypatch, discovery_module)
     return _FakeSdk
 

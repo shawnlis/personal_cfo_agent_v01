@@ -49,6 +49,9 @@ from personal_cfo_agent.providers.moomoo_connection_diagnostics import (
 from personal_cfo_agent.providers.moomoo_account_discovery import (
     run_moomoo_account_discovery,
 )
+from personal_cfo_agent.providers.moomoo_read_context_probe import (
+    run_moomoo_read_context_probe,
+)
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
 
@@ -249,6 +252,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run redacted Moomoo account-context discovery using get_acc_list only.",
     )
     parser.add_argument(
+        "--read-context-probe",
+        action="store_true",
+        help="Run redacted Moomoo read-context diagnostics after account discovery.",
+    )
+    parser.add_argument(
         "--allow-live-read",
         action="store_true",
         help="Allow read-only live readiness checks for enabled API providers.",
@@ -306,7 +314,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     local_env_result = load_local_env_file()
-    if local_env_result.exists and not args.account_discovery:
+    if local_env_result.exists and not (args.account_discovery or args.read_context_probe):
         print(f"Loaded local environment from {LOCAL_ENV_FILENAME}; values redacted")
     if args.write_manual_template is not None and args.validate_manual_snapshot is not None:
         parser.error("--write-manual-template and --validate-manual-snapshot cannot be combined")
@@ -331,7 +339,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--account-discovery cannot be combined with --connection-diagnostics")
         if args.moomoo_data_diagnostics:
             parser.error("--account-discovery cannot be combined with --moomoo-data-diagnostics")
+        if args.read_context_probe:
+            parser.error("--account-discovery cannot be combined with --read-context-probe")
         return _moomoo_account_discovery_cli()
+    if args.read_context_probe:
+        if args.provider != "moomoo":
+            parser.error("--read-context-probe requires --provider moomoo")
+        if args.readiness_check:
+            parser.error("--read-context-probe cannot be combined with --readiness-check")
+        if args.connection_diagnostics:
+            parser.error(
+                "--read-context-probe cannot be combined with --connection-diagnostics"
+            )
+        if args.moomoo_data_diagnostics:
+            parser.error(
+                "--read-context-probe cannot be combined with --moomoo-data-diagnostics"
+            )
+        if args.ibkr_data_diagnostics:
+            parser.error(
+                "--read-context-probe cannot be combined with --ibkr-data-diagnostics"
+            )
+        return _moomoo_read_context_probe_cli()
     if args.ibkr_data_diagnostics:
         if args.provider != "ibkr":
             parser.error("--ibkr-data-diagnostics requires --provider ibkr")
@@ -441,6 +469,12 @@ def _moomoo_account_discovery_cli() -> int:
     return 0
 
 
+def _moomoo_read_context_probe_cli() -> int:
+    diagnostics = run_moomoo_read_context_probe(dict(os.environ))
+    print(json.dumps(diagnostics.to_redacted_dict(), indent=2))
+    return 0
+
+
 def _format_ibkr_connection_diagnostics(
     diagnostics: IBKRConnectionDiagnostics,
 ) -> list[str]:
@@ -524,6 +558,12 @@ def _format_moomoo_data_diagnostics(diagnostics: dict[str, object]) -> list[str]
         stage_failure_text = "None"
     selected_account_hash = diagnostics.get("selected_account_hash") or "not selected"
     selected_context_mode = diagnostics.get("selected_context_mode") or "not selected"
+    selected_discovery_context_mode = (
+        diagnostics.get("selected_discovery_context_mode") or "not selected"
+    )
+    selected_read_context_mode = (
+        diagnostics.get("selected_read_context_mode") or "not selected"
+    )
     return [
         "Moomoo data-path diagnostics (values redacted)",
         f"SDK import OK: {_yes_no(bool(diagnostics.get('sdk_import_ok')))}",
@@ -535,13 +575,21 @@ def _format_moomoo_data_diagnostics(diagnostics: dict[str, object]) -> list[str]
         f"Account count redacted: {diagnostics.get('account_count_redacted', 0)}",
         f"Selected account hash: {selected_account_hash}",
         f"Selected context mode: {selected_context_mode}",
+        f"Selected discovery context mode: {selected_discovery_context_mode}",
+        f"Selected read context mode: {selected_read_context_mode}",
         f"Account filter mismatch: {_yes_no(bool(diagnostics.get('account_filter_mismatch')))}",
         f"Account info attempted: {_yes_no(bool(diagnostics.get('account_info_query_attempted')))}",
         f"Account info success: {_yes_no(bool(diagnostics.get('account_info_query_success')))}",
         f"Accinfo query attempted: {_yes_no(bool(diagnostics.get('accinfo_query_attempted')))}",
         f"Accinfo query success: {_yes_no(bool(diagnostics.get('accinfo_query_success')))}",
+        f"Accinfo failure stage: {diagnostics.get('accinfo_failure_stage') or 'None'}",
+        f"Accinfo SDK ret code sanitized: {diagnostics.get('accinfo_sdk_ret_code_sanitized') or 'None'}",
+        f"Accinfo exception category sanitized: {diagnostics.get('accinfo_exception_category_sanitized') or 'None'}",
         f"Positions attempted: {_yes_no(bool(diagnostics.get('position_query_attempted')))}",
         f"Positions success: {_yes_no(bool(diagnostics.get('position_query_success')))}",
+        f"Position failure stage: {diagnostics.get('position_failure_stage') or 'None'}",
+        f"Position SDK ret code sanitized: {diagnostics.get('position_sdk_ret_code_sanitized') or 'None'}",
+        f"Position exception category sanitized: {diagnostics.get('position_exception_category_sanitized') or 'None'}",
         f"Position count: {diagnostics.get('position_count', 0)}",
         f"Cash/balance attempted: {_yes_no(bool(diagnostics.get('cash_query_attempted')))}",
         f"Cash/balance success: {_yes_no(bool(diagnostics.get('cash_query_success')))}",
