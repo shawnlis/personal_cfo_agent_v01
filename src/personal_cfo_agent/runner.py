@@ -18,6 +18,7 @@ from personal_cfo_agent.config import (
     load_tiger_config,
 )
 from personal_cfo_agent.dashboard import write_dashboard
+from personal_cfo_agent.dashboard_v2 import DashboardV2Result, write_dashboard_v2
 from personal_cfo_agent.manual_snapshot import (
     ManualSnapshotReadError,
     ManualSnapshotValidationError,
@@ -385,6 +386,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Write the v0.2.0 dashboard bundle from normalized provider/manual data.",
     )
     parser.add_argument(
+        "--dashboard-v2",
+        action="store_true",
+        help="Write the v0.4.0 account NAV dashboard from a v0.3.3 merged ledger bundle.",
+    )
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=None,
+        help="Input directory for an existing offline report bundle.",
+    )
+    parser.add_argument(
         "--dashboard-assumptions",
         type=Path,
         default=None,
@@ -415,6 +427,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.merge_provider_bundles:
         return _merge_provider_bundles_cli(args, parser)
+    if args.dashboard_v2:
+        return _dashboard_v2_cli(args, parser)
     local_env_result = load_local_env_file()
     if local_env_result.exists and not (args.account_discovery or args.read_context_probe):
         print(f"Loaded local environment from {LOCAL_ENV_FILENAME}; values redacted")
@@ -589,6 +603,55 @@ def _merge_provider_bundles_cli(
     for line in _format_merge_result(result):
         print(line)
     return 0
+
+
+def _dashboard_v2_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.allow_live_read:
+        parser.error("--dashboard-v2 cannot be combined with --allow-live-read")
+    if args.readiness_check or args.connection_diagnostics:
+        parser.error(
+            "--dashboard-v2 cannot be combined with readiness or connection diagnostics"
+        )
+    if args.account_discovery or args.read_context_probe:
+        parser.error("--dashboard-v2 cannot be combined with Moomoo discovery probes")
+    if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
+        parser.error("--dashboard-v2 cannot be combined with data diagnostics")
+    if args.merge_provider_bundles:
+        parser.error("--dashboard-v2 cannot be combined with --merge-provider-bundles")
+    if args.dashboard:
+        parser.error("--dashboard-v2 cannot be combined with --dashboard")
+    if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
+        parser.error("--dashboard-v2 cannot be combined with manual snapshot utilities")
+    if args.input_dir is None:
+        parser.error("--dashboard-v2 requires --input-dir")
+    if args.out_dir is None:
+        parser.error("--dashboard-v2 requires --out-dir")
+
+    result = write_dashboard_v2(args.input_dir, args.out_dir)
+    for line in _format_dashboard_v2_result(result):
+        print(line)
+    return 0 if result.generated else 1
+
+
+def _format_dashboard_v2_result(result: DashboardV2Result) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    lines = [
+        "Personal CFO Dashboard v2 (offline)",
+        "Broker connections used: no",
+        f"Input directory: {result.input_dir}",
+        f"Output directory: {result.output_dir or ''}",
+        f"Dashboard generated: {'yes' if result.generated else 'no'}",
+        f"Account count: {result.account_count}",
+        f"Provider count: {result.provider_count}",
+        f"Position rows: {result.position_count}",
+        f"Warning codes: {warnings}",
+    ]
+    if result.output_paths:
+        lines.append(
+            "Output files: "
+            + ", ".join(path.name for path in sorted(result.output_paths.values()))
+        )
+    return lines
 
 
 def _format_merge_result(result: MergeResult) -> list[str]:

@@ -83,3 +83,7 @@ When both provider-reported account NAV and derived cash-plus-position totals ar
 IBKR, Tiger, and Moomoo are accepted read-only providers with supervised proof bundles. Manual snapshot remains supported. v0.3.3 only merges existing local normalized outputs.
 
 Real report bundles remain local, ignored, and uncommitted. The merge output is audit and reconciliation infrastructure, not investment advice.
+
+## Downstream Dashboard
+
+v0.4.0 Dashboard v2 can consume the v0.3.3 merged account NAV bundle with `--dashboard-v2 --input-dir <merged_bundle> --out-dir <dashboard_dir>`. The dashboard remains offline and account-NAV-first. Position rows are carried through only as optional best-effort drilldown data.
