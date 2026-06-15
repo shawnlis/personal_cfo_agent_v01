@@ -47,31 +47,31 @@ class ProviderConfig:
 
 CONNECTOR_STATUS_MATRIX: dict[str, dict[str, object]] = {
     "ibkr": {
-        "status": "read_only_live_proof_candidate",
+        "status": "read_only_live_proof_accepted",
         "method": "TWS API / IB Gateway through supervised local session",
         "asset_read": True,
         "position_read": True,
         "cash_read": True,
         "implementation_priority": 1,
-        "notes": "v0.1.1 guarded read-only proof; TWS or IB Gateway must be started manually",
+        "notes": "v0.2.2 supervised read-only proof and safe local sync workflow; TWS or IB Gateway must be started manually",
     },
     "moomoo": {
-        "status": "read_only_live_proof_candidate",
+        "status": "read_only_live_proof_accepted",
         "method": "OpenD + SDK through supervised local session",
         "asset_read": True,
         "position_read": True,
         "cash_read": True,
         "implementation_priority": 1,
-        "notes": "PR #11 draft path; redacted get_acc_list account discovery required before funds/positions/cash read",
+        "notes": "v0.3.2 supervised read-only proof; redacted get_acc_list account discovery required before funds/positions/cash read",
     },
     "tiger": {
-        "status": "read_only_live_proof_candidate",
+        "status": "read_only_live_proof_accepted",
         "method": "TigerOpen Python SDK through supervised local configuration",
         "asset_read": True,
         "position_read": True,
         "cash_read": True,
         "implementation_priority": 2,
-        "notes": "v0.1.3 guarded read-only proof; TigerOpen must be configured locally",
+        "notes": "v0.3.1 supervised read-only proof; TigerOpen must be configured locally",
     },
     "webull": {
         "status": "unsupported_until_official_api_verified",

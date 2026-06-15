@@ -27,4 +27,8 @@ All connector configuration must come from environment variables. The applicatio
 
 ## Live Connector Rule
 
-IBKR v0.1.1 is the first supervised read-only proof harness. It requires `--provider ibkr --allow-live-read`, complete environment configuration, and a manually started TWS or IB Gateway session. Other providers remain non-live. Generated live outputs must stay under ignored `reports/` paths.
+IBKR, Tiger, and Moomoo now have supervised read-only proof workflows. Each live workflow requires an explicit provider-specific command, manual local setup, and `--allow-live-read`; no live workflow is run by default. Generated live outputs must stay under ignored `reports/` paths.
+
+## Offline Merge Rule
+
+v0.3.3 multi-provider normalized ledger merge is offline only. It reads existing normalized bundles under local ignored `reports/` paths or synthetic fixture inputs, writes merged outputs under ignored `reports/` paths, and must not connect to brokers, call broker SDKs, move cash, place orders, or produce recommendation output.

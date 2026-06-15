@@ -60,6 +60,7 @@ from personal_cfo_agent.providers.tiger_connection_diagnostics import (
     run_tiger_connection_diagnostics,
     run_tiger_sdk_config_probe,
 )
+from personal_cfo_agent.provider_bundle_merge import MergeResult, merge_provider_bundles
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
 
@@ -340,6 +341,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Print redacted Tiger live data-path diagnostics after a gated read.",
     )
     parser.add_argument(
+        "--merge-provider-bundles",
+        action="store_true",
+        help="Merge existing normalized provider bundles offline without broker connections.",
+    )
+    parser.add_argument(
+        "--input-root",
+        type=Path,
+        default=Path("reports/personal_cfo_agent"),
+        help="Root folder containing provider report bundles for offline merge.",
+    )
+    parser.add_argument(
+        "--fixture-mode",
+        action="store_true",
+        help="Generate and merge synthetic provider fixtures only.",
+    )
+    parser.add_argument(
         "--allow-live-read",
         action="store_true",
         help="Allow read-only live readiness checks for enabled API providers.",
@@ -396,6 +413,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    if args.merge_provider_bundles:
+        return _merge_provider_bundles_cli(args, parser)
     local_env_result = load_local_env_file()
     if local_env_result.exists and not (args.account_discovery or args.read_context_probe):
         print(f"Loaded local environment from {LOCAL_ENV_FILENAME}; values redacted")
@@ -540,6 +559,52 @@ def _validate_as_of_date(value: str, parser: argparse.ArgumentParser) -> None:
         datetime.strptime(value, "%Y%m%d")
     except ValueError:
         parser.error("--as-of-date must use YYYYMMDD")
+
+
+def _merge_provider_bundles_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    if args.allow_live_read:
+        parser.error("--merge-provider-bundles cannot be combined with --allow-live-read")
+    if args.readiness_check or args.connection_diagnostics:
+        parser.error(
+            "--merge-provider-bundles cannot be combined with readiness or connection diagnostics"
+        )
+    if args.account_discovery or args.read_context_probe:
+        parser.error(
+            "--merge-provider-bundles cannot be combined with Moomoo discovery probes"
+        )
+    if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
+        parser.error("--merge-provider-bundles cannot be combined with data diagnostics")
+    if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
+        parser.error("--merge-provider-bundles cannot be combined with manual snapshot utilities")
+    if args.out_dir is None:
+        parser.error("--merge-provider-bundles requires --out-dir")
+
+    result = merge_provider_bundles(
+        input_root=None if args.fixture_mode else args.input_root,
+        out_dir=args.out_dir,
+        fixture_mode=args.fixture_mode,
+    )
+    for line in _format_merge_result(result):
+        print(line)
+    return 0
+
+
+def _format_merge_result(result: MergeResult) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    provider_counts = ", ".join(
+        f"{provider}={count}" for provider, count in sorted(result.provider_counts.items())
+    ) or "None"
+    return [
+        "Multi-provider normalized ledger merge (offline)",
+        "Broker connections used: no",
+        f"Output directory: {result.output_dir}",
+        f"Source bundle count: {result.source_bundle_count}",
+        f"Merged normalized rows: {result.row_count}",
+        f"Provider row counts: {provider_counts}",
+        f"Warning codes: {warnings}",
+    ]
 
 
 def _validate_manual_snapshot_cli(path: Path) -> int:
