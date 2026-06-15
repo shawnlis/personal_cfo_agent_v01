@@ -12,6 +12,10 @@
 
 v0.3.3 adds an offline account-NAV-first multi-provider merge layer for already-generated normalized provider bundles from manual snapshots, IBKR, Tiger, and Moomoo. Account NAV is the primary Personal CFO net-worth layer; the position ledger is best-effort drilldown data. It does not run live broker reads, broker API calls, trading workflows, cash movement, or recommendation output. Generated merged bundles stay under ignored `reports/` paths.
 
+## Dashboard v2
+
+v0.4.0 Dashboard v2 is an offline account-NAV-first dashboard over v0.3.3 merged ledger outputs. It consumes `merged_account_nav_ledger.csv` as the primary source and uses `merged_position_ledger.csv` only as optional drilldown. It does not add broker connectivity, live reads, trading workflows, cash movement, scheduler automation, or recommendation output.
+
 ## Unsupported Until Official API Verified
 
 | Platform | Status | Method | Priority | Notes |
