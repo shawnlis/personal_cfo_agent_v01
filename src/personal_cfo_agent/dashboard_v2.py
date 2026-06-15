@@ -88,11 +88,19 @@ def write_dashboard_v2(input_dir: Path, output_dir: Path) -> DashboardV2Result:
     position_rows: list[dict[str, str]] = []
     if position_path.exists():
         position_rows = _read_csv(position_path)
-        warnings.append(WarningCode.DASHBOARD_V2_POSITION_LEDGER_BEST_EFFORT)
+        if position_rows:
+            warnings.append(WarningCode.DASHBOARD_V2_POSITION_LEDGER_BEST_EFFORT)
     else:
         warnings.append(WarningCode.DASHBOARD_V2_POSITION_LEDGER_MISSING)
 
-    warnings.extend(_input_warning_codes(account_rows, provider_summary, merge_summary))
+    warnings.extend(
+        _input_warning_codes(
+            account_rows,
+            provider_summary,
+            merge_summary,
+            merge_warning_text,
+        )
+    )
     warnings = _dedupe_warning_codes(warnings)
 
     account_dashboard_rows = [_account_dashboard_row(row) for row in account_rows]
@@ -263,6 +271,7 @@ def _input_warning_codes(
     account_rows: list[dict[str, str]],
     provider_summary: dict[str, Any] | None,
     merge_summary: dict[str, Any],
+    merge_warning_text: str,
 ) -> list[WarningCode]:
     raw_codes = set()
     for row in account_rows:
@@ -270,6 +279,7 @@ def _input_warning_codes(
     for source in (provider_summary, merge_summary):
         if isinstance(source, dict):
             raw_codes.update(str(code) for code in source.get("warning_codes", []))
+    raw_codes.update(_warning_codes_from_text(merge_warning_text))
 
     warnings: list[WarningCode] = []
     if "ACCOUNT_NAV_RECONCILIATION_MISMATCH" in raw_codes:
@@ -281,6 +291,16 @@ def _input_warning_codes(
     if any(not _clean(row.get("account_nav")) for row in account_rows):
         warnings.append(WarningCode.DASHBOARD_V2_ACCOUNT_NAV_EMPTY)
     return warnings
+
+
+def _warning_codes_from_text(text: str) -> set[str]:
+    known_codes = {code.value for code in WarningCode}
+    tokens = {
+        token.strip("`-:,.()[]{} ")
+        for line in text.splitlines()
+        for token in line.split()
+    }
+    return {token for token in tokens if token in known_codes}
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:

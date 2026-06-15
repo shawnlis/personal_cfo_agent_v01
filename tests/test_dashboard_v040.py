@@ -61,6 +61,25 @@ def test_dashboard_v2_produces_expected_output_files(tmp_path: Path) -> None:
         assert path.exists()
 
 
+def test_dashboard_v2_missing_input_dir_fails_closed(tmp_path: Path) -> None:
+    result = write_dashboard_v2(tmp_path / "missing", tmp_path / "dashboard")
+
+    assert not result.generated
+    assert result.output_dir is None
+    assert WarningCode.DASHBOARD_V2_INPUT_MISSING in result.warning_codes
+
+
+def test_dashboard_v2_missing_account_nav_ledger_fails_closed(tmp_path: Path) -> None:
+    merged_dir = tmp_path / "merged"
+    merged_dir.mkdir()
+
+    result = write_dashboard_v2(merged_dir, tmp_path / "dashboard")
+
+    assert not result.generated
+    assert result.output_dir is None
+    assert WarningCode.DASHBOARD_V2_ACCOUNT_NAV_LEDGER_MISSING in result.warning_codes
+
+
 def test_dashboard_v2_account_nav_is_primary_source(tmp_path: Path) -> None:
     merged_dir = tmp_path / "merged"
     _write_dashboard_input(
@@ -121,6 +140,25 @@ def test_dashboard_v2_empty_account_nav_ledger_fails_closed(tmp_path: Path) -> N
     assert WarningCode.DASHBOARD_V2_ACCOUNT_NAV_EMPTY in result.warning_codes
 
 
+def test_dashboard_v2_generated_ok_when_required_inputs_have_no_warnings(
+    tmp_path: Path,
+) -> None:
+    merged_dir = tmp_path / "merged"
+    _write_dashboard_input(
+        merged_dir,
+        account_rows=[
+            _account_row("manual_snapshot", account_nav="1000.00", nav_source="provider_reported")
+        ],
+        position_rows=[],
+    )
+
+    result = write_dashboard_v2(merged_dir, tmp_path / "dashboard")
+
+    assert result.generated
+    assert WarningCode.DASHBOARD_V2_GENERATED_OK in result.warning_codes
+    assert WarningCode.DASHBOARD_V2_GENERATED_WITH_WARNINGS not in result.warning_codes
+
+
 def test_dashboard_v2_surfaces_mixed_stale_and_reconciliation_warnings(
     tmp_path: Path,
 ) -> None:
@@ -136,6 +174,27 @@ def test_dashboard_v2_surfaces_mixed_stale_and_reconciliation_warnings(
             )
         ],
         summary_warnings=[
+            "STALE_PROVIDER_BUNDLE",
+            "MIXED_AS_OF_DATES",
+            "ACCOUNT_NAV_RECONCILIATION_MISMATCH",
+        ],
+    )
+
+    result = write_dashboard_v2(merged_dir, tmp_path / "dashboard")
+
+    assert WarningCode.DASHBOARD_V2_STALE_DATA_WARNING in result.warning_codes
+    assert WarningCode.DASHBOARD_V2_MIXED_AS_OF_DATES in result.warning_codes
+    assert WarningCode.DASHBOARD_V2_NAV_RECONCILIATION_WARNINGS in result.warning_codes
+
+
+def test_dashboard_v2_surfaces_warnings_from_merge_warnings_markdown(
+    tmp_path: Path,
+) -> None:
+    merged_dir = tmp_path / "merged"
+    _write_dashboard_input(
+        merged_dir,
+        account_rows=[_account_row("ibkr", account_nav="1000.00")],
+        merge_warnings=[
             "STALE_PROVIDER_BUNDLE",
             "MIXED_AS_OF_DATES",
             "ACCOUNT_NAV_RECONCILIATION_MISMATCH",
@@ -193,6 +252,33 @@ def test_dashboard_v2_cli_generates_fixture_dashboard(tmp_path: Path, capsys) ->
     assert (out_dir / "dashboard_warnings.md").exists()
 
 
+def test_dashboard_v2_cli_does_not_load_local_env_for_offline_input(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    merged_dir = tmp_path / "merged"
+    _write_dashboard_input(
+        merged_dir,
+        account_rows=[_account_row("manual_snapshot", account_nav="1000.00")],
+        position_rows=[],
+    )
+
+    exit_code = main(
+        [
+            "--dashboard-v2",
+            "--input-dir",
+            str(merged_dir),
+            "--out-dir",
+            str(tmp_path / "dashboard"),
+        ]
+    )
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Loaded local environment" not in captured
+    assert "Broker connections used: no" in captured
+
+
 def test_dashboard_v2_cli_rejects_live_and_discovery_modes() -> None:
     parser = build_arg_parser()
     option_strings = {option for action in parser._actions for option in action.option_strings}
@@ -234,6 +320,7 @@ def _write_dashboard_input(
     write_provider_summary: bool = True,
     summary_warnings: list[str] | None = None,
     account_source_map: dict[str, object] | None = None,
+    merge_warnings: list[str] | None = None,
 ) -> None:
     merged_dir.mkdir(parents=True, exist_ok=True)
     _write_csv(merged_dir / "merged_account_nav_ledger.csv", ACCOUNT_NAV_FIELDNAMES, account_rows)
@@ -260,8 +347,9 @@ def _write_dashboard_input(
     (merged_dir / "account_source_map.json").write_text(
         json.dumps(account_source_map or {}), encoding="utf-8"
     )
+    markdown_warnings = merge_warnings if merge_warnings is not None else warnings
     (merged_dir / "merge_warnings.md").write_text(
-        "\n".join(f"- {warning}" for warning in warnings), encoding="utf-8"
+        "\n".join(f"- {warning}" for warning in markdown_warnings), encoding="utf-8"
     )
 
 
