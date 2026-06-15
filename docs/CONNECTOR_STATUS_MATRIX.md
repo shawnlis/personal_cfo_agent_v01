@@ -4,9 +4,13 @@
 
 | Platform | Status | Method | Asset Read | Position Read | Cash Read | Priority | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| IBKR | read_only_live_proof_candidate | TWS API / IB Gateway through supervised local session | yes | yes | yes | 1 | v0.1.1 guarded read-only proof; TWS or IB Gateway must be started manually |
-| Moomoo | read_only_live_proof_candidate | OpenD + SDK through supervised local session | yes | yes | yes | 1 | PR #11 remains draft; OpenD socket reachability is not enough; redacted `get_acc_list()` account discovery is required before funds/positions/cash; supervised read-only proof produced normalized rows under ignored `reports/` without unlock, orders, transfers, raw IDs, or committed reports |
-| Tiger | read_only_live_proof_candidate | TigerOpen Python SDK through supervised local configuration | yes | yes | yes | 2 | v0.1.3 guarded read-only proof; TigerOpen must be configured locally |
+| IBKR | read_only_live_proof_accepted | TWS API / IB Gateway through supervised local session | yes | yes | yes | 1 | v0.2.2 supervised read-only proof and safe local sync workflow; TWS or IB Gateway must be started manually |
+| Moomoo | read_only_live_proof_accepted | OpenD + SDK through supervised local session | yes | yes | yes | 1 | v0.3.2 supervised read-only proof; OpenD socket reachability is not enough; redacted `get_acc_list()` account discovery is required before funds/positions/cash; proof generated normalized rows under ignored `reports/` without unlock, orders, transfers, raw IDs, or committed reports |
+| Tiger | read_only_live_proof_accepted | TigerOpen Python SDK through supervised local configuration | yes | yes | yes | 2 | v0.3.1 supervised read-only proof; TigerOpen must be configured locally |
+
+## Normalized Ledger Merge
+
+v0.3.3 adds an offline account-NAV-first multi-provider merge layer for already-generated normalized provider bundles from manual snapshots, IBKR, Tiger, and Moomoo. Account NAV is the primary Personal CFO net-worth layer; the position ledger is best-effort drilldown data. It does not run live broker reads, broker API calls, trading workflows, cash movement, or recommendation output. Generated merged bundles stay under ignored `reports/` paths.
 
 ## Unsupported Until Official API Verified
 
