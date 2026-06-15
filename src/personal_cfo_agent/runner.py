@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -44,6 +45,9 @@ from personal_cfo_agent.providers.ibkr_connection_diagnostics import (
 from personal_cfo_agent.providers.moomoo_connection_diagnostics import (
     MoomooConnectionDiagnostics,
     run_moomoo_connection_diagnostics,
+)
+from personal_cfo_agent.providers.moomoo_account_discovery import (
+    run_moomoo_account_discovery,
 )
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
@@ -240,6 +244,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Print redacted Moomoo live data-path diagnostics after a gated read.",
     )
     parser.add_argument(
+        "--account-discovery",
+        action="store_true",
+        help="Run redacted Moomoo account-context discovery using get_acc_list only.",
+    )
+    parser.add_argument(
         "--allow-live-read",
         action="store_true",
         help="Allow read-only live readiness checks for enabled API providers.",
@@ -297,7 +306,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     local_env_result = load_local_env_file()
-    if local_env_result.exists:
+    if local_env_result.exists and not args.account_discovery:
         print(f"Loaded local environment from {LOCAL_ENV_FILENAME}; values redacted")
     if args.write_manual_template is not None and args.validate_manual_snapshot is not None:
         parser.error("--write-manual-template and --validate-manual-snapshot cannot be combined")
@@ -313,6 +322,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "--connection-diagnostics is currently implemented for --provider ibkr or moomoo"
             )
         return _connection_diagnostics_cli(args.provider, local_env_result.exists)
+    if args.account_discovery:
+        if args.provider != "moomoo":
+            parser.error("--account-discovery requires --provider moomoo")
+        if args.readiness_check:
+            parser.error("--account-discovery cannot be combined with --readiness-check")
+        if args.connection_diagnostics:
+            parser.error("--account-discovery cannot be combined with --connection-diagnostics")
+        if args.moomoo_data_diagnostics:
+            parser.error("--account-discovery cannot be combined with --moomoo-data-diagnostics")
+        return _moomoo_account_discovery_cli()
     if args.ibkr_data_diagnostics:
         if args.provider != "ibkr":
             parser.error("--ibkr-data-diagnostics requires --provider ibkr")
@@ -413,6 +432,12 @@ def _connection_diagnostics_cli(provider: str, local_env_loaded: bool) -> int:
         lines = _format_moomoo_connection_diagnostics(diagnostics)
     for line in lines:
         print(line)
+    return 0
+
+
+def _moomoo_account_discovery_cli() -> int:
+    diagnostics = run_moomoo_account_discovery(dict(os.environ))
+    print(json.dumps(diagnostics.to_redacted_dict(), indent=2))
     return 0
 
 

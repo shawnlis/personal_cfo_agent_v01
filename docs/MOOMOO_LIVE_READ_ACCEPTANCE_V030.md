@@ -21,6 +21,12 @@ Redacted connection diagnostics, to run only when OpenD is manually started and 
 python .\scripts\personal_cfo_agent.py --provider moomoo --connection-diagnostics
 ```
 
+Redacted account discovery, to run before any later funds, positions, or cash read:
+
+```powershell
+python .\scripts\personal_cfo_agent.py --provider moomoo --account-discovery
+```
+
 Supervised read-only live read, explicitly gated:
 
 ```powershell
@@ -50,6 +56,48 @@ python .\scripts\personal_cfo_agent.py `
 - `provider_sync_summary.json`: not generated
 - `normalized_asset_ledger.csv`: not generated
 - Generated report files committed: no
+
+## Account Discovery Requirement
+
+- OpenD socket reachability is not enough for acceptance.
+- Account discovery through `get_acc_list()` is required before any later funds, positions, or cash read.
+- The discovery probe tests account context only: `security_firm`, `filter_trdmarket`, universal account mode, trading environment, account status, and market authority.
+- The discovery probe does not call `accinfo_query`, `position_list_query`, unlock APIs, order APIs, transfer APIs, or withdrawal APIs.
+- The discovery probe does not read balances, positions, cash, orders, or trading history.
+- No trading capability is enabled by this probe.
+- Acceptance remains unsuccessful until a later supervised funds/positions/cash read produces normalized rows.
+- PR #11 remains draft.
+
+## Account Discovery Diagnostic Attempt
+
+- Date/time: 2026-06-15 08:04:22 +08:00
+- Validation before discovery: `python .\scripts\dev_validate.py` passed with 164 tests and 101 warnings
+- Discovery command: `python .\scripts\personal_cfo_agent.py --provider moomoo --account-discovery`
+- Discovery attempted: yes, exactly once
+- Discovery success: yes, for account-context discovery only
+- SDK import OK: yes
+- OpenD socket reachable: yes
+- Context variant count: 20
+- Successful context variants: 16
+- Failed context variants: 4, all redacted no-account-discovered outcomes
+- Account count redacted: 9
+- Selected account hash: `acct_f63d870d837b3c3d`
+- Selected context mode: `filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False`
+- `trd_env` values: `SIMULATE`, `REAL`
+- `acc_type` values: `CASH`, `MARGIN`
+- `security_firm` values: `N/A`, `FUTUSG`
+- `trdmarket_auth` values: `HK`, `US`, `SG`, `HKCC`, `HKFUND`, `USFUND`, `JP`
+- `acc_status` values: `ACTIVE`, `DISABLED`
+- Warning codes: `MOOMOO_SDK_OUTPUT_SUPPRESSED`, `MOOMOO_SDK_DISCOVERY_ARG_UNSUPPORTED`, `MOOMOO_ACCOUNT_DISCOVERY_FAILED`, `MOOMOO_SECURITY_FIRM_MISMATCH`, `MOOMOO_MARKET_FILTER_MISMATCH`, `MOOMOO_ACCOUNT_DISCOVERY_OK`
+- Forbidden API called: no evidence in this command path; implementation and mocked tests restrict discovery to `get_acc_list()` only
+- `accinfo_query` called: no
+- `position_list_query` called: no
+- unlock called: no
+- order or transfer APIs called: no
+- Balances, positions, cash, orders, or trading history read: no
+- Report bundle generated: no
+- Acceptance success: no; discovery is only a context prerequisite for a later supervised funds/positions/cash read
+- PR #11 remains draft
 
 ## Second Diagnostic Attempt
 
@@ -127,5 +175,6 @@ python .\scripts\personal_cfo_agent.py `
 
 - Acceptance is not successful yet because the live attempt returned `PROVIDER_FETCH_FAILED` before account, position, cash, or normalized rows were observed.
 - Acceptance remains unsuccessful after the second attempt because account info and cash/balance query stages failed before positions or normalized rows were produced.
+- Account discovery identified context candidates and a selected account hash, but it is not a successful live-read acceptance by itself.
 - No generated output files were available for raw-account-id or secret scanning because the report bundle was not written in either attempt.
 - A zero-row or fetch-failed live run is not accepted as a successful proof unless redacted diagnostics explain the result safely and no SDK or broker output leaks sensitive identifiers.

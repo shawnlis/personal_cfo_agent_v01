@@ -301,6 +301,11 @@ class MoomooReadOnlyAdapter:
             raise MoomooFetchError("Moomoo account info query failed", state.to_diagnostics())
         rows = _rows(data)
         cash_rows: list[MoomooCashRow] = []
+        # accinfo_query returns account funds data, not a generic cash-currency
+        # row list. Future normalization should map available fields such as
+        # cash, hk_cash, us_cash, sg_cash, jp_cash, au_cash, ca_cash, and
+        # my_cash into currency rows with synthetic fixtures before any live
+        # broad cash normalization is enabled.
         for row in rows:
             cash_amount = _first_float(row, ["cash", "cash_balance", "total_cash"])
             currency = str(_first_value(row, ["currency", "cash_currency"], "UNKNOWN"))

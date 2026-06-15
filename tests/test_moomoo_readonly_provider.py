@@ -20,9 +20,12 @@ from personal_cfo_agent.providers.moomoo_models import (
 from personal_cfo_agent.providers.moomoo_connection_diagnostics import (
     run_moomoo_connection_diagnostics,
 )
+from personal_cfo_agent.providers.moomoo_account_discovery import (
+    run_moomoo_account_discovery,
+)
 from personal_cfo_agent.providers.moomoo_provider import MoomooProvider
 from personal_cfo_agent.providers.moomoo_readonly_adapter import MoomooReadOnlyAdapter
-from personal_cfo_agent.runner import collect_provider_snapshots, run
+from personal_cfo_agent.runner import build_arg_parser, collect_provider_snapshots, main, run
 from personal_cfo_agent.runner import _format_moomoo_data_diagnostics
 
 
@@ -120,6 +123,256 @@ def test_connection_diagnostics_does_not_initiate_live_read(monkeypatch) -> None
     assert diagnostics.opend_socket_reachable is False
     assert WarningCode.MOOMOO_OPEND_UNREACHABLE in diagnostics.warning_codes
     assert WarningCode.PROVIDER_CONNECTION_FAILED in diagnostics.warning_codes
+
+
+def test_cli_moomoo_account_discovery_command_exists() -> None:
+    args = build_arg_parser().parse_args(["--provider", "moomoo", "--account-discovery"])
+
+    assert args.provider == "moomoo"
+    assert args.account_discovery is True
+
+
+def test_moomoo_account_discovery_calls_get_acc_list_only_and_redacts(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    import personal_cfo_agent.providers.moomoo_account_discovery as discovery_module
+
+    calls: list[str] = []
+
+    class _DiscoveryContext:
+        def __init__(
+            self,
+            *,
+            host: str,
+            port: int,
+            filter_trdmarket=None,
+            security_firm=None,
+            need_general_sec_acc: bool = False,
+        ) -> None:
+            calls.append("context")
+            print("SDK_CONTEXT_STDOUT_SENTINEL")
+            print("SDK_CONTEXT_STDERR_SENTINEL", file=sys.stderr)
+
+        def get_acc_list(self):
+            calls.append("get_acc_list")
+            print("SDK_GET_ACC_LIST_STDOUT_SENTINEL")
+            print("SDK_GET_ACC_LIST_STDERR_SENTINEL", file=sys.stderr)
+            return 0, [
+                {
+                    "acc_id": "MOOMOO_RAW_ACCOUNT_SENTINEL",
+                    "card_num": "CARD_NUM_SENTINEL",
+                    "uni_card_num": "UNI_CARD_NUM_SENTINEL",
+                    "trd_env": "REAL",
+                    "acc_type": "SEC",
+                    "security_firm": "RIGHT_SECURITIES",
+                    "trdmarket_auth": ["HK", "US"],
+                    "acc_status": "ACTIVE",
+                }
+            ]
+
+        def accinfo_query(self, *args, **kwargs):
+            raise AssertionError("account funds query must not be called")
+
+        def position_list_query(self, *args, **kwargs):
+            raise AssertionError("position query must not be called")
+
+        def unlock_trade(self, *args, **kwargs):
+            raise AssertionError("unlock must not be called")
+
+        def order_list_query(self, *args, **kwargs):
+            raise AssertionError("order list must not be called")
+
+        def place_order(self, *args, **kwargs):
+            raise AssertionError("order placement must not be called")
+
+        def modify_order(self, *args, **kwargs):
+            raise AssertionError("order modification must not be called")
+
+        def cancel_order(self, *args, **kwargs):
+            raise AssertionError("order cancellation must not be called")
+
+        def transfer_cash(self, *args, **kwargs):
+            raise AssertionError("cash transfer must not be called")
+
+        def withdraw_cash(self, *args, **kwargs):
+            raise AssertionError("cash withdrawal must not be called")
+
+        def close(self) -> None:
+            calls.append("close")
+            print("SDK_CLOSE_STDOUT_SENTINEL")
+
+    _install_fake_discovery_sdk(monkeypatch, _DiscoveryContext)
+    _patch_discovery_socket(monkeypatch, discovery_module)
+    monkeypatch.chdir(tmp_path)
+    _set_valid_moomoo_env(monkeypatch)
+
+    exit_code = main(["--provider", "moomoo", "--account-discovery"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    combined = captured.out + captured.err
+
+    assert exit_code == 0
+    assert "get_acc_list" in calls
+    assert "MOOMOO_RAW_ACCOUNT_SENTINEL" not in combined
+    assert "CARD_NUM_SENTINEL" not in combined
+    assert "UNI_CARD_NUM_SENTINEL" not in combined
+    assert "SDK_CONTEXT_STDOUT_SENTINEL" not in combined
+    assert "SDK_GET_ACC_LIST_STDOUT_SENTINEL" not in combined
+    assert "SDK_CLOSE_STDOUT_SENTINEL" not in combined
+    assert payload["sdk_import_ok"] is True
+    assert payload["opend_socket_reachable"] is True
+    assert payload["account_count_redacted"] == 1
+    assert payload["selected_account_hash"].startswith("acct_")
+    assert payload["account_id_hashes"] == [payload["selected_account_hash"]]
+    assert payload["trd_env_values"] == ["REAL"]
+    assert payload["acc_type_values"] == ["SEC"]
+    assert payload["security_firm_values"] == ["RIGHT_SECURITIES"]
+    assert payload["trdmarket_auth_values"] == ["HK", "US"]
+    assert payload["acc_status_values"] == ["ACTIVE"]
+    assert "MOOMOO_ACCOUNT_DISCOVERY_OK" in payload["warning_codes"]
+    assert "MOOMOO_SDK_OUTPUT_SUPPRESSED" in payload["warning_codes"]
+    assert "Loaded local environment" not in captured.out
+
+
+def test_moomoo_account_discovery_records_security_and_market_mismatch(
+    monkeypatch,
+) -> None:
+    import personal_cfo_agent.providers.moomoo_account_discovery as discovery_module
+
+    class _DiscoveryContext:
+        def __init__(
+            self,
+            *,
+            host: str,
+            port: int,
+            filter_trdmarket=None,
+            security_firm=None,
+            need_general_sec_acc: bool = False,
+        ) -> None:
+            self.filter_trdmarket = filter_trdmarket
+            self.security_firm = security_firm
+
+        def get_acc_list(self):
+            if self.security_firm == "RIGHT_SECURITIES" and self.filter_trdmarket == "HK":
+                return 0, [
+                    {
+                        "acc_id": "MOOMOO_RIGHT_CONTEXT_ACCOUNT",
+                        "trd_env": "REAL",
+                        "acc_type": "SEC",
+                        "security_firm": "RIGHT_SECURITIES",
+                        "trdmarket_auth": ["HK"],
+                        "acc_status": "ACTIVE",
+                    }
+                ]
+            return 1, "raw SDK failure details"
+
+        def close(self) -> None:
+            pass
+
+    _install_fake_discovery_sdk(
+        monkeypatch,
+        _DiscoveryContext,
+        market_names=("HK", "US"),
+        security_names=("RIGHT_SECURITIES", "WRONG_SECURITIES"),
+    )
+    _patch_discovery_socket(monkeypatch, discovery_module)
+
+    diagnostics = run_moomoo_account_discovery(_valid_env())
+    payload = diagnostics.to_redacted_dict()
+
+    assert payload["account_count_redacted"] == 1
+    assert "MOOMOO_ACCOUNT_DISCOVERY_OK" in payload["warning_codes"]
+    assert "MOOMOO_SECURITY_FIRM_MISMATCH" in payload["warning_codes"]
+    assert "MOOMOO_MARKET_FILTER_MISMATCH" in payload["warning_codes"]
+    assert any("WRONG_SECURITIES" in value for value in payload["failed_context_variants"])
+    assert any("filter_trdmarket=US" in value for value in payload["failed_context_variants"])
+
+
+def test_moomoo_account_discovery_need_general_sec_acc_can_recover_universal_account(
+    monkeypatch,
+) -> None:
+    import personal_cfo_agent.providers.moomoo_account_discovery as discovery_module
+
+    class _DiscoveryContext:
+        def __init__(
+            self,
+            *,
+            host: str,
+            port: int,
+            filter_trdmarket=None,
+            security_firm=None,
+            need_general_sec_acc: bool = False,
+        ) -> None:
+            self.need_general_sec_acc = need_general_sec_acc
+
+        def get_acc_list(self):
+            if not self.need_general_sec_acc:
+                return 0, []
+            return 0, [
+                {
+                    "acc_id": "MOOMOO_UNIVERSAL_ACCOUNT_SENTINEL",
+                    "trd_env": "REAL",
+                    "acc_type": "UNIVERSAL_SECURITIES",
+                    "security_firm": "RIGHT_SECURITIES",
+                    "trdmarket_auth": ["HK", "US", "SG"],
+                    "acc_status": "ACTIVE",
+                }
+            ]
+
+        def close(self) -> None:
+            pass
+
+    _install_fake_discovery_sdk(monkeypatch, _DiscoveryContext)
+    _patch_discovery_socket(monkeypatch, discovery_module)
+
+    diagnostics = run_moomoo_account_discovery(_valid_env())
+    payload = diagnostics.to_redacted_dict()
+    text = json.dumps(payload)
+
+    assert payload["account_count_redacted"] == 1
+    assert payload["selected_context_mode"] is not None
+    assert "need_general_sec_acc=True" in payload["selected_context_mode"]
+    assert "MOOMOO_GENERAL_SEC_ACCOUNT_REQUIRED" in payload["warning_codes"]
+    assert "MOOMOO_UNIVERSAL_ACCOUNT_SENTINEL" not in text
+
+
+def test_moomoo_account_discovery_no_accounts_returns_redacted_warning(
+    monkeypatch,
+) -> None:
+    import personal_cfo_agent.providers.moomoo_account_discovery as discovery_module
+
+    class _DiscoveryContext:
+        def __init__(
+            self,
+            *,
+            host: str,
+            port: int,
+            filter_trdmarket=None,
+            security_firm=None,
+            need_general_sec_acc: bool = False,
+        ) -> None:
+            pass
+
+        def get_acc_list(self):
+            return 0, []
+
+        def close(self) -> None:
+            pass
+
+    _install_fake_discovery_sdk(monkeypatch, _DiscoveryContext)
+    _patch_discovery_socket(monkeypatch, discovery_module)
+
+    diagnostics = run_moomoo_account_discovery(_valid_env())
+    payload = diagnostics.to_redacted_dict()
+
+    assert payload["account_count_redacted"] == 0
+    assert payload["selected_account_hash"] is None
+    assert payload["account_id_hashes"] == []
+    assert "MOOMOO_NO_ACCOUNT_DISCOVERED" in payload["warning_codes"]
+    assert "MOOMOO_SELECTED_ACCOUNT_MISSING" in payload["warning_codes"]
+    assert "MOOMOO_ACCOUNT_DISCOVERY_FAILED" in payload["warning_codes"]
 
 
 def test_cli_moomoo_connection_diagnostics_redacts_values_and_does_not_live_read(
@@ -871,6 +1124,69 @@ def test_moomoo_source_has_no_forbidden_call_markers() -> None:
         text = path.read_text(encoding="utf-8").lower()
         for marker in FORBIDDEN_PUBLIC_METHODS:
             assert re.search(rf"\b{re.escape(marker.lower())}\b", text) is None
+
+
+def _install_fake_discovery_sdk(
+    monkeypatch,
+    context_cls,
+    *,
+    market_names: tuple[str, ...] = ("HK",),
+    security_names: tuple[str, ...] = ("RIGHT_SECURITIES",),
+):
+    import personal_cfo_agent.providers.moomoo_account_discovery as discovery_module
+
+    class _FakeLogger:
+        console_level = 20
+        file_level = 10
+
+    class _FakeFtLogger:
+        logger = _FakeLogger()
+
+    class _FakeCommon:
+        ft_logger = _FakeFtLogger()
+
+    class _FakeTrdMarket:
+        pass
+
+    for name in market_names:
+        setattr(_FakeTrdMarket, name, name)
+
+    class _FakeSecurityFirm:
+        pass
+
+    for name in security_names:
+        setattr(_FakeSecurityFirm, name, name)
+
+    class _FakeSdk:
+        common = _FakeCommon()
+        RET_OK = 0
+        TrdMarket = _FakeTrdMarket()
+        SecurityFirm = _FakeSecurityFirm()
+        OpenSecTradeContext = context_cls
+
+    monkeypatch.setattr(discovery_module.importlib, "import_module", lambda name: _FakeSdk)
+    return _FakeSdk
+
+
+def _patch_discovery_socket(monkeypatch, discovery_module) -> None:
+    class _FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        discovery_module.socket,
+        "create_connection",
+        lambda *args, **kwargs: _FakeSocket(),
+    )
+
+
+def _set_valid_moomoo_env(monkeypatch) -> None:
+    for key, value in _valid_env().items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("CFO_ACCOUNT_HASH_SALT", "TEST_HASH_SALT")
 
 
 def _install_fake_sdk(monkeypatch, context_cls):

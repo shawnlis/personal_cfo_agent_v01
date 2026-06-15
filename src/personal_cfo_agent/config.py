@@ -55,13 +55,13 @@ CONNECTOR_STATUS_MATRIX: dict[str, dict[str, object]] = {
         "notes": "v0.1.1 guarded read-only proof; TWS or IB Gateway must be started manually",
     },
     "moomoo": {
-        "status": "read_only_live_proof_candidate",
+        "status": "draft_read_only_live_proof_candidate",
         "method": "OpenD + SDK through supervised local session",
-        "asset_read": "likely_yes",
-        "position_read": "likely_yes",
-        "cash_read": "likely_yes",
+        "asset_read": "not_accepted_yet",
+        "position_read": "not_accepted_yet",
+        "cash_read": "not_accepted_yet",
         "implementation_priority": 1,
-        "notes": "v0.3.0 supervised read-only proof path with redacted diagnostics; OpenD must be started manually",
+        "notes": "PR #11 draft path; redacted get_acc_list account discovery required before later funds/positions/cash read",
     },
     "tiger": {
         "status": "read_only_live_proof_candidate",

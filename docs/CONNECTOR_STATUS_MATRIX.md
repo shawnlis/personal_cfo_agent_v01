@@ -5,7 +5,7 @@
 | Platform | Status | Method | Asset Read | Position Read | Cash Read | Priority | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | IBKR | read_only_live_proof_candidate | TWS API / IB Gateway through supervised local session | yes | yes | yes | 1 | v0.1.1 guarded read-only proof; TWS or IB Gateway must be started manually |
-| Moomoo | read_only_live_proof_candidate | OpenD + SDK through supervised local session | likely yes through account API | likely yes | likely yes | 1 | v0.3.0 supervised read-only proof path with redacted diagnostics; OpenD must be started manually |
+| Moomoo | draft_read_only_live_proof_candidate | OpenD + SDK through supervised local session | not accepted yet | not accepted yet | not accepted yet | 1 | PR #11 remains draft; OpenD socket reachability is not enough; redacted `get_acc_list()` account discovery is required before any later funds/positions/cash read |
 | Tiger | read_only_live_proof_candidate | TigerOpen Python SDK through supervised local configuration | yes | yes | yes | 2 | v0.1.3 guarded read-only proof; TigerOpen must be configured locally |
 
 ## Unsupported Until Official API Verified
