@@ -20,6 +20,7 @@ class RuntimeConfig:
     readiness_check: bool = False
     ibkr_data_diagnostics: bool = False
     moomoo_data_diagnostics: bool = False
+    tiger_data_diagnostics: bool = False
     manual_snapshot_path: Path | None = None
     dashboard: bool = False
     dashboard_assumptions_path: Path | None = None
@@ -55,13 +56,13 @@ CONNECTOR_STATUS_MATRIX: dict[str, dict[str, object]] = {
         "notes": "v0.1.1 guarded read-only proof; TWS or IB Gateway must be started manually",
     },
     "moomoo": {
-        "status": "draft_read_only_live_proof_candidate",
+        "status": "read_only_live_proof_candidate",
         "method": "OpenD + SDK through supervised local session",
-        "asset_read": "not_accepted_yet",
-        "position_read": "not_accepted_yet",
-        "cash_read": "not_accepted_yet",
+        "asset_read": True,
+        "position_read": True,
+        "cash_read": True,
         "implementation_priority": 1,
-        "notes": "PR #11 draft path; redacted get_acc_list account discovery required before later funds/positions/cash read",
+        "notes": "PR #11 draft path; redacted get_acc_list account discovery required before funds/positions/cash read",
     },
     "tiger": {
         "status": "read_only_live_proof_candidate",

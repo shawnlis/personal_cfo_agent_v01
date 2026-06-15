@@ -52,6 +52,14 @@ from personal_cfo_agent.providers.moomoo_account_discovery import (
 from personal_cfo_agent.providers.moomoo_read_context_probe import (
     run_moomoo_read_context_probe,
 )
+from personal_cfo_agent.providers.tiger_connection_diagnostics import (
+    TigerConfigPreflight,
+    TigerConnectionDiagnostics,
+    TigerSDKConfigProbe,
+    run_tiger_config_preflight,
+    run_tiger_connection_diagnostics,
+    run_tiger_sdk_config_probe,
+)
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
 
@@ -84,7 +92,16 @@ def run(config: RuntimeConfig) -> RunnerResult:
                 output_dir=None,
                 output_paths={},
             )
+        if any(snapshot.provider_name == "tiger" for snapshot in data_snapshots):
+            return RunnerResult(
+                exit_code=1,
+                statuses=_mark_tiger_normalization_failed(statuses),
+                normalized_assets=[],
+                output_dir=None,
+                output_paths={},
+            )
         raise
+    statuses = _attach_diagnostic_normalized_rows(statuses, normalized_assets)
     if not normalized_assets:
         return RunnerResult(
             exit_code=0,
@@ -152,6 +169,56 @@ def _mark_moomoo_normalization_failed(
     return updated_statuses
 
 
+def _attach_diagnostic_normalized_rows(
+    statuses: list[ProviderStatus], normalized_assets: list[NormalizedAsset]
+) -> list[ProviderStatus]:
+    row_counts: dict[str, int] = {}
+    for row in normalized_assets:
+        row_counts[row.provider] = row_counts.get(row.provider, 0) + 1
+    updated: list[ProviderStatus] = []
+    for status in statuses:
+        if status.provider_name != "tiger" or not status.diagnostics:
+            updated.append(status)
+            continue
+        diagnostics = dict(status.diagnostics)
+        diagnostics["normalized_rows"] = row_counts.get(status.provider_name, 0)
+        updated.append(replace(status, diagnostics=diagnostics))
+    return updated
+
+
+def _mark_tiger_normalization_failed(statuses: list[ProviderStatus]) -> list[ProviderStatus]:
+    updated: list[ProviderStatus] = []
+    for status in statuses:
+        if status.provider_name != "tiger":
+            updated.append(status)
+            continue
+        diagnostics = dict(status.diagnostics)
+        warning_codes = [
+            *diagnostics.get("warning_codes", []),
+            WarningCode.TIGER_NORMALIZATION_FAILED.value,
+            WarningCode.PROVIDER_FETCH_FAILED.value,
+        ]
+        diagnostics["warning_codes"] = _dedupe_text(warning_codes)
+        stage_failures = dict(diagnostics.get("stage_failures", {}))
+        stage_failures["normalization"] = "Tiger normalization failed"
+        diagnostics["stage_failures"] = stage_failures
+        diagnostics["normalized_rows"] = 0
+        updated.append(
+            replace(
+                status,
+                warning_codes=_dedupe_warning_codes(
+                    [
+                        *status.warning_codes,
+                        WarningCode.TIGER_NORMALIZATION_FAILED,
+                        WarningCode.PROVIDER_FETCH_FAILED,
+                    ]
+                ),
+                diagnostics=diagnostics,
+            )
+        )
+    return updated
+
+
 def _dedupe_warning_codes(codes: list[WarningCode]) -> list[WarningCode]:
     seen: set[WarningCode] = set()
     result: list[WarningCode] = []
@@ -162,13 +229,14 @@ def _dedupe_warning_codes(codes: list[WarningCode]) -> list[WarningCode]:
     return result
 
 
-def _dedupe_text(values: list[str]) -> list[str]:
+def _dedupe_text(values: list[object]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for value in values:
-        if value not in seen:
-            result.append(value)
-            seen.add(value)
+        text = str(value)
+        if text not in seen:
+            result.append(text)
+            seen.add(text)
     return result
 
 
@@ -237,6 +305,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run redacted provider connection diagnostics without live API messages.",
     )
     parser.add_argument(
+        "--config-preflight",
+        action="store_true",
+        help="Run redacted Tiger config preflight without TigerOpen client initialization.",
+    )
+    parser.add_argument(
+        "--sdk-config-probe",
+        action="store_true",
+        help="Run redacted TigerOpen SDK config compatibility probe without account data calls.",
+    )
+    parser.add_argument(
         "--ibkr-data-diagnostics",
         action="store_true",
         help="Print redacted IBKR live data-path diagnostics after a gated read.",
@@ -255,6 +333,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--read-context-probe",
         action="store_true",
         help="Run redacted Moomoo read-context diagnostics after account discovery.",
+    )
+    parser.add_argument(
+        "--tiger-data-diagnostics",
+        action="store_true",
+        help="Print redacted Tiger live data-path diagnostics after a gated read.",
     )
     parser.add_argument(
         "--allow-live-read",
@@ -324,10 +407,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.validate_manual_snapshot is not None:
         return _validate_manual_snapshot_cli(args.validate_manual_snapshot)
-    if args.connection_diagnostics:
-        if args.provider not in {"ibkr", "moomoo"}:
+    if args.config_preflight and args.sdk_config_probe:
+        parser.error("--config-preflight and --sdk-config-probe cannot be combined")
+    if args.config_preflight:
+        if args.provider != "tiger":
+            parser.error("--config-preflight requires --provider tiger")
+        if args.allow_live_read:
+            parser.error("--config-preflight cannot be combined with --allow-live-read")
+        if args.readiness_check or args.connection_diagnostics:
             parser.error(
-                "--connection-diagnostics is currently implemented for --provider ibkr or moomoo"
+                "--config-preflight cannot be combined with --readiness-check or --connection-diagnostics"
+            )
+        return _tiger_config_preflight_cli()
+    if args.sdk_config_probe:
+        if args.provider != "tiger":
+            parser.error("--sdk-config-probe requires --provider tiger")
+        if args.allow_live_read:
+            parser.error("--sdk-config-probe cannot be combined with --allow-live-read")
+        if args.readiness_check or args.connection_diagnostics:
+            parser.error(
+                "--sdk-config-probe cannot be combined with --readiness-check or --connection-diagnostics"
+            )
+        return _tiger_sdk_config_probe_cli()
+    if args.connection_diagnostics:
+        if args.provider not in {"ibkr", "moomoo", "tiger"}:
+            parser.error(
+                "--connection-diagnostics is currently implemented for --provider ibkr, moomoo, or tiger"
             )
         return _connection_diagnostics_cli(args.provider, local_env_result.exists)
     if args.account_discovery:
@@ -374,6 +479,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--moomoo-data-diagnostics cannot be combined with --readiness-check")
         if not args.allow_live_read:
             parser.error("--moomoo-data-diagnostics requires --allow-live-read")
+    if args.tiger_data_diagnostics:
+        if args.provider != "tiger":
+            parser.error("--tiger-data-diagnostics requires --provider tiger")
+        if args.readiness_check:
+            parser.error("--tiger-data-diagnostics cannot be combined with --readiness-check")
+        if not args.allow_live_read:
+            parser.error("--tiger-data-diagnostics requires --allow-live-read")
     if args.readiness_check and args.provider not in {"ibkr", "moomoo", "tiger"}:
         parser.error(
             "--readiness-check is currently implemented for --provider ibkr, moomoo, or tiger"
@@ -393,6 +505,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             readiness_check=args.readiness_check,
             ibkr_data_diagnostics=args.ibkr_data_diagnostics,
             moomoo_data_diagnostics=args.moomoo_data_diagnostics,
+            tiger_data_diagnostics=args.tiger_data_diagnostics,
             manual_snapshot_path=args.manual_snapshot,
             dashboard=args.dashboard,
             dashboard_assumptions_path=args.dashboard_assumptions,
@@ -409,6 +522,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(line)
         if args.moomoo_data_diagnostics and status.provider_name == "moomoo":
             for line in _format_moomoo_data_diagnostics(status.diagnostics):
+                print(line)
+        if args.tiger_data_diagnostics and status.provider_name == "tiger":
+            for line in _format_tiger_data_diagnostics(status.diagnostics):
                 print(line)
     if result.output_dir is None:
         print("No provider produced data; no reports generated.")
@@ -452,15 +568,36 @@ def _connection_diagnostics_cli(provider: str, local_env_loaded: bool) -> int:
     if provider == "ibkr":
         diagnostics = run_ibkr_connection_diagnostics(dict(os.environ))
         lines = _format_ibkr_connection_diagnostics(diagnostics)
-    else:
+    elif provider == "moomoo":
         diagnostics = run_moomoo_connection_diagnostics(
             dict(os.environ),
             local_env_loaded=local_env_loaded,
         )
         lines = _format_moomoo_connection_diagnostics(diagnostics)
+    else:
+        diagnostics = run_tiger_connection_diagnostics(dict(os.environ))
+        lines = _format_tiger_connection_diagnostics(diagnostics)
     for line in lines:
         print(line)
     return 0
+
+
+def _tiger_config_preflight_cli() -> int:
+    diagnostics = run_tiger_config_preflight(dict(os.environ))
+    for line in _format_tiger_config_preflight(diagnostics):
+        print(line)
+    if WarningCode.TIGER_CONFIG_PREFLIGHT_OK in diagnostics.warning_codes:
+        return 0
+    return 1
+
+
+def _tiger_sdk_config_probe_cli() -> int:
+    diagnostics = run_tiger_sdk_config_probe(dict(os.environ))
+    for line in _format_tiger_sdk_config_probe(diagnostics):
+        print(line)
+    if diagnostics.sdk_config_constructed:
+        return 0
+    return 1
 
 
 def _moomoo_account_discovery_cli() -> int:
@@ -510,6 +647,101 @@ def _format_moomoo_connection_diagnostics(
         f"OpenD socket reachable host/port: {_yes_no(diagnostics.opend_socket_reachable)}",
         f"diagnostic warning codes: {warning_text}",
     ]
+
+
+def _format_tiger_connection_diagnostics(
+    diagnostics: TigerConnectionDiagnostics,
+) -> list[str]:
+    warning_text = ", ".join(code.value for code in diagnostics.warning_codes) or "None"
+    return [
+        "Tiger connection diagnostics (values redacted)",
+        f"CFO_TIGER_ENABLED present and true: {_yes_no(diagnostics.enabled_present and diagnostics.enabled_true)}",
+        f"CFO_TIGER_CONFIG_DIR present: {_yes_no(diagnostics.config_dir_present)}",
+        f"Config dir exists: {_yes_no(diagnostics.config_dir_exists)}",
+        f"Config file exists: {_yes_no(diagnostics.config_file_exists)}",
+        f"Tiger ID present: {_yes_no(diagnostics.tiger_id_present)}, redacted",
+        f"CFO_TIGER_ACCOUNT present: {_yes_no(diagnostics.account_present)}, redacted",
+        f"Config account present: {_yes_no(diagnostics.config_account_present)}, redacted",
+        f"Private key present: {_yes_no(diagnostics.private_key_present)}, redacted",
+        f"Private key format detected: {diagnostics.private_key_format_detected}",
+        f"CFO_ACCOUNT_HASH_SALT present: {_yes_no(diagnostics.hash_salt_present)}, redacted",
+        f"Python executable: {diagnostics.python_executable}",
+        f"tigeropen import status: {'OK' if diagnostics.tigeropen_import_ok else 'MISSING'}",
+        f"diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _format_tiger_config_preflight(diagnostics: TigerConfigPreflight) -> list[str]:
+    warning_text = ", ".join(code.value for code in diagnostics.warning_codes) or "None"
+    return [
+        "Tiger config preflight (values redacted)",
+        f"CFO_TIGER_ENABLED present and true: {_yes_no(diagnostics.enabled_present and diagnostics.enabled_true)}",
+        f"CFO_TIGER_CONFIG_DIR present: {_yes_no(diagnostics.config_dir_present)}",
+        f"Expected config file pattern: {diagnostics.expected_config_file_pattern}",
+        f"Expected config filename: {diagnostics.expected_props_filename}",
+        f"Adapter props_path expectation: {diagnostics.props_path_expectation}",
+        "TigerOpen config private-key fields: private_key_pk1 or private_key_pk8",
+        "TigerOpen env/private-key path option: TIGEROPEN_PRIVATE_KEY or private_key_path",
+        f"Config dir exists: {_yes_no(diagnostics.config_dir_exists)}",
+        f"Config dir is directory: {_yes_no(diagnostics.config_dir_is_directory)}",
+        f"Adapter props_path shape valid: {_yes_no(diagnostics.props_path_matches_adapter)}",
+        f"Config file exists: {_yes_no(diagnostics.config_file_exists)}",
+        f"Config file readable: {_yes_no(diagnostics.config_file_readable)}",
+        f"Config file outside repository: {_yes_no(diagnostics.config_file_outside_repo)}",
+        f"Config file tracked by git: {_yes_no(diagnostics.config_file_tracked)}",
+        f"Config history risk detected: {_yes_no(diagnostics.config_history_risk)}",
+        f"Tiger ID present: {_yes_no(diagnostics.tiger_id_present)}, redacted",
+        f"CFO_TIGER_ACCOUNT present: {_yes_no(diagnostics.account_present)}, redacted",
+        f"Config account present: {_yes_no(diagnostics.config_account_present)}, redacted",
+        f"Private key field present: {_yes_no(diagnostics.private_key_field_present)}, redacted",
+        f"Private key path/env present: {_yes_no(diagnostics.private_key_path_present)}, redacted",
+        f"Private key format category: {diagnostics.private_key_format_category}",
+        f"Preflight warning codes: {warning_text}",
+        "TigerOpen client initialized: no",
+        "Tiger account APIs called: no",
+    ]
+
+
+def _format_tiger_sdk_config_probe(diagnostics: TigerSDKConfigProbe) -> list[str]:
+    warning_text = ", ".join(code.value for code in diagnostics.warning_codes) or "None"
+    required = diagnostics.required_keys_present_redacted
+    lines = [
+        "TigerOpen SDK config compatibility probe (values redacted)",
+        f"SDK import OK: {_yes_no(diagnostics.sdk_import_ok)}",
+        f"TigerOpen package path: {diagnostics.tigeropen_package_path}",
+        f"Props path modes tested: {', '.join(diagnostics.props_path_modes_tested)}",
+        f"Working props_path mode: {diagnostics.working_props_path_mode}",
+        f"Expected config filename: {diagnostics.expected_config_filename}",
+        f"Config file detected: {_yes_no(diagnostics.config_file_detected)}",
+        f"Required key tiger_id present: {_yes_no(bool(required.get('tiger_id')))}, redacted",
+        f"Required key account present: {_yes_no(bool(required.get('account')))}, redacted",
+        f"Required key private_key present: {_yes_no(bool(required.get('private_key')))}, redacted",
+        f"Private key format category: {diagnostics.private_key_format_category}",
+        f"SDK config constructed: {_yes_no(diagnostics.sdk_config_constructed)}",
+        f"SDK client constructed: {_yes_no(diagnostics.sdk_client_constructed)}",
+        f"SDK exception class sanitized: {diagnostics.sdk_exception_class_sanitized}",
+        f"SDK exception category: {diagnostics.sdk_exception_category}",
+    ]
+    for result in diagnostics.variant_results:
+        variant_warning_text = (
+            ", ".join(code.value for code in result.warning_codes) or "None"
+        )
+        lines.append(
+            "Mode "
+            f"{result.mode}: config={_yes_no(result.config_constructed)}; "
+            f"client={_yes_no(result.client_constructed)}; "
+            f"exception_class={result.exception_class_sanitized}; "
+            f"category={result.exception_category}; "
+            f"warning_codes={variant_warning_text}"
+        )
+    lines.extend(
+        [
+            f"Probe warning codes: {warning_text}",
+            "Tiger account data APIs called: no",
+            "Tiger order/cash-transfer APIs called: no",
+        ]
+    )
+    return lines
 
 
 def _format_ibkr_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
@@ -602,6 +834,57 @@ def _format_moomoo_data_diagnostics(diagnostics: dict[str, object]) -> list[str]
         f"Variant warning codes: {variant_warning_text}",
         f"Data diagnostic warning codes: {warning_text}",
         f"Stage failures: {stage_failure_text}",
+    ]
+
+
+def _format_tiger_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
+    if not diagnostics:
+        return ["Tiger data-path diagnostics (values redacted): unavailable"]
+    warning_codes = diagnostics.get("warning_codes") or []
+    warning_text = ", ".join(str(code) for code in warning_codes) or "None"
+    stage_failures = diagnostics.get("stage_failures") or {}
+    if isinstance(stage_failures, dict):
+        stage_text = ", ".join(
+            f"{key}={value}" for key, value in stage_failures.items()
+        ) or "None"
+    else:
+        stage_text = "unavailable"
+    return [
+        "Tiger data-path diagnostics (values redacted)",
+        f"SDK import OK: {_yes_no(bool(diagnostics.get('sdk_import_ok')))}",
+        f"Config dir exists: {_yes_no(bool(diagnostics.get('config_dir_exists')))}",
+        f"Config file exists: {_yes_no(bool(diagnostics.get('config_file_exists')))}",
+        f"Config loaded: {_yes_no(bool(diagnostics.get('config_loaded')))}",
+        f"Tiger config mode selected: {diagnostics.get('tiger_config_mode_selected', 'failed')}",
+        f"Tiger config constructed: {_yes_no(bool(diagnostics.get('tiger_config_constructed')))}",
+        f"Tiger client constructed: {_yes_no(bool(diagnostics.get('tiger_client_constructed')))}",
+        "Tiger config warning codes: "
+        + (
+            ", ".join(str(code) for code in diagnostics.get("tiger_config_warning_codes", []))
+            or "None"
+        ),
+        f"Tiger ID present: {_yes_no(bool(diagnostics.get('tiger_id_present_redacted')))}, redacted",
+        f"Account present: {_yes_no(bool(diagnostics.get('account_present_redacted')))}, redacted",
+        f"Private key present: {_yes_no(bool(diagnostics.get('private_key_present_redacted')))}, redacted",
+        f"Private key format detected: {diagnostics.get('private_key_format_detected_redacted', 'missing')}",
+        f"Client init attempted: {_yes_no(bool(diagnostics.get('client_init_attempted')))}",
+        f"Client init success: {_yes_no(bool(diagnostics.get('client_init_success')))}",
+        f"Client auth success: {_yes_no(bool(diagnostics.get('client_auth_success')))}",
+        f"Account context observed: {_yes_no(bool(diagnostics.get('account_context_observed')))}",
+        f"Selected account hash: {diagnostics.get('selected_account_hash', 'not configured')}",
+        f"Account count redacted: {diagnostics.get('account_count_redacted', 0)}",
+        f"Assets query attempted: {_yes_no(bool(diagnostics.get('assets_query_attempted')))}",
+        f"Assets query success: {_yes_no(bool(diagnostics.get('assets_query_success')))}",
+        f"Positions query attempted: {_yes_no(bool(diagnostics.get('positions_query_attempted')))}",
+        f"Positions query success: {_yes_no(bool(diagnostics.get('positions_query_success')))}",
+        f"Position count: {diagnostics.get('position_count', 0)}",
+        f"Cash query attempted: {_yes_no(bool(diagnostics.get('cash_query_attempted')))}",
+        f"Cash query success: {_yes_no(bool(diagnostics.get('cash_query_success')))}",
+        f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
+        f"Normalized rows: {diagnostics.get('normalized_rows', 0)}",
+        f"SDK output suppressed: {_yes_no(bool(diagnostics.get('sdk_output_suppressed')))}",
+        f"Data diagnostic warning codes: {warning_text}",
+        f"Stage failures: {stage_text}",
     ]
 
 
