@@ -25,6 +25,7 @@ _ACTIVE_STATUS_MARKERS = {"ACTIVE", "NORMAL", "ENABLED"}
 class MoomooAccountDiscoveryDiagnostics:
     sdk_import_ok: bool = False
     opend_socket_reachable: bool = False
+    discovery_success: bool = False
     context_variant_count: int = 0
     successful_context_variants: list[str] = field(default_factory=list)
     failed_context_variants: list[str] = field(default_factory=list)
@@ -37,12 +38,22 @@ class MoomooAccountDiscoveryDiagnostics:
     acc_status_values: list[str] = field(default_factory=list)
     selected_account_hash: str | None = None
     selected_context_mode: str | None = None
+    terminal_warning_codes: list[WarningCode] = field(default_factory=list)
+    variant_warning_codes: list[WarningCode] = field(default_factory=list)
     warning_codes: list[WarningCode] = field(default_factory=list)
+    selected_account_id: str | None = field(default=None, repr=False, compare=False)
+    selected_filter_name: str | None = field(default=None, repr=False, compare=False)
+    selected_security_firm_name: str | None = field(default=None, repr=False, compare=False)
+    selected_need_general_sec_acc: bool = field(default=False, repr=False, compare=False)
+    selected_need_general_arg_name: str | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def to_redacted_dict(self) -> dict[str, object]:
         return {
             "sdk_import_ok": self.sdk_import_ok,
             "opend_socket_reachable": self.opend_socket_reachable,
+            "discovery_success": self.discovery_success,
             "context_variant_count": self.context_variant_count,
             "successful_context_variants": list(self.successful_context_variants),
             "failed_context_variants": list(self.failed_context_variants),
@@ -55,6 +66,10 @@ class MoomooAccountDiscoveryDiagnostics:
             "acc_status_values": list(self.acc_status_values),
             "selected_account_hash": self.selected_account_hash,
             "selected_context_mode": self.selected_context_mode,
+            "terminal_warning_codes": [
+                code.value for code in self.terminal_warning_codes
+            ],
+            "variant_warning_codes": [code.value for code in self.variant_warning_codes],
             "warning_codes": [code.value for code in self.warning_codes],
         }
 
@@ -79,7 +94,9 @@ class _ContextVariant:
 
 @dataclass(frozen=True)
 class _AccountCandidate:
+    account_id: str = field(repr=False, compare=False)
     account_hash: str
+    variant: _ContextVariant = field(repr=False, compare=False)
     context_mode: str
     need_general_sec_acc: bool
     trd_env_values: tuple[str, ...]
@@ -96,64 +113,69 @@ def run_moomoo_account_discovery(
 ) -> MoomooAccountDiscoveryDiagnostics:
     """Discover Moomoo account context without reading funds, positions, or orders."""
 
-    warnings: list[WarningCode] = []
+    terminal_warnings: list[WarningCode] = []
+    variant_warnings: list[WarningCode] = []
+    status_warnings: list[WarningCode] = []
     if not env_bool(env, "CFO_MOOMOO_ENABLED"):
-        warnings.append(WarningCode.PROVIDER_DISABLED)
+        terminal_warnings.append(WarningCode.PROVIDER_DISABLED)
     host = env.get("CFO_MOOMOO_HOST", "")
     port = env.get("CFO_MOOMOO_PORT", "")
     if not host.strip() or not port.strip():
-        warnings.append(WarningCode.PROVIDER_CONFIG_MISSING)
+        terminal_warnings.append(WarningCode.PROVIDER_CONFIG_MISSING)
 
     try:
         sdk = importlib.import_module("futu")
         sdk_import_ok = True
         _quiet_sdk_logging(sdk)
-        warnings.append(WarningCode.MOOMOO_SDK_OUTPUT_SUPPRESSED)
+        status_warnings.append(WarningCode.MOOMOO_SDK_OUTPUT_SUPPRESSED)
     except ImportError:
+        terminal_warnings.extend(
+            [
+                WarningCode.MOOMOO_SDK_NOT_INSTALLED,
+                WarningCode.SDK_NOT_INSTALLED,
+                WarningCode.MOOMOO_ACCOUNT_DISCOVERY_FAILED,
+            ]
+        )
         return MoomooAccountDiscoveryDiagnostics(
             sdk_import_ok=False,
             opend_socket_reachable=_socket_reachable(host, port, timeout_seconds),
-            warning_codes=_dedupe(
-                [
-                    *warnings,
-                    WarningCode.MOOMOO_SDK_NOT_INSTALLED,
-                    WarningCode.SDK_NOT_INSTALLED,
-                    WarningCode.MOOMOO_ACCOUNT_DISCOVERY_FAILED,
-                ]
-            ),
+            terminal_warning_codes=_dedupe(terminal_warnings),
+            warning_codes=_dedupe([*status_warnings, *terminal_warnings]),
         )
 
     socket_reachable = _socket_reachable(host, port, timeout_seconds)
     if not socket_reachable:
+        terminal_warnings.extend(
+            [
+                WarningCode.MOOMOO_OPEND_UNREACHABLE,
+                WarningCode.PROVIDER_CONNECTION_FAILED,
+                WarningCode.MOOMOO_ACCOUNT_DISCOVERY_FAILED,
+            ]
+        )
         return MoomooAccountDiscoveryDiagnostics(
             sdk_import_ok=sdk_import_ok,
             opend_socket_reachable=False,
-            warning_codes=_dedupe(
-                [
-                    *warnings,
-                    WarningCode.MOOMOO_OPEND_UNREACHABLE,
-                    WarningCode.PROVIDER_CONNECTION_FAILED,
-                    WarningCode.MOOMOO_ACCOUNT_DISCOVERY_FAILED,
-                ]
-            ),
+            terminal_warning_codes=_dedupe(terminal_warnings),
+            warning_codes=_dedupe([*status_warnings, *terminal_warnings]),
         )
 
     try:
         port_number = int(port.strip())
     except ValueError:
+        terminal_warnings.extend(
+            [
+                WarningCode.PROVIDER_CONFIG_MISSING,
+                WarningCode.MOOMOO_ACCOUNT_DISCOVERY_FAILED,
+            ]
+        )
         return MoomooAccountDiscoveryDiagnostics(
             sdk_import_ok=sdk_import_ok,
             opend_socket_reachable=socket_reachable,
-            warning_codes=_dedupe(
-                [
-                    *warnings,
-                    WarningCode.PROVIDER_CONFIG_MISSING,
-                    WarningCode.MOOMOO_ACCOUNT_DISCOVERY_FAILED,
-                ]
-            ),
+            terminal_warning_codes=_dedupe(terminal_warnings),
+            warning_codes=_dedupe([*status_warnings, *terminal_warnings]),
         )
 
-    variants = _build_context_variants(sdk, warnings)
+    variants = _build_context_variants(sdk, variant_warnings)
     candidates: list[_AccountCandidate] = []
     successful_context_variants: list[str] = []
     failed_context_variants: list[str] = []
@@ -167,7 +189,7 @@ def run_moomoo_account_discovery(
                 failed_context_variants.append(
                     f"{variant.mode}:MOOMOO_ACCOUNT_DISCOVERY_FAILED"
                 )
-                warnings.append(WarningCode.MOOMOO_ACCOUNT_DISCOVERY_FAILED)
+                variant_warnings.append(WarningCode.MOOMOO_ACCOUNT_DISCOVERY_FAILED)
                 continue
             with _suppress_sdk_console_output():
                 ret_code, data = query()
@@ -175,12 +197,12 @@ def run_moomoo_account_discovery(
                 failed_context_variants.append(
                     f"{variant.mode}:MOOMOO_ACCOUNT_DISCOVERY_FAILED"
                 )
-                _record_variant_mismatch_warnings(variant, warnings)
+                _record_variant_mismatch_warnings(variant, variant_warnings)
                 continue
             rows = _rows(data)
             if not rows:
                 failed_context_variants.append(f"{variant.mode}:MOOMOO_NO_ACCOUNT_DISCOVERED")
-                _record_variant_mismatch_warnings(variant, warnings)
+                _record_variant_mismatch_warnings(variant, variant_warnings)
                 continue
             successful_context_variants.append(variant.mode)
             for row in rows:
@@ -195,12 +217,12 @@ def run_moomoo_account_discovery(
             failed_context_variants.append(
                 f"{variant.mode}:MOOMOO_SDK_DISCOVERY_ARG_UNSUPPORTED"
             )
-            warnings.append(WarningCode.MOOMOO_SDK_DISCOVERY_ARG_UNSUPPORTED)
+            variant_warnings.append(WarningCode.MOOMOO_SDK_DISCOVERY_ARG_UNSUPPORTED)
         except Exception:
             failed_context_variants.append(
                 f"{variant.mode}:MOOMOO_ACCOUNT_DISCOVERY_FAILED"
             )
-            _record_variant_mismatch_warnings(variant, warnings)
+            _record_variant_mismatch_warnings(variant, variant_warnings)
         finally:
             close = getattr(context, "close", None)
             if callable(close):
@@ -210,7 +232,7 @@ def run_moomoo_account_discovery(
     selected = _select_account(candidates)
     account_hashes = _dedupe_text([candidate.account_hash for candidate in candidates])
     if selected is None:
-        warnings.extend(
+        terminal_warnings.extend(
             [
                 WarningCode.MOOMOO_NO_ACCOUNT_DISCOVERED,
                 WarningCode.MOOMOO_SELECTED_ACCOUNT_MISSING,
@@ -218,19 +240,33 @@ def run_moomoo_account_discovery(
             ]
         )
     else:
-        warnings.append(WarningCode.MOOMOO_ACCOUNT_DISCOVERY_OK)
+        status_warnings.append(WarningCode.MOOMOO_ACCOUNT_DISCOVERY_OK)
         if not _has_active_status(selected.acc_status_values):
-            warnings.append(WarningCode.MOOMOO_ACCOUNT_STATUS_NOT_ACTIVE)
+            terminal_warnings.append(WarningCode.MOOMOO_ACCOUNT_STATUS_NOT_ACTIVE)
         if not _has_market_auth(selected.trdmarket_auth_values):
-            warnings.append(WarningCode.MOOMOO_TRDMARKET_AUTH_MISSING)
+            terminal_warnings.append(WarningCode.MOOMOO_TRDMARKET_AUTH_MISSING)
         if _only_general_sec_account_worked(candidates):
-            warnings.append(WarningCode.MOOMOO_GENERAL_SEC_ACCOUNT_REQUIRED)
+            variant_warnings.append(WarningCode.MOOMOO_GENERAL_SEC_ACCOUNT_REQUIRED)
         if _looks_unlock_related(selected.acc_status_values):
-            warnings.append(WarningCode.MOOMOO_READ_REQUIRES_MANUAL_UNLOCK_REVIEW)
+            terminal_warnings.append(
+                WarningCode.MOOMOO_READ_REQUIRES_MANUAL_UNLOCK_REVIEW
+            )
+        if variant_warnings:
+            variant_warnings.append(
+                WarningCode.MOOMOO_DISCOVERY_SUCCESS_WITH_VARIANT_WARNINGS
+            )
+
+    warning_codes = _dedupe([*status_warnings, *terminal_warnings, *variant_warnings])
+    discovery_success = (
+        selected is not None
+        and selected.account_hash is not None
+        and WarningCode.MOOMOO_ACCOUNT_DISCOVERY_OK in warning_codes
+    )
 
     return MoomooAccountDiscoveryDiagnostics(
         sdk_import_ok=sdk_import_ok,
         opend_socket_reachable=socket_reachable,
+        discovery_success=discovery_success,
         context_variant_count=len(variants),
         successful_context_variants=_dedupe_text(successful_context_variants),
         failed_context_variants=_dedupe_text(failed_context_variants),
@@ -243,8 +279,58 @@ def run_moomoo_account_discovery(
         acc_status_values=_candidate_values(candidates, "acc_status_values"),
         selected_account_hash=selected.account_hash if selected else None,
         selected_context_mode=selected.context_mode if selected else None,
-        warning_codes=_dedupe(warnings),
+        terminal_warning_codes=_dedupe(terminal_warnings),
+        variant_warning_codes=_dedupe(variant_warnings),
+        warning_codes=warning_codes,
+        selected_account_id=selected.account_id if selected else None,
+        selected_filter_name=selected.variant.filter_name if selected else None,
+        selected_security_firm_name=(
+            selected.variant.security_firm_name if selected else None
+        ),
+        selected_need_general_sec_acc=(
+            selected.variant.need_general_sec_acc if selected else False
+        ),
+        selected_need_general_arg_name=(
+            selected.variant.need_general_arg_name if selected else None
+        ),
     )
+
+
+def open_moomoo_discovered_context(
+    sdk: Any,
+    diagnostics: MoomooAccountDiscoveryDiagnostics,
+    *,
+    host: str,
+    port: int,
+) -> Any:
+    """Open the selected account-discovery context mode."""
+
+    kwargs: dict[str, Any] = {"host": host, "port": port}
+    context_factory = sdk.OpenSecTradeContext
+    supported_kwargs = _supported_kwargs(context_factory)
+    if diagnostics.selected_filter_name and diagnostics.selected_filter_name != "DEFAULT":
+        filter_value = _enum_value(getattr(sdk, "TrdMarket", None), diagnostics.selected_filter_name)
+        if filter_value is not None and _kwarg_supported(
+            supported_kwargs, "filter_trdmarket"
+        ):
+            kwargs["filter_trdmarket"] = filter_value
+    if (
+        diagnostics.selected_security_firm_name
+        and diagnostics.selected_security_firm_name != "DEFAULT"
+    ):
+        security_firm = _enum_value(
+            getattr(sdk, "SecurityFirm", None), diagnostics.selected_security_firm_name
+        )
+        if security_firm is not None and _kwarg_supported(supported_kwargs, "security_firm"):
+            kwargs["security_firm"] = security_firm
+    if (
+        diagnostics.selected_need_general_sec_acc
+        and diagnostics.selected_need_general_arg_name
+        and _kwarg_supported(supported_kwargs, diagnostics.selected_need_general_arg_name)
+    ):
+        kwargs[diagnostics.selected_need_general_arg_name] = True
+    with _suppress_sdk_console_output():
+        return context_factory(**kwargs)
 
 
 def _build_context_variants(sdk: Any, warnings: list[WarningCode]) -> list[_ContextVariant]:
@@ -301,7 +387,9 @@ def _candidate_from_row(
     if not _has_value(account_id):
         return None
     return _AccountCandidate(
+        account_id=str(account_id),
         account_hash=hash_account_id(str(account_id), account_hash_salt),
+        variant=variant,
         context_mode=variant.mode,
         need_general_sec_acc=variant.need_general_sec_acc,
         trd_env_values=_row_values(row, ["trd_env", "env"]),
@@ -373,6 +461,28 @@ def _general_sec_account_arg_name(context_factory: Any) -> str | None:
     if "needGeneralSecAccount" in parameters:
         return "needGeneralSecAccount"
     return None
+
+
+def _supported_kwargs(callable_obj: Any) -> set[str] | None:
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return None
+    parameters = signature.parameters
+    if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+        return None
+    return set(parameters)
+
+
+def _kwarg_supported(supported_kwargs: set[str] | None, name: str) -> bool:
+    return supported_kwargs is None or name in supported_kwargs
+
+
+def _enum_value(enum_obj: Any, name: str) -> Any:
+    if enum_obj is None or not hasattr(enum_obj, name):
+        return None
+    value = getattr(enum_obj, name)
+    return None if callable(value) else value
 
 
 def _record_variant_mismatch_warnings(

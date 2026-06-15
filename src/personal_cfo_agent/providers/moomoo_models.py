@@ -43,14 +43,18 @@ class MoomooPositionRow:
 class MoomooReadDiagnostics:
     sdk_import_ok: bool = False
     opend_socket_reachable: bool = False
+    discovery_success: bool = False
     context_opened: bool = False
     account_list_query_attempted: bool = False
     account_list_query_success: bool = False
     account_count_redacted: int = 0
     selected_account_hash: str | None = None
+    selected_context_mode: str | None = None
     account_filter_mismatch: bool = False
     account_info_query_attempted: bool = False
     account_info_query_success: bool = False
+    accinfo_query_attempted: bool = False
+    accinfo_query_success: bool = False
     position_query_attempted: bool = False
     position_query_success: bool = False
     position_count: int = 0
@@ -59,7 +63,10 @@ class MoomooReadDiagnostics:
     cash_currency_count: int = 0
     normalized_rows: int = 0
     sdk_output_suppressed: bool = False
+    forbidden_api_called: bool = False
     timeout_seconds: float = 0.0
+    terminal_warning_codes: list[WarningCode] = field(default_factory=list)
+    variant_warning_codes: list[WarningCode] = field(default_factory=list)
     warning_codes: list[WarningCode] = field(default_factory=list)
     stage_failures: dict[str, str] = field(default_factory=dict)
 
@@ -67,14 +74,18 @@ class MoomooReadDiagnostics:
         return {
             "sdk_import_ok": self.sdk_import_ok,
             "opend_socket_reachable": self.opend_socket_reachable,
+            "discovery_success": self.discovery_success,
             "context_opened": self.context_opened,
             "account_list_query_attempted": self.account_list_query_attempted,
             "account_list_query_success": self.account_list_query_success,
             "account_count_redacted": self.account_count_redacted,
             "selected_account_hash": self.selected_account_hash,
+            "selected_context_mode": self.selected_context_mode,
             "account_filter_mismatch": self.account_filter_mismatch,
             "account_info_query_attempted": self.account_info_query_attempted,
             "account_info_query_success": self.account_info_query_success,
+            "accinfo_query_attempted": self.accinfo_query_attempted,
+            "accinfo_query_success": self.accinfo_query_success,
             "position_query_attempted": self.position_query_attempted,
             "position_query_success": self.position_query_success,
             "position_count": self.position_count,
@@ -83,7 +94,12 @@ class MoomooReadDiagnostics:
             "cash_currency_count": self.cash_currency_count,
             "normalized_rows": self.normalized_rows,
             "sdk_output_suppressed": self.sdk_output_suppressed,
+            "forbidden_api_called": self.forbidden_api_called,
             "timeout_seconds": self.timeout_seconds,
+            "terminal_warning_codes": [
+                code.value for code in self.terminal_warning_codes
+            ],
+            "variant_warning_codes": [code.value for code in self.variant_warning_codes],
             "warning_codes": [code.value for code in self.warning_codes],
             "stage_failures": dict(self.stage_failures),
         }

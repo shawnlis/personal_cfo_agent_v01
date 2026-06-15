@@ -89,6 +89,7 @@ python .\scripts\personal_cfo_agent.py `
 - `trdmarket_auth` values: `HK`, `US`, `SG`, `HKCC`, `HKFUND`, `USFUND`, `JP`
 - `acc_status` values: `ACTIVE`, `DISABLED`
 - Warning codes: `MOOMOO_SDK_OUTPUT_SUPPRESSED`, `MOOMOO_SDK_DISCOVERY_ARG_UNSUPPORTED`, `MOOMOO_ACCOUNT_DISCOVERY_FAILED`, `MOOMOO_SECURITY_FIRM_MISMATCH`, `MOOMOO_MARKET_FILTER_MISMATCH`, `MOOMOO_ACCOUNT_DISCOVERY_OK`
+- Discovery interpretation after diagnostics hardening: successful. Failed context variants are variant-level warnings and are non-terminal because `MOOMOO_ACCOUNT_DISCOVERY_OK` and selected account hash are present.
 - Forbidden API called: no evidence in this command path; implementation and mocked tests restrict discovery to `get_acc_list()` only
 - `accinfo_query` called: no
 - `position_list_query` called: no
@@ -98,6 +99,40 @@ python .\scripts\personal_cfo_agent.py `
 - Report bundle generated: no
 - Acceptance success: no; discovery is only a context prerequisite for a later supervised funds/positions/cash read
 - PR #11 remains draft
+
+## Selected-Context Read-Only Fetch Continuation
+
+- Date/time: 2026-06-15 continuation pass
+- Validation before supervised fetch: `python .\scripts\dev_validate.py` passed with 170 tests and 101 warnings
+- Supervised read-only fetch attempted: yes, exactly once
+- Supervised read-only fetch success: no
+- Command: `python .\scripts\personal_cfo_agent.py --provider moomoo --allow-live-read --moomoo-data-diagnostics --out-dir .\reports\personal_cfo_agent\moomoo_v030_live_acceptance`
+- Selected account hash: `acct_f63d870d837b3c3d`
+- Selected context mode: `filter_trdmarket=NONE;security_firm=FUTUSG;need_general_sec_acc=False`
+- Account count redacted: 9
+- Discovery success: yes
+- Failed discovery variants: non-terminal once a valid selected account exists
+- Allowed live calls for this continuation: `get_acc_list`, `accinfo_query`, `position_list_query`
+- Account info query attempted: yes
+- Account info query success: no
+- Position query attempted: yes
+- Position query success: no
+- Position count: 0
+- Cash currency count: 0
+- Normalized rows: 0
+- Terminal warning codes: none
+- Variant warning codes: `MOOMOO_SDK_DISCOVERY_ARG_UNSUPPORTED`, `MOOMOO_ACCOUNT_DISCOVERY_FAILED`, `MOOMOO_SECURITY_FIRM_MISMATCH`, `MOOMOO_MARKET_FILTER_MISMATCH`, `MOOMOO_DISCOVERY_SUCCESS_WITH_VARIANT_WARNINGS`
+- Data-path warning codes: `MOOMOO_SDK_OUTPUT_SUPPRESSED`, `MOOMOO_ACCOUNT_DISCOVERY_OK`, `MOOMOO_ACCOUNT_INFO_FAILED`, `MOOMOO_ACCINFO_QUERY_FAILED`, `MOOMOO_CASH_QUERY_FAILED`, `MOOMOO_POSITION_LIST_FAILED`, `MOOMOO_POSITION_QUERY_FAILED`, `MOOMOO_NO_DATA_RETURNED`, `MOOMOO_READ_SUCCEEDED_EMPTY`, `MOOMOO_NORMALIZED_ROWS_EMPTY`, `MOOMOO_READ_ONLY_FETCH_FAILED`, `PROVIDER_FETCH_FAILED`, plus variant warning codes listed above
+- Stage failures: account info query and position query both returned nonzero SDK ret codes
+- Forbidden calls: unlock, order, order history, deal history, transfer, and withdrawal APIs
+- Forbidden API called: no
+- Raw account IDs in committed docs: none
+- Exact balances in committed docs: none
+- Reports committed: no
+- Report bundle generated: no
+- `provider_sync_summary.json`: not generated
+- `normalized_asset_ledger.csv`: not generated
+- Live-read acceptance success: no
 
 ## Second Diagnostic Attempt
 

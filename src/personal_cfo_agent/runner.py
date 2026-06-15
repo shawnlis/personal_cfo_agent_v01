@@ -508,6 +508,12 @@ def _format_moomoo_data_diagnostics(diagnostics: dict[str, object]) -> list[str]
         return ["Moomoo data-path diagnostics (values redacted): unavailable"]
     warning_codes = diagnostics.get("warning_codes") or []
     warning_text = ", ".join(str(code) for code in warning_codes) or "None"
+    terminal_warning_codes = diagnostics.get("terminal_warning_codes") or []
+    terminal_warning_text = (
+        ", ".join(str(code) for code in terminal_warning_codes) or "None"
+    )
+    variant_warning_codes = diagnostics.get("variant_warning_codes") or []
+    variant_warning_text = ", ".join(str(code) for code in variant_warning_codes) or "None"
     stage_failures = diagnostics.get("stage_failures") or {}
     if isinstance(stage_failures, dict):
         stage_failure_text = (
@@ -517,18 +523,23 @@ def _format_moomoo_data_diagnostics(diagnostics: dict[str, object]) -> list[str]
     else:
         stage_failure_text = "None"
     selected_account_hash = diagnostics.get("selected_account_hash") or "not selected"
+    selected_context_mode = diagnostics.get("selected_context_mode") or "not selected"
     return [
         "Moomoo data-path diagnostics (values redacted)",
         f"SDK import OK: {_yes_no(bool(diagnostics.get('sdk_import_ok')))}",
         f"OpenD reachable: {_yes_no(bool(diagnostics.get('opend_socket_reachable')))}",
+        f"Discovery success: {_yes_no(bool(diagnostics.get('discovery_success')))}",
         f"Context opened: {_yes_no(bool(diagnostics.get('context_opened')))}",
         f"Account list attempted: {_yes_no(bool(diagnostics.get('account_list_query_attempted')))}",
         f"Account list success: {_yes_no(bool(diagnostics.get('account_list_query_success')))}",
         f"Account count redacted: {diagnostics.get('account_count_redacted', 0)}",
         f"Selected account hash: {selected_account_hash}",
+        f"Selected context mode: {selected_context_mode}",
         f"Account filter mismatch: {_yes_no(bool(diagnostics.get('account_filter_mismatch')))}",
         f"Account info attempted: {_yes_no(bool(diagnostics.get('account_info_query_attempted')))}",
         f"Account info success: {_yes_no(bool(diagnostics.get('account_info_query_success')))}",
+        f"Accinfo query attempted: {_yes_no(bool(diagnostics.get('accinfo_query_attempted')))}",
+        f"Accinfo query success: {_yes_no(bool(diagnostics.get('accinfo_query_success')))}",
         f"Positions attempted: {_yes_no(bool(diagnostics.get('position_query_attempted')))}",
         f"Positions success: {_yes_no(bool(diagnostics.get('position_query_success')))}",
         f"Position count: {diagnostics.get('position_count', 0)}",
@@ -537,7 +548,10 @@ def _format_moomoo_data_diagnostics(diagnostics: dict[str, object]) -> list[str]
         f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
         f"Normalized rows count: {diagnostics.get('normalized_rows', 0)}",
         f"SDK output suppressed: {_yes_no(bool(diagnostics.get('sdk_output_suppressed')))}",
+        f"Forbidden API called: {_yes_no(bool(diagnostics.get('forbidden_api_called')))}",
         f"Timeout seconds: {diagnostics.get('timeout_seconds', 0)}",
+        f"Terminal warning codes: {terminal_warning_text}",
+        f"Variant warning codes: {variant_warning_text}",
         f"Data diagnostic warning codes: {warning_text}",
         f"Stage failures: {stage_failure_text}",
     ]
