@@ -19,6 +19,7 @@ class RuntimeConfig:
     provider: str = "all"
     readiness_check: bool = False
     ibkr_data_diagnostics: bool = False
+    moomoo_data_diagnostics: bool = False
     tiger_data_diagnostics: bool = False
     manual_snapshot_path: Path | None = None
     dashboard: bool = False
@@ -57,11 +58,11 @@ CONNECTOR_STATUS_MATRIX: dict[str, dict[str, object]] = {
     "moomoo": {
         "status": "read_only_live_proof_candidate",
         "method": "OpenD + SDK through supervised local session",
-        "asset_read": "likely_yes",
-        "position_read": "likely_yes",
-        "cash_read": "likely_yes",
+        "asset_read": True,
+        "position_read": True,
+        "cash_read": True,
         "implementation_priority": 1,
-        "notes": "v0.1.2 guarded read-only proof; OpenD must be started manually",
+        "notes": "PR #11 draft path; redacted get_acc_list account discovery required before funds/positions/cash read",
     },
     "tiger": {
         "status": "read_only_live_proof_candidate",

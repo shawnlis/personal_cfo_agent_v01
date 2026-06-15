@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -41,6 +42,16 @@ from personal_cfo_agent.providers.ibkr_connection_diagnostics import (
     IBKRConnectionDiagnostics,
     run_ibkr_connection_diagnostics,
 )
+from personal_cfo_agent.providers.moomoo_connection_diagnostics import (
+    MoomooConnectionDiagnostics,
+    run_moomoo_connection_diagnostics,
+)
+from personal_cfo_agent.providers.moomoo_account_discovery import (
+    run_moomoo_account_discovery,
+)
+from personal_cfo_agent.providers.moomoo_read_context_probe import (
+    run_moomoo_read_context_probe,
+)
 from personal_cfo_agent.providers.tiger_connection_diagnostics import (
     TigerConfigPreflight,
     TigerConnectionDiagnostics,
@@ -73,6 +84,14 @@ def run(config: RuntimeConfig) -> RunnerResult:
     try:
         normalized_assets = normalize_snapshots(data_snapshots)
     except Exception:
+        if any(snapshot.provider_name == "moomoo" for snapshot in data_snapshots):
+            return RunnerResult(
+                exit_code=1,
+                statuses=_mark_moomoo_normalization_failed(statuses),
+                normalized_assets=[],
+                output_dir=None,
+                output_paths={},
+            )
         if any(snapshot.provider_name == "tiger" for snapshot in data_snapshots):
             return RunnerResult(
                 exit_code=1,
@@ -117,50 +136,37 @@ def run(config: RuntimeConfig) -> RunnerResult:
     )
 
 
-def run_readiness_check(config: RuntimeConfig) -> RunnerResult:
-    if config.provider == "ibkr":
-        provider = IBKRProvider(load_ibkr_config(config.env), allow_live_read=False)
-    elif config.provider == "moomoo":
-        provider = MoomooProvider(load_moomoo_config(config.env), allow_live_read=False)
-    elif config.provider == "tiger":
-        provider = TigerProvider(load_tiger_config(config.env), allow_live_read=False)
-    else:
-        return RunnerResult(exit_code=0, statuses=[], normalized_assets=[])
-    provider.readiness_check()
-    return RunnerResult(exit_code=0, statuses=[provider._status()], normalized_assets=[])
-
-
-def collect_provider_snapshots(config: RuntimeConfig) -> list[RawProviderSnapshot]:
-    providers = []
-    if config.provider in {"all", "ibkr"}:
-        providers.append(
-            IBKRProvider(
-                load_ibkr_config(config.env),
-                allow_live_read=config.allow_live_read and config.provider == "ibkr",
-            )
+def _mark_moomoo_normalization_failed(
+    statuses: list[ProviderStatus],
+) -> list[ProviderStatus]:
+    updated_statuses: list[ProviderStatus] = []
+    for status in statuses:
+        if status.provider_name != "moomoo":
+            updated_statuses.append(status)
+            continue
+        warning_codes = _dedupe_warning_codes(
+            [
+                *status.warning_codes,
+                WarningCode.MOOMOO_NORMALIZATION_FAILED,
+                WarningCode.PROVIDER_FETCH_FAILED,
+            ]
         )
-    if config.provider in {"all", "moomoo"}:
-        providers.append(
-            MoomooProvider(
-                load_moomoo_config(config.env),
-                allow_live_read=config.allow_live_read and config.provider == "moomoo",
-            )
+        diagnostics = dict(status.diagnostics)
+        stage_failures = dict(diagnostics.get("stage_failures") or {})
+        stage_failures["normalization"] = "Normalization failed"
+        diagnostics["stage_failures"] = stage_failures
+        diagnostics["normalized_rows"] = 0
+        diagnostics["warning_codes"] = _dedupe_text(
+            [
+                *[str(code) for code in diagnostics.get("warning_codes", [])],
+                WarningCode.MOOMOO_NORMALIZATION_FAILED.value,
+                WarningCode.PROVIDER_FETCH_FAILED.value,
+            ]
         )
-    if config.provider in {"all", "tiger"}:
-        providers.append(
-            TigerProvider(
-                load_tiger_config(config.env),
-                allow_live_read=config.allow_live_read and config.provider == "tiger",
-            )
+        updated_statuses.append(
+            replace(status, warning_codes=warning_codes, diagnostics=diagnostics)
         )
-    if config.provider in {"all", "manual"}:
-        providers.append(
-            ManualSnapshotProvider(
-                load_manual_config(config.env, config.manual_snapshot_path),
-                allow_live_read=False,
-            )
-        )
-    return [provider._sync() for provider in providers]
+    return updated_statuses
 
 
 def _attach_diagnostic_normalized_rows(
@@ -234,6 +240,52 @@ def _dedupe_text(values: list[object]) -> list[str]:
     return result
 
 
+def run_readiness_check(config: RuntimeConfig) -> RunnerResult:
+    if config.provider == "ibkr":
+        provider = IBKRProvider(load_ibkr_config(config.env), allow_live_read=False)
+    elif config.provider == "moomoo":
+        provider = MoomooProvider(load_moomoo_config(config.env), allow_live_read=False)
+    elif config.provider == "tiger":
+        provider = TigerProvider(load_tiger_config(config.env), allow_live_read=False)
+    else:
+        return RunnerResult(exit_code=0, statuses=[], normalized_assets=[])
+    provider.readiness_check()
+    return RunnerResult(exit_code=0, statuses=[provider._status()], normalized_assets=[])
+
+
+def collect_provider_snapshots(config: RuntimeConfig) -> list[RawProviderSnapshot]:
+    providers = []
+    if config.provider in {"all", "ibkr"}:
+        providers.append(
+            IBKRProvider(
+                load_ibkr_config(config.env),
+                allow_live_read=config.allow_live_read and config.provider == "ibkr",
+            )
+        )
+    if config.provider in {"all", "moomoo"}:
+        providers.append(
+            MoomooProvider(
+                load_moomoo_config(config.env),
+                allow_live_read=config.allow_live_read and config.provider == "moomoo",
+            )
+        )
+    if config.provider in {"all", "tiger"}:
+        providers.append(
+            TigerProvider(
+                load_tiger_config(config.env),
+                allow_live_read=config.allow_live_read and config.provider == "tiger",
+            )
+        )
+    if config.provider in {"all", "manual"}:
+        providers.append(
+            ManualSnapshotProvider(
+                load_manual_config(config.env, config.manual_snapshot_path),
+                allow_live_read=False,
+            )
+        )
+    return [provider._sync() for provider in providers]
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Personal CFO Agent v0.1 runner")
     parser.add_argument(
@@ -266,6 +318,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--ibkr-data-diagnostics",
         action="store_true",
         help="Print redacted IBKR live data-path diagnostics after a gated read.",
+    )
+    parser.add_argument(
+        "--moomoo-data-diagnostics",
+        action="store_true",
+        help="Print redacted Moomoo live data-path diagnostics after a gated read.",
+    )
+    parser.add_argument(
+        "--account-discovery",
+        action="store_true",
+        help="Run redacted Moomoo account-context discovery using get_acc_list only.",
+    )
+    parser.add_argument(
+        "--read-context-probe",
+        action="store_true",
+        help="Run redacted Moomoo read-context diagnostics after account discovery.",
     )
     parser.add_argument(
         "--tiger-data-diagnostics",
@@ -330,7 +397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     local_env_result = load_local_env_file()
-    if local_env_result.exists:
+    if local_env_result.exists and not (args.account_discovery or args.read_context_probe):
         print(f"Loaded local environment from {LOCAL_ENV_FILENAME}; values redacted")
     if args.write_manual_template is not None and args.validate_manual_snapshot is not None:
         parser.error("--write-manual-template and --validate-manual-snapshot cannot be combined")
@@ -363,11 +430,41 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         return _tiger_sdk_config_probe_cli()
     if args.connection_diagnostics:
-        if args.provider not in {"ibkr", "tiger"}:
+        if args.provider not in {"ibkr", "moomoo", "tiger"}:
             parser.error(
-                "--connection-diagnostics is currently implemented for --provider ibkr or tiger"
+                "--connection-diagnostics is currently implemented for --provider ibkr, moomoo, or tiger"
             )
-        return _connection_diagnostics_cli(args.provider)
+        return _connection_diagnostics_cli(args.provider, local_env_result.exists)
+    if args.account_discovery:
+        if args.provider != "moomoo":
+            parser.error("--account-discovery requires --provider moomoo")
+        if args.readiness_check:
+            parser.error("--account-discovery cannot be combined with --readiness-check")
+        if args.connection_diagnostics:
+            parser.error("--account-discovery cannot be combined with --connection-diagnostics")
+        if args.moomoo_data_diagnostics:
+            parser.error("--account-discovery cannot be combined with --moomoo-data-diagnostics")
+        if args.read_context_probe:
+            parser.error("--account-discovery cannot be combined with --read-context-probe")
+        return _moomoo_account_discovery_cli()
+    if args.read_context_probe:
+        if args.provider != "moomoo":
+            parser.error("--read-context-probe requires --provider moomoo")
+        if args.readiness_check:
+            parser.error("--read-context-probe cannot be combined with --readiness-check")
+        if args.connection_diagnostics:
+            parser.error(
+                "--read-context-probe cannot be combined with --connection-diagnostics"
+            )
+        if args.moomoo_data_diagnostics:
+            parser.error(
+                "--read-context-probe cannot be combined with --moomoo-data-diagnostics"
+            )
+        if args.ibkr_data_diagnostics:
+            parser.error(
+                "--read-context-probe cannot be combined with --ibkr-data-diagnostics"
+            )
+        return _moomoo_read_context_probe_cli()
     if args.ibkr_data_diagnostics:
         if args.provider != "ibkr":
             parser.error("--ibkr-data-diagnostics requires --provider ibkr")
@@ -375,6 +472,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--ibkr-data-diagnostics cannot be combined with --readiness-check")
         if not args.allow_live_read:
             parser.error("--ibkr-data-diagnostics requires --allow-live-read")
+    if args.moomoo_data_diagnostics:
+        if args.provider != "moomoo":
+            parser.error("--moomoo-data-diagnostics requires --provider moomoo")
+        if args.readiness_check:
+            parser.error("--moomoo-data-diagnostics cannot be combined with --readiness-check")
+        if not args.allow_live_read:
+            parser.error("--moomoo-data-diagnostics requires --allow-live-read")
     if args.tiger_data_diagnostics:
         if args.provider != "tiger":
             parser.error("--tiger-data-diagnostics requires --provider tiger")
@@ -400,6 +504,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             provider=args.provider,
             readiness_check=args.readiness_check,
             ibkr_data_diagnostics=args.ibkr_data_diagnostics,
+            moomoo_data_diagnostics=args.moomoo_data_diagnostics,
             tiger_data_diagnostics=args.tiger_data_diagnostics,
             manual_snapshot_path=args.manual_snapshot,
             dashboard=args.dashboard,
@@ -414,6 +519,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{status.provider_name}: {status.connection_mode.value}; warnings={warnings}")
         if args.ibkr_data_diagnostics and status.provider_name == "ibkr":
             for line in _format_ibkr_data_diagnostics(status.diagnostics):
+                print(line)
+        if args.moomoo_data_diagnostics and status.provider_name == "moomoo":
+            for line in _format_moomoo_data_diagnostics(status.diagnostics):
                 print(line)
         if args.tiger_data_diagnostics and status.provider_name == "tiger":
             for line in _format_tiger_data_diagnostics(status.diagnostics):
@@ -456,14 +564,20 @@ def _print_manual_validation_issues(issues, severity: str) -> None:
         print(f"{severity}: {issue.path}: {issue.code.value}: {issue.message}")
 
 
-def _connection_diagnostics_cli(provider: str) -> int:
+def _connection_diagnostics_cli(provider: str, local_env_loaded: bool) -> int:
     if provider == "ibkr":
         diagnostics = run_ibkr_connection_diagnostics(dict(os.environ))
-        for line in _format_ibkr_connection_diagnostics(diagnostics):
-            print(line)
-        return 0
-    diagnostics = run_tiger_connection_diagnostics(dict(os.environ))
-    for line in _format_tiger_connection_diagnostics(diagnostics):
+        lines = _format_ibkr_connection_diagnostics(diagnostics)
+    elif provider == "moomoo":
+        diagnostics = run_moomoo_connection_diagnostics(
+            dict(os.environ),
+            local_env_loaded=local_env_loaded,
+        )
+        lines = _format_moomoo_connection_diagnostics(diagnostics)
+    else:
+        diagnostics = run_tiger_connection_diagnostics(dict(os.environ))
+        lines = _format_tiger_connection_diagnostics(diagnostics)
+    for line in lines:
         print(line)
     return 0
 
@@ -486,6 +600,18 @@ def _tiger_sdk_config_probe_cli() -> int:
     return 1
 
 
+def _moomoo_account_discovery_cli() -> int:
+    diagnostics = run_moomoo_account_discovery(dict(os.environ))
+    print(json.dumps(diagnostics.to_redacted_dict(), indent=2))
+    return 0
+
+
+def _moomoo_read_context_probe_cli() -> int:
+    diagnostics = run_moomoo_read_context_probe(dict(os.environ))
+    print(json.dumps(diagnostics.to_redacted_dict(), indent=2))
+    return 0
+
+
 def _format_ibkr_connection_diagnostics(
     diagnostics: IBKRConnectionDiagnostics,
 ) -> list[str]:
@@ -501,6 +627,24 @@ def _format_ibkr_connection_diagnostics(
         f"Python executable: {diagnostics.python_executable}",
         f"ibapi import status: {'OK' if diagnostics.ibapi_import_ok else 'MISSING'}",
         f"TCP socket reachable host/port: {_yes_no(diagnostics.tcp_socket_reachable)}",
+        f"diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _format_moomoo_connection_diagnostics(
+    diagnostics: MoomooConnectionDiagnostics,
+) -> list[str]:
+    warning_text = ", ".join(code.value for code in diagnostics.warning_codes) or "None"
+    return [
+        "Moomoo connection diagnostics (values redacted)",
+        f"{LOCAL_ENV_FILENAME} loaded: {_yes_no(diagnostics.local_env_loaded)}",
+        f"CFO_MOOMOO_ENABLED present and true: {_yes_no(diagnostics.enabled_present and diagnostics.enabled_true)}",
+        f"CFO_MOOMOO_HOST present: {_yes_no(diagnostics.host_present)}",
+        f"CFO_MOOMOO_PORT present: {_yes_no(diagnostics.port_present)}",
+        f"CFO_ACCOUNT_HASH_SALT present: {_yes_no(diagnostics.hash_salt_present)}, redacted",
+        f"Python executable: {diagnostics.python_executable}",
+        f"futu import status: {'OK' if diagnostics.futu_import_ok else 'MISSING'}",
+        f"OpenD socket reachable host/port: {_yes_no(diagnostics.opend_socket_reachable)}",
         f"diagnostic warning codes: {warning_text}",
     ]
 
@@ -622,6 +766,74 @@ def _format_ibkr_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
         f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
         f"Timeout seconds: {diagnostics.get('timeout_seconds', 0)}",
         f"Data diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _format_moomoo_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
+    if not diagnostics:
+        return ["Moomoo data-path diagnostics (values redacted): unavailable"]
+    warning_codes = diagnostics.get("warning_codes") or []
+    warning_text = ", ".join(str(code) for code in warning_codes) or "None"
+    terminal_warning_codes = diagnostics.get("terminal_warning_codes") or []
+    terminal_warning_text = (
+        ", ".join(str(code) for code in terminal_warning_codes) or "None"
+    )
+    variant_warning_codes = diagnostics.get("variant_warning_codes") or []
+    variant_warning_text = ", ".join(str(code) for code in variant_warning_codes) or "None"
+    stage_failures = diagnostics.get("stage_failures") or {}
+    if isinstance(stage_failures, dict):
+        stage_failure_text = (
+            ", ".join(f"{stage}={summary}" for stage, summary in stage_failures.items())
+            or "None"
+        )
+    else:
+        stage_failure_text = "None"
+    selected_account_hash = diagnostics.get("selected_account_hash") or "not selected"
+    selected_context_mode = diagnostics.get("selected_context_mode") or "not selected"
+    selected_discovery_context_mode = (
+        diagnostics.get("selected_discovery_context_mode") or "not selected"
+    )
+    selected_read_context_mode = (
+        diagnostics.get("selected_read_context_mode") or "not selected"
+    )
+    return [
+        "Moomoo data-path diagnostics (values redacted)",
+        f"SDK import OK: {_yes_no(bool(diagnostics.get('sdk_import_ok')))}",
+        f"OpenD reachable: {_yes_no(bool(diagnostics.get('opend_socket_reachable')))}",
+        f"Discovery success: {_yes_no(bool(diagnostics.get('discovery_success')))}",
+        f"Context opened: {_yes_no(bool(diagnostics.get('context_opened')))}",
+        f"Account list attempted: {_yes_no(bool(diagnostics.get('account_list_query_attempted')))}",
+        f"Account list success: {_yes_no(bool(diagnostics.get('account_list_query_success')))}",
+        f"Account count redacted: {diagnostics.get('account_count_redacted', 0)}",
+        f"Selected account hash: {selected_account_hash}",
+        f"Selected context mode: {selected_context_mode}",
+        f"Selected discovery context mode: {selected_discovery_context_mode}",
+        f"Selected read context mode: {selected_read_context_mode}",
+        f"Account filter mismatch: {_yes_no(bool(diagnostics.get('account_filter_mismatch')))}",
+        f"Account info attempted: {_yes_no(bool(diagnostics.get('account_info_query_attempted')))}",
+        f"Account info success: {_yes_no(bool(diagnostics.get('account_info_query_success')))}",
+        f"Accinfo query attempted: {_yes_no(bool(diagnostics.get('accinfo_query_attempted')))}",
+        f"Accinfo query success: {_yes_no(bool(diagnostics.get('accinfo_query_success')))}",
+        f"Accinfo failure stage: {diagnostics.get('accinfo_failure_stage') or 'None'}",
+        f"Accinfo SDK ret code sanitized: {diagnostics.get('accinfo_sdk_ret_code_sanitized') or 'None'}",
+        f"Accinfo exception category sanitized: {diagnostics.get('accinfo_exception_category_sanitized') or 'None'}",
+        f"Positions attempted: {_yes_no(bool(diagnostics.get('position_query_attempted')))}",
+        f"Positions success: {_yes_no(bool(diagnostics.get('position_query_success')))}",
+        f"Position failure stage: {diagnostics.get('position_failure_stage') or 'None'}",
+        f"Position SDK ret code sanitized: {diagnostics.get('position_sdk_ret_code_sanitized') or 'None'}",
+        f"Position exception category sanitized: {diagnostics.get('position_exception_category_sanitized') or 'None'}",
+        f"Position count: {diagnostics.get('position_count', 0)}",
+        f"Cash/balance attempted: {_yes_no(bool(diagnostics.get('cash_query_attempted')))}",
+        f"Cash/balance success: {_yes_no(bool(diagnostics.get('cash_query_success')))}",
+        f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
+        f"Normalized rows count: {diagnostics.get('normalized_rows', 0)}",
+        f"SDK output suppressed: {_yes_no(bool(diagnostics.get('sdk_output_suppressed')))}",
+        f"Forbidden API called: {_yes_no(bool(diagnostics.get('forbidden_api_called')))}",
+        f"Timeout seconds: {diagnostics.get('timeout_seconds', 0)}",
+        f"Terminal warning codes: {terminal_warning_text}",
+        f"Variant warning codes: {variant_warning_text}",
+        f"Data diagnostic warning codes: {warning_text}",
+        f"Stage failures: {stage_failure_text}",
     ]
 
 

@@ -13,6 +13,9 @@ from personal_cfo_agent.models import (
 )
 from personal_cfo_agent.provider_base import ProviderBase
 from personal_cfo_agent.providers.moomoo_models import MoomooReadOnlySnapshot
+from personal_cfo_agent.providers.moomoo_connection_diagnostics import (
+    run_moomoo_connection_diagnostics,
+)
 from personal_cfo_agent.providers.moomoo_readonly_adapter import (
     MoomooConnectionError,
     MoomooFetchError,
@@ -47,6 +50,9 @@ class MoomooProvider(ProviderBase):
         self.warning_codes = _dedupe([*self.warning_codes, *self.validate_config()])
         return self.warning_codes
 
+    def connection_diagnostics(self):
+        return run_moomoo_connection_diagnostics(self.config.settings)
+
     def connect_read_only(self) -> bool:
         if WarningCode.PROVIDER_DISABLED in self.warning_codes:
             return False
@@ -62,20 +68,42 @@ class MoomooProvider(ProviderBase):
         try:
             self._snapshot = adapter.collect()
         except MoomooSDKNotInstalledError:
-            self.warning_codes = _dedupe([*self.warning_codes, WarningCode.SDK_NOT_INSTALLED])
-            return False
-        except MoomooConnectionError:
             self.warning_codes = _dedupe(
-                [*self.warning_codes, WarningCode.PROVIDER_CONNECTION_FAILED]
+                [
+                    *self.warning_codes,
+                    WarningCode.MOOMOO_SDK_NOT_INSTALLED,
+                    WarningCode.SDK_NOT_INSTALLED,
+                ]
             )
             return False
-        except MoomooFetchError:
-            self.warning_codes = _dedupe([*self.warning_codes, WarningCode.PROVIDER_FETCH_FAILED])
+        except MoomooConnectionError as exc:
+            self._record_adapter_diagnostics(exc)
+            self.warning_codes = _dedupe(
+                [
+                    *self.warning_codes,
+                    *_diagnostic_warning_codes(exc),
+                    WarningCode.PROVIDER_CONNECTION_FAILED,
+                ]
+            )
+            return False
+        except MoomooFetchError as exc:
+            self._record_adapter_diagnostics(exc)
+            self.warning_codes = _dedupe(
+                [
+                    *self.warning_codes,
+                    *_diagnostic_warning_codes(exc),
+                    WarningCode.PROVIDER_FETCH_FAILED,
+                ]
+            )
             return False
         except Exception:
             self.warning_codes = _dedupe([*self.warning_codes, WarningCode.PROVIDER_FETCH_FAILED])
             return False
 
+        self._record_snapshot_diagnostics(self._snapshot)
+        self.warning_codes = _dedupe(
+            [*self.warning_codes, *self._snapshot.diagnostics.warning_codes]
+        )
         self.provider_level = ProviderLevel.LEVEL_2
         self.connection_mode = ConnectionMode.LIVE_READ
         return True
@@ -142,6 +170,7 @@ class MoomooProvider(ProviderBase):
         return MoomooReadOnlyAdapter(
             host=str(settings["CFO_MOOMOO_HOST"]),
             port=int(settings["CFO_MOOMOO_PORT"]),
+            account_hash_salt=settings.get("CFO_ACCOUNT_HASH_SALT"),
         )
 
     def _numeric_config_is_valid(self) -> bool:
@@ -156,6 +185,16 @@ class MoomooProvider(ProviderBase):
             raise RuntimeError("Moomoo live snapshot was not collected")
         return self._snapshot
 
+    def _record_snapshot_diagnostics(self, snapshot: MoomooReadOnlySnapshot) -> None:
+        diagnostics = snapshot.diagnostics.to_redacted_dict()
+        if diagnostics["warning_codes"] or diagnostics["context_opened"]:
+            self.diagnostics = diagnostics
+
+    def _record_adapter_diagnostics(self, exc: Exception) -> None:
+        diagnostics = getattr(exc, "diagnostics", None)
+        if diagnostics is not None:
+            self.diagnostics = diagnostics.to_redacted_dict()
+
 
 def _dedupe(codes: list[WarningCode]) -> list[WarningCode]:
     seen: set[WarningCode] = set()
@@ -165,3 +204,10 @@ def _dedupe(codes: list[WarningCode]) -> list[WarningCode]:
             result.append(code)
             seen.add(code)
     return result
+
+
+def _diagnostic_warning_codes(exc: Exception) -> list[WarningCode]:
+    diagnostics = getattr(exc, "diagnostics", None)
+    if diagnostics is None:
+        return []
+    return list(diagnostics.warning_codes)
