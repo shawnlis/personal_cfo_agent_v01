@@ -31,4 +31,4 @@ IBKR, Tiger, and Moomoo now have supervised read-only proof workflows. Each live
 
 ## Offline Merge Rule
 
-v0.3.3 multi-provider normalized ledger merge is offline only. It reads existing normalized bundles under local ignored `reports/` paths or synthetic fixture inputs, writes merged outputs under ignored `reports/` paths, and must not connect to brokers, call broker SDKs, move cash, place orders, or produce recommendation output.
+v0.3.3 multi-provider normalized ledger merge is offline only and account-NAV-first. It reads existing normalized bundles under local ignored `reports/` paths or synthetic fixture inputs, writes account NAV and best-effort position outputs under ignored `reports/` paths, and must not connect to brokers, call broker SDKs, move cash, place orders, or produce recommendation output.

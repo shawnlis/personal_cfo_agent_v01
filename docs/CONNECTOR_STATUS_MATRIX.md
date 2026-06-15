@@ -10,7 +10,7 @@
 
 ## Normalized Ledger Merge
 
-v0.3.3 adds an offline multi-provider merge layer for already-generated normalized provider bundles from manual snapshots, IBKR, Tiger, and Moomoo. It does not run live broker reads, broker API calls, trading workflows, cash movement, or recommendation output. Generated merged bundles stay under ignored `reports/` paths.
+v0.3.3 adds an offline account-NAV-first multi-provider merge layer for already-generated normalized provider bundles from manual snapshots, IBKR, Tiger, and Moomoo. Account NAV is the primary Personal CFO net-worth layer; the position ledger is best-effort drilldown data. It does not run live broker reads, broker API calls, trading workflows, cash movement, or recommendation output. Generated merged bundles stay under ignored `reports/` paths.
 
 ## Unsupported Until Official API Verified
 

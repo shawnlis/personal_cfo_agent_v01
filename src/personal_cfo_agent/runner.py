@@ -597,12 +597,13 @@ def _format_merge_result(result: MergeResult) -> list[str]:
         f"{provider}={count}" for provider, count in sorted(result.provider_counts.items())
     ) or "None"
     return [
-        "Multi-provider normalized ledger merge (offline)",
+        "Multi-provider account NAV ledger merge (offline)",
         "Broker connections used: no",
         f"Output directory: {result.output_dir}",
         f"Source bundle count: {result.source_bundle_count}",
-        f"Merged normalized rows: {result.row_count}",
-        f"Provider row counts: {provider_counts}",
+        f"Account NAV rows: {result.account_nav_row_count}",
+        f"Position rows: {result.position_row_count}",
+        f"Provider account counts: {provider_counts}",
         f"Warning codes: {warnings}",
     ]
 
