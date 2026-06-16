@@ -16,6 +16,10 @@ v0.3.3 adds an offline account-NAV-first multi-provider merge layer for already-
 
 v0.4.0 Dashboard v2 is an offline account-NAV-first dashboard over v0.3.3 merged ledger outputs. It consumes `merged_account_nav_ledger.csv` as the primary source and uses `merged_position_ledger.csv` only as optional drilldown. It does not add broker connectivity, live reads, trading workflows, cash movement, scheduler automation, or recommendation output.
 
+## Snapshot Store
+
+v0.4.2 adds an offline snapshot store for local net worth history. It consumes v0.3.3 merged account NAV outputs and optional v0.4.0 Dashboard v2 outputs, then writes immutable local history artifacts under ignored `reports/` paths. It does not add broker connectivity, live reads, trading workflows, cash movement, scheduler automation, or recommendation output.
+
 ## Unsupported Until Official API Verified
 
 | Platform | Status | Method | Priority | Notes |

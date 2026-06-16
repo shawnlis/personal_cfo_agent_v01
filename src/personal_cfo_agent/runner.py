@@ -64,6 +64,7 @@ from personal_cfo_agent.providers.tiger_connection_diagnostics import (
 from personal_cfo_agent.provider_bundle_merge import MergeResult, merge_provider_bundles
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
+from personal_cfo_agent.snapshot_store import SnapshotStoreResult, record_snapshot
 
 
 @dataclass(frozen=True)
@@ -391,10 +392,32 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Write the v0.4.0 account NAV dashboard from a v0.3.3 merged ledger bundle.",
     )
     parser.add_argument(
+        "--record-snapshot",
+        action="store_true",
+        help="Record an offline v0.4.2 net worth history snapshot from merged account NAV outputs.",
+    )
+    parser.add_argument(
         "--input-dir",
         type=Path,
         default=None,
         help="Input directory for an existing offline report bundle.",
+    )
+    parser.add_argument(
+        "--merge-dir",
+        type=Path,
+        default=None,
+        help="Merged account NAV input directory for --record-snapshot.",
+    )
+    parser.add_argument(
+        "--dashboard-dir",
+        type=Path,
+        default=None,
+        help="Optional Dashboard v2 input directory for --record-snapshot.",
+    )
+    parser.add_argument(
+        "--snapshot-id",
+        default=None,
+        help="Optional immutable snapshot id for --record-snapshot.",
     )
     parser.add_argument(
         "--dashboard-assumptions",
@@ -429,6 +452,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _merge_provider_bundles_cli(args, parser)
     if args.dashboard_v2:
         return _dashboard_v2_cli(args, parser)
+    if args.record_snapshot:
+        return _record_snapshot_cli(args, parser)
     local_env_result = load_local_env_file()
     if local_env_result.exists and not (args.account_discovery or args.read_context_probe):
         print(f"Loaded local environment from {LOCAL_ENV_FILENAME}; values redacted")
@@ -592,6 +617,8 @@ def _merge_provider_bundles_cli(
         parser.error("--merge-provider-bundles cannot be combined with data diagnostics")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
         parser.error("--merge-provider-bundles cannot be combined with manual snapshot utilities")
+    if args.record_snapshot:
+        parser.error("--merge-provider-bundles cannot be combined with --record-snapshot")
     if args.out_dir is None:
         parser.error("--merge-provider-bundles requires --out-dir")
 
@@ -618,6 +645,8 @@ def _dashboard_v2_cli(args: argparse.Namespace, parser: argparse.ArgumentParser)
         parser.error("--dashboard-v2 cannot be combined with data diagnostics")
     if args.merge_provider_bundles:
         parser.error("--dashboard-v2 cannot be combined with --merge-provider-bundles")
+    if args.record_snapshot:
+        parser.error("--dashboard-v2 cannot be combined with --record-snapshot")
     if args.dashboard:
         parser.error("--dashboard-v2 cannot be combined with --dashboard")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
@@ -633,6 +662,39 @@ def _dashboard_v2_cli(args: argparse.Namespace, parser: argparse.ArgumentParser)
     return 0 if result.generated else 1
 
 
+def _record_snapshot_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.allow_live_read:
+        parser.error("--record-snapshot cannot be combined with --allow-live-read")
+    if args.readiness_check or args.connection_diagnostics:
+        parser.error(
+            "--record-snapshot cannot be combined with readiness or connection diagnostics"
+        )
+    if args.account_discovery or args.read_context_probe:
+        parser.error("--record-snapshot cannot be combined with Moomoo discovery probes")
+    if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
+        parser.error("--record-snapshot cannot be combined with data diagnostics")
+    if args.merge_provider_bundles:
+        parser.error("--record-snapshot cannot be combined with --merge-provider-bundles")
+    if args.dashboard_v2 or args.dashboard:
+        parser.error("--record-snapshot cannot be combined with dashboard generation")
+    if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
+        parser.error("--record-snapshot cannot be combined with manual snapshot utilities")
+    if args.merge_dir is None:
+        parser.error("--record-snapshot requires --merge-dir")
+    if args.out_dir is None:
+        parser.error("--record-snapshot requires --out-dir")
+
+    result = record_snapshot(
+        merge_dir=args.merge_dir,
+        dashboard_dir=args.dashboard_dir,
+        out_dir=args.out_dir,
+        snapshot_id=args.snapshot_id,
+    )
+    for line in _format_snapshot_store_result(result):
+        print(line)
+    return 0 if result.generated else 1
+
+
 def _format_dashboard_v2_result(result: DashboardV2Result) -> list[str]:
     warnings = ", ".join(code.value for code in result.warning_codes) or "None"
     lines = [
@@ -644,6 +706,29 @@ def _format_dashboard_v2_result(result: DashboardV2Result) -> list[str]:
         f"Account count: {result.account_count}",
         f"Provider count: {result.provider_count}",
         f"Position rows: {result.position_count}",
+        f"Warning codes: {warnings}",
+    ]
+    if result.output_paths:
+        lines.append(
+            "Output files: "
+            + ", ".join(path.name for path in sorted(result.output_paths.values()))
+        )
+    return lines
+
+
+def _format_snapshot_store_result(result: SnapshotStoreResult) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    lines = [
+        "Personal CFO Snapshot Store v0.4.2 (offline)",
+        "Broker connections used: no",
+        f"Merge input directory: {result.merge_dir}",
+        f"Dashboard input directory: {result.dashboard_dir or ''}",
+        f"Output directory: {result.output_dir or ''}",
+        f"Snapshot generated: {'yes' if result.generated else 'no'}",
+        f"Snapshot id: {result.snapshot_id or ''}",
+        f"Account count: {result.account_count}",
+        f"Provider count: {result.provider_count}",
+        f"Position count: {result.position_count}",
         f"Warning codes: {warnings}",
     ]
     if result.output_paths:
