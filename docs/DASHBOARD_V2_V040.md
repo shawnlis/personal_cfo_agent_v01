@@ -51,6 +51,8 @@ Dashboard v2 writes:
 - `position_drilldown.csv` when a position ledger exists
 - `dashboard_warnings.md`
 
+These outputs can be consumed by the v0.4.2 offline snapshot store to append a local net worth history snapshot. Snapshot history remains under ignored `reports/` paths and is not committed by default.
+
 ## Dashboard Scope
 
 Dashboard v2 summarizes:
