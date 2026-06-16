@@ -1,0 +1,18 @@
+{
+  "mortgages": [
+    {
+      "loan_id_hash": "loan_synthetic_home_hash",
+      "linked_property_id_hash": "prop_synthetic_home_hash",
+      "lender_label": "Synthetic lender",
+      "outstanding_balance": 300000,
+      "currency": "SGD",
+      "interest_rate": 3.25,
+      "rate_type": "floating",
+      "monthly_payment": 2500,
+      "repricing_date": "2027-01-01",
+      "maturity_date": "2045-01-01",
+      "snapshot_date": "2026-06-16",
+      "review_required": true
+    }
+  ]
+}
