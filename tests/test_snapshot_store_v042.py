@@ -125,6 +125,63 @@ def test_duplicate_snapshot_id_fails_closed(tmp_path: Path) -> None:
     assert len(_read_rows(out_dir / "net_worth_history.csv")) == 1
 
 
+def test_distinct_snapshots_append_without_duplicate_headers_and_old_id_reuse_fails(
+    tmp_path: Path,
+) -> None:
+    merge_dir = tmp_path / "merged"
+    dashboard_dir = tmp_path / "dashboard"
+    out_dir = tmp_path / "snapshots"
+    _write_snapshot_inputs(merge_dir, dashboard_dir)
+
+    first = record_snapshot(
+        merge_dir=merge_dir,
+        dashboard_dir=dashboard_dir,
+        out_dir=out_dir,
+        snapshot_id="snapshot_append_a",
+        generated_at=_generated_at(),
+    )
+    second = record_snapshot(
+        merge_dir=merge_dir,
+        dashboard_dir=dashboard_dir,
+        out_dir=out_dir,
+        snapshot_id="snapshot_append_b",
+        generated_at=_generated_at(),
+    )
+    duplicate_old = record_snapshot(
+        merge_dir=merge_dir,
+        dashboard_dir=dashboard_dir,
+        out_dir=out_dir,
+        snapshot_id="snapshot_append_a",
+        generated_at=_generated_at(),
+    )
+
+    assert first.generated
+    assert second.generated
+    assert not duplicate_old.generated
+    assert WarningCode.SNAPSHOT_ID_DUPLICATE in duplicate_old.warning_codes
+    net_worth_text = (out_dir / "net_worth_history.csv").read_text(encoding="utf-8")
+    account_text = (out_dir / "account_nav_history.csv").read_text(encoding="utf-8")
+    provider_text = (out_dir / "provider_nav_history.csv").read_text(encoding="utf-8")
+    assert net_worth_text.count("snapshot_date,snapshot_id") == 1
+    assert account_text.count("snapshot_date,snapshot_id") == 1
+    assert provider_text.count("snapshot_date,snapshot_id") == 1
+    net_worth_rows = _read_rows(out_dir / "net_worth_history.csv")
+    account_rows = _read_rows(out_dir / "account_nav_history.csv")
+    provider_rows = _read_rows(out_dir / "provider_nav_history.csv")
+    assert [row["snapshot_id"] for row in net_worth_rows] == [
+        "snapshot_append_a",
+        "snapshot_append_b",
+    ]
+    assert {row["snapshot_id"] for row in account_rows} == {
+        "snapshot_append_a",
+        "snapshot_append_b",
+    }
+    assert {row["snapshot_id"] for row in provider_rows} == {
+        "snapshot_append_a",
+        "snapshot_append_b",
+    }
+
+
 def test_missing_account_nav_ledger_fails_closed(tmp_path: Path) -> None:
     merge_dir = tmp_path / "merged"
     merge_dir.mkdir()

@@ -124,7 +124,7 @@ def record_snapshot(
 
     generated_at = generated_at or datetime.now(timezone.utc)
     snapshot_id = snapshot_id or _default_snapshot_id(generated_at)
-    existing_ids = _existing_snapshot_ids(out_dir / "snapshot_manifest.json")
+    existing_ids = _existing_snapshot_ids(out_dir)
     if snapshot_id in existing_ids:
         warnings.append(WarningCode.SNAPSHOT_ID_DUPLICATE)
         return SnapshotStoreResult(
@@ -261,14 +261,20 @@ def _default_snapshot_id(generated_at: datetime) -> str:
     return "snapshot_" + generated_at.strftime("%Y%m%dT%H%M%SZ")
 
 
-def _existing_snapshot_ids(path: Path) -> set[str]:
-    if not path.exists():
-        return set()
-    payload = _read_json(path)
-    if not isinstance(payload, dict):
-        return set()
-    snapshot_id = _clean(payload.get("snapshot_id"))
-    return {snapshot_id} if snapshot_id else set()
+def _existing_snapshot_ids(out_dir: Path) -> set[str]:
+    ids: set[str] = set()
+    manifest = _read_json(out_dir / "snapshot_manifest.json")
+    if isinstance(manifest, dict):
+        snapshot_id = _clean(manifest.get("snapshot_id"))
+        if snapshot_id:
+            ids.add(snapshot_id)
+    history_path = out_dir / "net_worth_history.csv"
+    if history_path.exists():
+        for row in _read_csv(history_path):
+            snapshot_id = _clean(row.get("snapshot_id"))
+            if snapshot_id:
+                ids.add(snapshot_id)
+    return ids
 
 
 def _input_warning_values(
