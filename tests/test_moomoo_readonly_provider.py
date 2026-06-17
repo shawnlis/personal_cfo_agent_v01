@@ -1164,6 +1164,9 @@ def test_moomoo_read_context_probe_selects_us_after_hk_failure(monkeypatch) -> N
         market_names=("HK", "US"),
         security_names=("FUTUSG",),
     )
+    import personal_cfo_agent.providers.moomoo_account_discovery as discovery_module
+
+    _patch_discovery_socket(monkeypatch, discovery_module)
     _set_valid_moomoo_env(monkeypatch)
 
     diagnostics = run_moomoo_read_context_probe(_valid_env())
@@ -1235,6 +1238,9 @@ def test_moomoo_read_context_probe_cli_redacts_and_suppresses_sdk_output(
         market_names=("US",),
         security_names=("FUTUSG",),
     )
+    import personal_cfo_agent.providers.moomoo_account_discovery as discovery_module
+
+    _patch_discovery_socket(monkeypatch, discovery_module)
     _set_valid_moomoo_env(monkeypatch)
 
     exit_code = main(["--provider", "moomoo", "--read-context-probe"])
