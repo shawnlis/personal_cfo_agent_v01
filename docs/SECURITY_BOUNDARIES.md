@@ -48,3 +48,7 @@ v0.4.3 property and mortgage snapshots are offline manual-input only. They read 
 ## Singapore Retirement Tax Snapshot Rule
 
 v0.4.4 Singapore CPF, SRS, tax, and HDB loan snapshots are offline manual-input or user-export-derived only. They read local JSON/CSV files, write generated ledgers under ignored `reports/` paths, and must not connect to CPF, IRAS, HDB, SingPass, banks, browsers, brokers, or external accounts. Tax records are informational and review-only, not filing or advice. NRIC, FIN, raw government identifiers, raw account numbers, login details, secrets, exact local values in docs, and generated reports must not be committed. Labels, availability flags, and hashes are allowed.
+
+## Dashboard v3 Rule
+
+v0.5.0 Dashboard v3 is offline reporting only. It reads existing v0.3.3 merged account NAV outputs, v0.4.2 snapshot history, optional v0.4.3 property/mortgage outputs, and optional v0.4.4 Singapore manual snapshot outputs under ignored `reports/` paths. It must not connect to brokers, banks, CPF, IRAS, HDB, SingPass, browsers, or external accounts; must not trade, move cash, file taxes, create scheduler jobs, or produce recommendation output; and must not commit generated reports or raw identifiers.

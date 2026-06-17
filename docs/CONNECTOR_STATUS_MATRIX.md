@@ -28,6 +28,10 @@ v0.4.3 adds an offline manual property and mortgage snapshot foundation. It cons
 
 v0.4.4 adds an offline manual Singapore CPF, SRS, tax, and HDB loan snapshot foundation. It consumes user-supplied local JSON/CSV files or user-export-derived files, writes CPF, SRS, tax review, HDB loan, summary, and warning outputs under ignored `reports/` paths, and does not add CPF, IRAS, HDB, SingPass, bank, browser, broker, trading, tax filing, cash movement, scheduler, or recommendation workflows.
 
+## Dashboard v3
+
+v0.5.0 adds an integrated offline net worth dashboard over v0.3.3 account NAV merge outputs, v0.4.2 snapshot history, v0.4.3 property/mortgage snapshots, and v0.4.4 Singapore manual snapshots. Account NAV and snapshot history remain primary. Property, CPF, SRS, tax, and HDB loan data are offline manual review layers. It does not add broker, bank, CPF, IRAS, HDB, SingPass, browser, trading, tax filing, cash movement, scheduler, or recommendation workflows.
+
 ## Unsupported Until Official API Verified
 
 | Platform | Status | Method | Priority | Notes |
