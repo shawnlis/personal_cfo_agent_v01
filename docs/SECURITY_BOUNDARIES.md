@@ -40,3 +40,7 @@ v0.4.0 Dashboard v2 is offline only. It reads existing v0.3.3 merged account NAV
 ## Snapshot Store Rule
 
 v0.4.2 snapshot store is offline only. It reads existing merged account NAV and Dashboard v2 outputs under ignored `reports/` paths, appends local net worth history artifacts under ignored `reports/` paths, and must not connect to brokers, call broker SDKs, run Moomoo account discovery, move cash, place orders, create scheduler jobs, or produce recommendation output. Raw account IDs are forbidden; `account_id_hash` is allowed.
+
+## Property Mortgage Snapshot Rule
+
+v0.4.3 property and mortgage snapshots are offline manual-input only. They read local property and mortgage JSON/CSV files, write generated ledgers under ignored `reports/` paths, and must not connect to banks, HDB, SingPass, browsers, brokers, or external accounts. Raw addresses, loan account numbers, login details, secrets, exact local values in docs, and generated reports must not be committed. Labels and hashes are allowed.

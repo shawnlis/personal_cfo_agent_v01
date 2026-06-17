@@ -20,6 +20,10 @@ v0.4.0 Dashboard v2 is an offline account-NAV-first dashboard over v0.3.3 merged
 
 v0.4.2 adds an offline snapshot store for local net worth history. It consumes v0.3.3 merged account NAV outputs and optional v0.4.0 Dashboard v2 outputs, then writes immutable local history artifacts under ignored `reports/` paths. It does not add broker connectivity, live reads, trading workflows, cash movement, scheduler automation, or recommendation output.
 
+## Property And Mortgage Snapshot
+
+v0.4.3 adds an offline manual property and mortgage snapshot foundation. It consumes user-supplied local JSON/CSV files with labels and hashes only, writes property asset, mortgage liability, and equity summary outputs under ignored `reports/` paths, and does not add bank, HDB, SingPass, browser, broker, trading, cash movement, scheduler, or recommendation workflows.
+
 ## Unsupported Until Official API Verified
 
 | Platform | Status | Method | Priority | Notes |
@@ -32,5 +36,5 @@ v0.4.2 adds an offline snapshot store for local net worth history. It consumes v
 | Platform | Status | Method | Priority | Notes |
 | --- | --- | --- | --- | --- |
 | CPF / IRAS / HDB | indirect_via_sgfindex_or_manual_snapshot | SGFinDex user-facing aggregation / manual update | manual only | do not automate Singpass or scrape government portals |
-| Residential property | manual_snapshot | manual valuation snapshot | manual only | fields: property_name, estimated_value, valuation_date, valuation_source, mortgage_linked, notes |
-| Mortgage | manual_snapshot | manual balance snapshot initially | manual only | fields: lender, outstanding_balance, interest_rate, monthly_payment, repricing_date, maturity_date, notes |
+| Residential property | manual_snapshot | manual valuation snapshot | manual only | v0.4.3 supports local JSON/CSV manual snapshots with labels and hashes only; no raw address required |
+| Mortgage | manual_snapshot | manual balance snapshot initially | manual only | v0.4.3 supports local JSON/CSV manual snapshots with hashed loan id and optional hashed property link |

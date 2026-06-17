@@ -1,0 +1,18 @@
+{
+  "properties": [
+    {
+      "property_id_hash": "prop_synthetic_home_hash",
+      "label": "Synthetic home",
+      "type": "residential_property",
+      "country": "SG",
+      "area": "Synthetic area",
+      "ownership_pct": 0.5,
+      "valuation_amount": 1000000,
+      "currency": "SGD",
+      "valuation_date": "2026-06-16",
+      "source": "synthetic_fixture",
+      "confidence": "synthetic",
+      "review_required": true
+    }
+  ]
+}
