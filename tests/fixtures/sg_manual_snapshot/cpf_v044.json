@@ -1,0 +1,16 @@
+{
+  "cpf": [
+    {
+      "snapshot_date": "2026-06-16",
+      "oa": "1000.00",
+      "sa": "2000.00",
+      "ma": "3000.00",
+      "ra": "0.00",
+      "total": "6000.00",
+      "currency": "SGD",
+      "source_type": "synthetic_manual_fixture",
+      "source_date": "2026-06-16",
+      "review_required": true
+    }
+  ]
+}

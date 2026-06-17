@@ -1,0 +1,15 @@
+{
+  "hdb_loans": [
+    {
+      "snapshot_date": "2026-06-16",
+      "loan_id_hash": "loan_synthetic_hdb_hash",
+      "linked_property_id_hash": "prop_synthetic_home_hash",
+      "monthly_installment_available": true,
+      "outstanding_balance_available": true,
+      "currency": "SGD",
+      "source_type": "synthetic_manual_fixture",
+      "source_date": "2026-06-16",
+      "review_required": true
+    }
+  ]
+}

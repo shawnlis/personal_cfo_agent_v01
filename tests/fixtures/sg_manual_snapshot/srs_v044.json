@@ -1,0 +1,16 @@
+{
+  "srs_accounts": [
+    {
+      "snapshot_date": "2026-06-16",
+      "provider_label": "Synthetic SRS provider",
+      "cash": "500.00",
+      "investments_value": "1500.00",
+      "total": "2000.00",
+      "contribution_ytd": "100.00",
+      "currency": "SGD",
+      "source_type": "synthetic_manual_fixture",
+      "source_date": "2026-06-16",
+      "review_required": true
+    }
+  ]
+}

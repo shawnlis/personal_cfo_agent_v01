@@ -44,3 +44,7 @@ v0.4.2 snapshot store is offline only. It reads existing merged account NAV and 
 ## Property Mortgage Snapshot Rule
 
 v0.4.3 property and mortgage snapshots are offline manual-input only. They read local property and mortgage JSON/CSV files, write generated ledgers under ignored `reports/` paths, and must not connect to banks, HDB, SingPass, browsers, brokers, or external accounts. Raw addresses, loan account numbers, login details, secrets, exact local values in docs, and generated reports must not be committed. Labels and hashes are allowed.
+
+## Singapore Retirement Tax Snapshot Rule
+
+v0.4.4 Singapore CPF, SRS, tax, and HDB loan snapshots are offline manual-input or user-export-derived only. They read local JSON/CSV files, write generated ledgers under ignored `reports/` paths, and must not connect to CPF, IRAS, HDB, SingPass, banks, browsers, brokers, or external accounts. Tax records are informational and review-only, not filing or advice. NRIC, FIN, raw government identifiers, raw account numbers, login details, secrets, exact local values in docs, and generated reports must not be committed. Labels, availability flags, and hashes are allowed.

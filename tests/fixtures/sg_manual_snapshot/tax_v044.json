@@ -1,0 +1,14 @@
+{
+  "tax_records": [
+    {
+      "year_of_assessment": "2026",
+      "assessable_income_available": true,
+      "tax_payable_available": true,
+      "tax_paid_available": false,
+      "reliefs_available": true,
+      "source_type": "synthetic_manual_fixture",
+      "source_date": "2026-06-16",
+      "review_required": true
+    }
+  ]
+}
