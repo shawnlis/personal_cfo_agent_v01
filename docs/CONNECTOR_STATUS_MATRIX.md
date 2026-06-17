@@ -24,6 +24,10 @@ v0.4.2 adds an offline snapshot store for local net worth history. It consumes v
 
 v0.4.3 adds an offline manual property and mortgage snapshot foundation. It consumes user-supplied local JSON/CSV files with labels and hashes only, writes property asset, mortgage liability, and equity summary outputs under ignored `reports/` paths, and does not add bank, HDB, SingPass, browser, broker, trading, cash movement, scheduler, or recommendation workflows.
 
+## Singapore Retirement Tax Snapshot
+
+v0.4.4 adds an offline manual Singapore CPF, SRS, tax, and HDB loan snapshot foundation. It consumes user-supplied local JSON/CSV files or user-export-derived files, writes CPF, SRS, tax review, HDB loan, summary, and warning outputs under ignored `reports/` paths, and does not add CPF, IRAS, HDB, SingPass, bank, browser, broker, trading, tax filing, cash movement, scheduler, or recommendation workflows.
+
 ## Unsupported Until Official API Verified
 
 | Platform | Status | Method | Priority | Notes |
@@ -38,3 +42,4 @@ v0.4.3 adds an offline manual property and mortgage snapshot foundation. It cons
 | CPF / IRAS / HDB | indirect_via_sgfindex_or_manual_snapshot | SGFinDex user-facing aggregation / manual update | manual only | do not automate Singpass or scrape government portals |
 | Residential property | manual_snapshot | manual valuation snapshot | manual only | v0.4.3 supports local JSON/CSV manual snapshots with labels and hashes only; no raw address required |
 | Mortgage | manual_snapshot | manual balance snapshot initially | manual only | v0.4.3 supports local JSON/CSV manual snapshots with hashed loan id and optional hashed property link |
+| CPF / SRS / tax / HDB loan | manual_snapshot | local manual or user-export-derived snapshot | manual only | v0.4.4 supports local JSON/CSV manual snapshots; no CPF/IRAS/HDB/SingPass/browser automation, tax filing, or advice |

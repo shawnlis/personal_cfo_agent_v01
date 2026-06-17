@@ -68,6 +68,10 @@ from personal_cfo_agent.property_mortgage_snapshot import (
 )
 from personal_cfo_agent.report_writer import write_report_bundle
 from personal_cfo_agent.risk_engine import calculate_risk_summary
+from personal_cfo_agent.sg_manual_snapshot import (
+    SGManualSnapshotResult,
+    record_sg_manual_snapshot,
+)
 from personal_cfo_agent.snapshot_store import SnapshotStoreResult, record_snapshot
 
 
@@ -406,6 +410,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Record an offline v0.4.3 manual property and mortgage snapshot.",
     )
     parser.add_argument(
+        "--sg-manual-snapshot",
+        action="store_true",
+        help="Record an offline v0.4.4 manual Singapore CPF/SRS/tax/HDB snapshot.",
+    )
+    parser.add_argument(
         "--property-input",
         type=Path,
         default=None,
@@ -416,6 +425,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Mortgage input JSON or CSV for --property-mortgage-snapshot.",
+    )
+    parser.add_argument(
+        "--cpf-input",
+        type=Path,
+        default=None,
+        help="CPF input JSON or CSV for --sg-manual-snapshot.",
+    )
+    parser.add_argument(
+        "--srs-input",
+        type=Path,
+        default=None,
+        help="SRS input JSON or CSV for --sg-manual-snapshot.",
+    )
+    parser.add_argument(
+        "--tax-input",
+        type=Path,
+        default=None,
+        help="Tax input JSON or CSV for --sg-manual-snapshot.",
+    )
+    parser.add_argument(
+        "--hdb-loan-input",
+        type=Path,
+        default=None,
+        help="HDB loan input JSON or CSV for --sg-manual-snapshot.",
     )
     parser.add_argument(
         "--input-dir",
@@ -469,6 +502,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    if args.sg_manual_snapshot:
+        return _sg_manual_snapshot_cli(args, parser)
     if args.property_mortgage_snapshot:
         return _property_mortgage_snapshot_cli(args, parser)
     if args.merge_provider_bundles:
@@ -758,6 +793,52 @@ def _property_mortgage_snapshot_cli(
     return 0 if result.generated else 1
 
 
+def _sg_manual_snapshot_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    if args.allow_live_read:
+        parser.error("--sg-manual-snapshot cannot be combined with --allow-live-read")
+    if args.readiness_check or args.connection_diagnostics:
+        parser.error(
+            "--sg-manual-snapshot cannot be combined with readiness or connection diagnostics"
+        )
+    if args.account_discovery or args.read_context_probe:
+        parser.error("--sg-manual-snapshot cannot be combined with Moomoo discovery probes")
+    if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
+        parser.error("--sg-manual-snapshot cannot be combined with data diagnostics")
+    if (
+        args.merge_provider_bundles
+        or args.dashboard_v2
+        or args.dashboard
+        or args.record_snapshot
+        or args.property_mortgage_snapshot
+    ):
+        parser.error("--sg-manual-snapshot cannot be combined with other report generators")
+    if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
+        parser.error("--sg-manual-snapshot cannot be combined with manual snapshot utilities")
+    if args.cpf_input is None:
+        parser.error("--sg-manual-snapshot requires --cpf-input")
+    if args.srs_input is None:
+        parser.error("--sg-manual-snapshot requires --srs-input")
+    if args.tax_input is None:
+        parser.error("--sg-manual-snapshot requires --tax-input")
+    if args.hdb_loan_input is None:
+        parser.error("--sg-manual-snapshot requires --hdb-loan-input")
+    if args.out_dir is None:
+        parser.error("--sg-manual-snapshot requires --out-dir")
+
+    result = record_sg_manual_snapshot(
+        cpf_input=args.cpf_input,
+        srs_input=args.srs_input,
+        tax_input=args.tax_input,
+        hdb_loan_input=args.hdb_loan_input,
+        out_dir=args.out_dir,
+    )
+    for line in _format_sg_manual_snapshot_result(result):
+        print(line)
+    return 0 if result.generated else 1
+
+
 def _format_dashboard_v2_result(result: DashboardV2Result) -> list[str]:
     warnings = ", ".join(code.value for code in result.warning_codes) or "None"
     lines = [
@@ -793,6 +874,31 @@ def _format_property_mortgage_snapshot_result(
         f"Property count: {result.property_count}",
         f"Mortgage count: {result.mortgage_count}",
         f"Unlinked mortgage count: {result.unlinked_mortgage_count}",
+        f"Warning codes: {warnings}",
+    ]
+    if result.output_paths:
+        lines.append(
+            "Output files: "
+            + ", ".join(path.name for path in sorted(result.output_paths.values()))
+        )
+    return lines
+
+
+def _format_sg_manual_snapshot_result(result: SGManualSnapshotResult) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    lines = [
+        "Personal CFO Singapore Manual Snapshot v0.4.4 (offline)",
+        "External connections used: no",
+        f"CPF input: {result.cpf_input}",
+        f"SRS input: {result.srs_input}",
+        f"Tax input: {result.tax_input}",
+        f"HDB loan input: {result.hdb_loan_input}",
+        f"Output directory: {result.output_dir or ''}",
+        f"Snapshot generated: {'yes' if result.generated else 'no'}",
+        f"CPF rows: {result.cpf_count}",
+        f"SRS rows: {result.srs_count}",
+        f"Tax rows: {result.tax_count}",
+        f"HDB loan rows: {result.hdb_loan_count}",
         f"Warning codes: {warnings}",
     ]
     if result.output_paths:
