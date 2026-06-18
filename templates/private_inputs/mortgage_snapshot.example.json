@@ -1,0 +1,18 @@
+{
+  "mortgages": [
+    {
+      "loan_id_hash": "loan_placeholder_hash",
+      "linked_property_id_hash": "prop_placeholder_hash",
+      "lender_label": "Placeholder lender label",
+      "outstanding_balance": "0.00",
+      "currency": "SGD",
+      "interest_rate": "0.00",
+      "rate_type": "manual_review_required",
+      "monthly_payment": "0.00",
+      "repricing_date": "2026-01-01",
+      "maturity_date": "2026-01-01",
+      "snapshot_date": "2026-01-01",
+      "review_required": true
+    }
+  ]
+}
