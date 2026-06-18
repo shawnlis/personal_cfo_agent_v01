@@ -245,6 +245,27 @@ def write_dashboard_v3(
         "unlinked_mortgage_liabilities_available": (
             "yes" if unlinked_mortgage_liabilities is not None else "no"
         ),
+        "latest_snapshot_date": _clean(latest_snapshot.get("snapshot_date")),
+        "latest_snapshot_id": _clean(latest_snapshot.get("snapshot_id")),
+        "provider_names": sorted(
+            {provider for row in account_rows if (provider := _clean(row.get("provider")))}
+        ),
+        "layer_status": _layer_status(
+            dashboard_summary=dashboard_summary,
+            property_summary=property_summary,
+            sg_summary=sg_summary,
+            summary_counts={
+                "account_count": len(account_rows),
+                "provider_count": len({row.get("provider") for row in account_rows if row.get("provider")}),
+                "net_worth_history_count": len(net_worth_rows),
+                "property_count": _parse_int(property_summary.get("property_count")) or 0,
+                "mortgage_count": _parse_int(property_summary.get("mortgage_count")) or 0,
+                "cpf_count": len(cpf_rows),
+                "srs_count": len(srs_rows),
+                "tax_count": len(tax_rows),
+                "hdb_loan_count": len(hdb_rows),
+            },
+        ),
         "warning_codes": [code.value for code in warnings],
     }
 
@@ -491,6 +512,87 @@ def _breakdown_row(
     }
 
 
+def _layer_status(
+    *,
+    dashboard_summary: dict[str, Any],
+    property_summary: dict[str, Any],
+    sg_summary: dict[str, Any],
+    summary_counts: dict[str, int],
+) -> list[dict[str, str]]:
+    return [
+        {
+            "layer": "merged_account_nav",
+            "status": "present" if summary_counts["account_count"] else "missing",
+            "role": "primary",
+            "row_summary": f"{summary_counts['account_count']} account rows; {summary_counts['provider_count']} providers",
+        },
+        {
+            "layer": "snapshot_history",
+            "status": "present" if summary_counts["net_worth_history_count"] else "missing",
+            "role": "primary",
+            "row_summary": f"{summary_counts['net_worth_history_count']} history rows",
+        },
+        {
+            "layer": "dashboard_v2_summary",
+            "status": "present" if dashboard_summary else "missing",
+            "role": "supporting",
+            "row_summary": f"{_parse_int(dashboard_summary.get('account_count')) or 0} account rows",
+        },
+        {
+            "layer": "property_mortgage",
+            "status": _manual_layer_status(property_summary, "property_count", "mortgage_count"),
+            "role": "manual/fixture review layer",
+            "row_summary": (
+                f"{summary_counts['property_count']} property rows; "
+                f"{summary_counts['mortgage_count']} mortgage rows"
+            ),
+        },
+        {
+            "layer": "sg_manual_snapshot",
+            "status": _manual_layer_status(sg_summary, "cpf_count", "srs_count"),
+            "role": "manual/fixture review layer",
+            "row_summary": (
+                f"{summary_counts['cpf_count']} CPF rows; {summary_counts['srs_count']} SRS rows; "
+                f"{summary_counts['tax_count']} tax rows; {summary_counts['hdb_loan_count']} HDB loan rows"
+            ),
+        },
+    ]
+
+
+def _manual_layer_status(summary: dict[str, Any], *count_fields: str) -> str:
+    if not summary:
+        return "missing"
+    if _clean(summary.get("review_required")) == "yes":
+        return "review_required"
+    for field in count_fields:
+        if _parse_int(summary.get(field)):
+            return "present"
+    return "present"
+
+
+def _summary_layer_status(summary: dict[str, Any]) -> list[dict[str, str]]:
+    rows = summary.get("layer_status")
+    return rows if isinstance(rows, list) else []
+
+
+def _layer_status_text(summary: dict[str, Any], layer: str) -> str:
+    for row in _summary_layer_status(summary):
+        if row.get("layer") == layer:
+            return _clean(row.get("status")) or "unknown"
+    return "unknown"
+
+
+def _provider_text(summary: dict[str, Any]) -> str:
+    providers = summary.get("provider_names")
+    if not isinstance(providers, list) or not providers:
+        return "not available"
+    return ", ".join(_clean(provider) for provider in providers if _clean(provider))
+
+
+def _summary_text(summary: dict[str, Any], field: str) -> str:
+    return _clean(summary.get(field)) or "not available"
+
+
 def _markdown(
     *,
     summary: dict[str, Any],
@@ -507,17 +609,26 @@ def _markdown(
         "Property, CPF, SRS, tax, and HDB layers are manual offline review layers.",
         "No external account connection, browser automation, market execution, filing, or action workflow is used.",
         "",
-        "## Summary",
-        f"- Account count: {summary['account_count']}",
-        f"- Provider count: {summary['provider_count']}",
-        f"- Position rows: {summary['position_count']}",
+        "## CFO Cockpit",
+        f"- Total net worth available: {summary['total_net_worth_available']}",
+        f"- Liquid/investable assets available: {summary['liquid_investable_assets_available']}",
+        f"- Property equity available: {summary['property_equity_available']}",
+        f"- Retirement assets available: {summary['retirement_assets_available']}",
+        f"- Liabilities available: {summary['liabilities_available']}",
+        f"- Review required: {'yes' if WarningCode.DASHBOARD_V3_REVIEW_REQUIRED in warnings else 'no'}",
+        "",
+        "## Data Source Layer Status",
+        *[
+            f"- {row['layer']}: {row['status']} ({row['role']}; {row['row_summary']})"
+            for row in _summary_layer_status(summary)
+        ],
+        "",
+        "## Data Freshness",
+        f"- Latest snapshot date: {_summary_text(summary, 'latest_snapshot_date')}",
+        f"- Latest snapshot id available: {'yes' if _clean(summary.get('latest_snapshot_id')) else 'no'}",
         f"- Net worth history rows: {summary['net_worth_history_count']}",
-        f"- Property rows: {summary['property_count']}",
-        f"- Mortgage rows: {summary['mortgage_count']}",
-        f"- CPF rows: {summary['cpf_count']}",
-        f"- SRS rows: {summary['srs_count']}",
-        f"- Tax rows: {summary['tax_count']}",
-        f"- HDB loan rows: {summary['hdb_loan_count']}",
+        f"- Account NAV rows: {summary['account_count']}",
+        f"- Provider rows: {summary['provider_count']}",
         "",
         "## Dashboard Sections",
         "- Total net worth",
@@ -531,14 +642,53 @@ def _markdown(
         "- Stale, missing, and review-required warnings",
         "- Position, property, CPF, and SRS drilldowns",
         "",
-        "## Layer Breakdown",
+        "## Net Worth Progress",
+        f"- History-first output rows: {summary['net_worth_history_count']}",
+        "- The CSV output keeps the numeric progression in `net_worth_progress.csv`.",
+        "- Latest integrated row combines account NAV with available manual layers.",
+        "",
+        "## Balance Sheet Breakdown",
+        "- Primary account NAV remains separate from manual property, CPF, SRS, and liability layers.",
+        "- Linked mortgage liability is shown as drilldown context and is not double-counted against property equity.",
+        "- The CSV output keeps the structured balance sheet in `balance_sheet_summary.csv` and `asset_liability_breakdown.csv`.",
+        "",
+        "## Provider And Account NAV Summary",
+        f"- Providers detected: {_provider_text(summary)}",
+        f"- Dashboard v2 summary present: {'yes' if summary.get('dashboard_v2_summary_present') else 'no'}",
+        f"- Dashboard v2 account count: {summary['dashboard_v2_account_count']}",
+        f"- Dashboard v2 provider count: {summary['dashboard_v2_provider_count']}",
+        f"- Dashboard v2 position count: {summary['dashboard_v2_position_count']}",
+        "",
+        "## Property And Mortgage Review",
+        f"- Property rows: {summary['property_count']}",
+        f"- Mortgage rows: {summary['mortgage_count']}",
+        f"- Property/mortgage layer status: {_layer_status_text(summary, 'property_mortgage')}",
+        "",
+        "## Singapore Manual Snapshot Review",
+        f"- CPF rows: {summary['cpf_count']}",
+        f"- SRS rows: {summary['srs_count']}",
+        f"- Tax rows: {summary['tax_count']}",
+        f"- HDB loan rows: {summary['hdb_loan_count']}",
+        f"- Singapore manual layer status: {_layer_status_text(summary, 'sg_manual_snapshot')}",
+        "",
+        "## Layer Drilldown Counts",
     ]
     for row in breakdown_rows:
         lines.append(
             f"- {row['layer']} / {row['item_type']}: {row['item_label']} "
             f"({row['row_count']} rows)"
         )
-    lines.extend(["", "## Warning Codes"])
+    lines.extend(
+        [
+            "",
+            "## Warning Summary",
+            f"- Warning count: {len(warnings)}",
+            f"- Review required: {'yes' if WarningCode.DASHBOARD_V3_REVIEW_REQUIRED in warnings else 'no'}",
+            "- Warning details are also written to `dashboard_v050_warnings.md`.",
+            "",
+            "## Warning Codes",
+        ]
+    )
     lines.extend(f"- {code.value}" for code in warnings)
     return "\n".join(lines) + "\n"
 
@@ -558,14 +708,30 @@ def _html(markdown: str) -> str:
             body.append(f"<p>{escaped}</p>")
     return (
         "<!doctype html>\n<html><head><meta charset=\"utf-8\">"
-        "<title>Personal CFO Dashboard v0.5.0</title></head><body>\n"
+        "<title>Personal CFO Dashboard v0.5.0</title>"
+        "<style>"
+        "body{font-family:Segoe UI,Arial,sans-serif;line-height:1.5;margin:0;background:#f7f7f5;color:#1f2933;}"
+        "main{max-width:1040px;margin:0 auto;padding:32px 24px 56px;}"
+        "h1{font-size:32px;margin:0 0 16px;}h2{font-size:21px;margin:28px 0 10px;border-top:1px solid #d9ded8;padding-top:18px;}"
+        "p{margin:7px 0;}p:nth-child(n+2){max-width:920px;}"
+        "</style></head><body><main>\n"
         + "\n".join(body)
-        + "\n</body></html>\n"
+        + "\n</main></body></html>\n"
     )
 
 
 def _write_warnings(path: Path, warnings: list[WarningCode]) -> None:
-    lines = ["# Dashboard v3 Warnings", "", DASHBOARD_V3_STATEMENT, "", "## Warning Codes"]
+    lines = [
+        "# Dashboard v3 Warnings",
+        "",
+        DASHBOARD_V3_STATEMENT,
+        "",
+        "## Warning Summary",
+        f"- Warning count: {len(warnings)}",
+        f"- Review required: {'yes' if WarningCode.DASHBOARD_V3_REVIEW_REQUIRED in warnings else 'no'}",
+        "",
+        "## Warning Codes",
+    ]
     lines.extend(f"- {code.value}" for code in warnings)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

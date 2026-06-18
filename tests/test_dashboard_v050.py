@@ -85,6 +85,13 @@ def test_dashboard_v3_generates_from_all_fixture_layers(tmp_path: Path) -> None:
     summary = json.loads(result.output_paths["dashboard_summary"].read_text(encoding="utf-8"))
     assert summary["dashboard_v2_summary_present"] is True
     assert summary["dashboard_v2_account_count"] == 4
+    assert summary["latest_snapshot_date"]
+    assert summary["provider_names"] == ["ibkr", "manual_snapshot", "moomoo", "tiger"]
+    layer_status = {row["layer"]: row for row in summary["layer_status"]}
+    assert layer_status["merged_account_nav"]["status"] == "present"
+    assert layer_status["snapshot_history"]["role"] == "primary"
+    assert layer_status["property_mortgage"]["status"] == "review_required"
+    assert layer_status["sg_manual_snapshot"]["status"] == "review_required"
 
 
 def test_dashboard_v3_writes_expected_csv_shapes_and_consistent_balance_sheet(
@@ -207,6 +214,44 @@ def test_dashboard_v3_cli_generates_fixture_dashboard_without_local_env(
     assert "Broker connections used: no" in captured
     assert "Loaded local environment" not in captured
     assert "Dashboard generated: yes" in captured
+
+
+def test_dashboard_v3_markdown_and_html_show_readable_sections(tmp_path: Path) -> None:
+    dirs = _generate_fixture_chain(tmp_path)
+
+    result = write_dashboard_v3(
+        merge_dir=dirs["merged"],
+        snapshot_dir=dirs["snapshot"],
+        dashboard_dir=dirs["dashboard_v2"],
+        property_mortgage_dir=dirs["property"],
+        sg_snapshot_dir=dirs["sg"],
+        out_dir=tmp_path / "dashboard_v3",
+    )
+
+    markdown = result.output_paths["markdown_report"].read_text(encoding="utf-8")
+    html = result.output_paths["html_report"].read_text(encoding="utf-8")
+    expected_sections = (
+        "## CFO Cockpit",
+        "## Data Source Layer Status",
+        "## Data Freshness",
+        "## Net Worth Progress",
+        "## Balance Sheet Breakdown",
+        "## Provider And Account NAV Summary",
+        "## Property And Mortgage Review",
+        "## Singapore Manual Snapshot Review",
+        "## Warning Summary",
+    )
+    for section in expected_sections:
+        assert section in markdown
+        assert section.removeprefix("## ") in html
+    assert "merged_account_nav: present" in markdown
+    assert "property_mortgage: review_required" in markdown
+    assert "sg_manual_snapshot: review_required" in markdown
+    assert "Latest snapshot date:" in markdown
+    assert "Warning count:" in markdown
+    assert "dashboard_v050_warnings.md" in markdown
+    assert "<style>" in html
+    assert "<main>" in html
 
 
 def test_dashboard_v3_cli_rejects_live_discovery_and_other_generators(tmp_path: Path) -> None:
