@@ -41,7 +41,16 @@ Dashboard v3 writes these files under the requested ignored `reports/` output pa
 
 ## Sections
 
-The dashboard includes total net worth, liquid/investable assets when available, property equity, CPF/SRS retirement assets, liabilities, net worth history, account/provider NAV history, balance sheet breakdown, review warnings, and position/property/CPF/SRS drilldown counts.
+The dashboard includes a CFO cockpit, data source layer status, freshness panel, net worth progress, provider/account NAV summary, balance sheet breakdown, property/mortgage review, Singapore manual snapshot review, warning summary, and position/property/CPF/SRS drilldown counts.
+
+The v0.5.2 readability pass keeps the existing output filenames and core data semantics. It improves the Markdown and static HTML reports so a local review can quickly distinguish:
+
+- Primary local layers: merged account NAV, Dashboard v2 summary, and snapshot history.
+- Manual or fixture review layers: property/mortgage and Singapore CPF/SRS/tax/HDB snapshots.
+- Review-required warning state and stale/missing layer signals.
+- Linked mortgage context versus extra unlinked liabilities, without changing account NAV or snapshot history semantics.
+
+The HTML report remains static/local and dependency-light. It does not load remote assets, upload data, or require a browser automation workflow.
 
 ## Warning Codes
 
@@ -58,4 +67,4 @@ The dashboard includes total net worth, liquid/investable assets when available,
 
 ## Boundaries
 
-Dashboard v3 is reporting only. It must not include raw account IDs, NRIC, FIN, raw government identifiers, raw property addresses, secrets, or generated real reports in Git. `account_id_hash`, property hashes, loan hashes, availability flags, counts, and synthetic fixture values are allowed.
+Dashboard v3 is reporting only. It must not include raw account IDs, NRIC, FIN, raw government identifiers, raw property addresses, secrets, or generated real reports in Git. `account_id_hash`, property hashes, loan hashes, availability flags, counts, and synthetic fixture values are allowed. The dashboard must not create action instructions or tax filing output.
