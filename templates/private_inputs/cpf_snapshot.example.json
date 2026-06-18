@@ -1,0 +1,16 @@
+{
+  "cpf": [
+    {
+      "snapshot_date": "2026-01-01",
+      "oa": "0.00",
+      "sa": "0.00",
+      "ma": "0.00",
+      "ra": "0.00",
+      "total": "0.00",
+      "currency": "SGD",
+      "source_type": "local_manual_placeholder",
+      "source_date": "2026-01-01",
+      "review_required": true
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "hdb_loans": [
+    {
+      "snapshot_date": "2026-01-01",
+      "loan_id_hash": "hdb_loan_placeholder_hash",
+      "linked_property_id_hash": "prop_placeholder_hash",
+      "monthly_installment_available": false,
+      "outstanding_balance_available": false,
+      "currency": "SGD",
+      "source_type": "local_manual_placeholder",
+      "source_date": "2026-01-01",
+      "review_required": true
+    }
+  ]
+}

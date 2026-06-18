@@ -52,6 +52,10 @@ The v0.5.2 readability pass keeps the existing output filenames and core data se
 
 The HTML report remains static/local and dependency-light. It does not load remote assets, upload data, or require a browser automation workflow.
 
+## Local Private Inputs
+
+v0.5.3 adds a local private input kit for preparing real manual property/mortgage and Singapore CPF/SRS/tax/HDB input files without committing them. Use `docs/LOCAL_PRIVATE_INPUT_KIT_V053.md` to initialize ignored local templates, edit them locally, validate them without printing private values, and run the offline manual snapshot chain before feeding those generated layers into Dashboard v3.
+
 ## Warning Codes
 
 - `DASHBOARD_V3_INPUT_MISSING`

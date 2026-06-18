@@ -1,0 +1,17 @@
+{
+  "srs_accounts": [
+    {
+      "snapshot_date": "2026-01-01",
+      "provider_label": "Placeholder SRS provider label",
+      "cash": "0.00",
+      "investments_value": "0.00",
+      "total": "0.00",
+      "contribution_ytd": "0.00",
+      "currency": "SGD",
+      "tax_wrapper": true,
+      "source_type": "local_manual_placeholder",
+      "source_date": "2026-01-01",
+      "review_required": true
+    }
+  ]
+}
