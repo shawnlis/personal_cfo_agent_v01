@@ -19,6 +19,7 @@ from personal_cfo_agent.config import (
 )
 from personal_cfo_agent.dashboard import write_dashboard
 from personal_cfo_agent.dashboard_v2 import DashboardV2Result, write_dashboard_v2
+from personal_cfo_agent.dashboard_v3 import DashboardV3Result, write_dashboard_v3
 from personal_cfo_agent.manual_snapshot import (
     ManualSnapshotReadError,
     ManualSnapshotValidationError,
@@ -400,6 +401,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Write the v0.4.0 account NAV dashboard from a v0.3.3 merged ledger bundle.",
     )
     parser.add_argument(
+        "--dashboard-v3",
+        action="store_true",
+        help="Write the v0.5.0 integrated net worth dashboard from offline local bundles.",
+    )
+    parser.add_argument(
         "--record-snapshot",
         action="store_true",
         help="Record an offline v0.4.2 net worth history snapshot from merged account NAV outputs.",
@@ -474,6 +480,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Optional immutable snapshot id for --record-snapshot.",
     )
     parser.add_argument(
+        "--snapshot-dir",
+        type=Path,
+        default=None,
+        help="Snapshot history input directory for --dashboard-v3.",
+    )
+    parser.add_argument(
+        "--property-mortgage-dir",
+        type=Path,
+        default=None,
+        help="Optional property/mortgage snapshot input directory for --dashboard-v3.",
+    )
+    parser.add_argument(
+        "--sg-snapshot-dir",
+        type=Path,
+        default=None,
+        help="Optional Singapore manual snapshot input directory for --dashboard-v3.",
+    )
+    parser.add_argument(
         "--dashboard-assumptions",
         type=Path,
         default=None,
@@ -502,6 +526,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    if args.dashboard_v3:
+        return _dashboard_v3_cli(args, parser)
     if args.sg_manual_snapshot:
         return _sg_manual_snapshot_cli(args, parser)
     if args.property_mortgage_snapshot:
@@ -720,6 +746,48 @@ def _dashboard_v2_cli(args: argparse.Namespace, parser: argparse.ArgumentParser)
     return 0 if result.generated else 1
 
 
+def _dashboard_v3_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.allow_live_read:
+        parser.error("--dashboard-v3 cannot be combined with --allow-live-read")
+    if args.readiness_check or args.connection_diagnostics:
+        parser.error(
+            "--dashboard-v3 cannot be combined with readiness or connection diagnostics"
+        )
+    if args.account_discovery or args.read_context_probe:
+        parser.error("--dashboard-v3 cannot be combined with Moomoo discovery probes")
+    if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
+        parser.error("--dashboard-v3 cannot be combined with data diagnostics")
+    if (
+        args.merge_provider_bundles
+        or args.dashboard_v2
+        or args.dashboard
+        or args.record_snapshot
+        or args.property_mortgage_snapshot
+        or args.sg_manual_snapshot
+    ):
+        parser.error("--dashboard-v3 cannot be combined with other report generators")
+    if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
+        parser.error("--dashboard-v3 cannot be combined with manual snapshot utilities")
+    if args.merge_dir is None:
+        parser.error("--dashboard-v3 requires --merge-dir")
+    if args.snapshot_dir is None:
+        parser.error("--dashboard-v3 requires --snapshot-dir")
+    if args.out_dir is None:
+        parser.error("--dashboard-v3 requires --out-dir")
+
+    result = write_dashboard_v3(
+        merge_dir=args.merge_dir,
+        snapshot_dir=args.snapshot_dir,
+        dashboard_dir=args.dashboard_dir,
+        property_mortgage_dir=args.property_mortgage_dir,
+        sg_snapshot_dir=args.sg_snapshot_dir,
+        out_dir=args.out_dir,
+    )
+    for line in _format_dashboard_v3_result(result):
+        print(line)
+    return 0 if result.generated else 1
+
+
 def _record_snapshot_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.allow_live_read:
         parser.error("--record-snapshot cannot be combined with --allow-live-read")
@@ -768,7 +836,13 @@ def _property_mortgage_snapshot_cli(
         )
     if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
         parser.error("--property-mortgage-snapshot cannot be combined with data diagnostics")
-    if args.merge_provider_bundles or args.dashboard_v2 or args.dashboard or args.record_snapshot:
+    if (
+        args.merge_provider_bundles
+        or args.dashboard_v2
+        or args.dashboard_v3
+        or args.dashboard
+        or args.record_snapshot
+    ):
         parser.error(
             "--property-mortgage-snapshot cannot be combined with other report generators"
         )
@@ -809,6 +883,7 @@ def _sg_manual_snapshot_cli(
     if (
         args.merge_provider_bundles
         or args.dashboard_v2
+        or args.dashboard_v3
         or args.dashboard
         or args.record_snapshot
         or args.property_mortgage_snapshot
@@ -874,6 +949,39 @@ def _format_property_mortgage_snapshot_result(
         f"Property count: {result.property_count}",
         f"Mortgage count: {result.mortgage_count}",
         f"Unlinked mortgage count: {result.unlinked_mortgage_count}",
+        f"Warning codes: {warnings}",
+    ]
+    if result.output_paths:
+        lines.append(
+            "Output files: "
+            + ", ".join(path.name for path in sorted(result.output_paths.values()))
+        )
+    return lines
+
+
+def _format_dashboard_v3_result(result: DashboardV3Result) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    lines = [
+        "Personal CFO Dashboard v3 v0.5.0 (offline)",
+        "External connections used: no",
+        "Broker connections used: no",
+        f"Merge input directory: {result.merge_dir}",
+        f"Snapshot input directory: {result.snapshot_dir}",
+        f"Dashboard v2 input directory: {result.dashboard_dir or ''}",
+        f"Property/mortgage input directory: {result.property_mortgage_dir or ''}",
+        f"Singapore snapshot input directory: {result.sg_snapshot_dir or ''}",
+        f"Output directory: {result.output_dir or ''}",
+        f"Dashboard generated: {'yes' if result.generated else 'no'}",
+        f"Account count: {result.account_count}",
+        f"Provider count: {result.provider_count}",
+        f"Position rows: {result.position_count}",
+        f"Net worth history rows: {result.net_worth_history_count}",
+        f"Property rows: {result.property_count}",
+        f"Mortgage rows: {result.mortgage_count}",
+        f"CPF rows: {result.cpf_count}",
+        f"SRS rows: {result.srs_count}",
+        f"Tax rows: {result.tax_count}",
+        f"HDB loan rows: {result.hdb_loan_count}",
         f"Warning codes: {warnings}",
     ]
     if result.output_paths:
