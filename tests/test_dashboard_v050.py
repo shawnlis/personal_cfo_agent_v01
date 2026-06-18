@@ -46,7 +46,9 @@ FORBIDDEN_MARKERS = (
     "withdraw_cash",
     "unlock_trade",
     "recommended portfolio",
+    "recommendation",
     "optimal allocation",
+    "advice",
     "buy ",
     "sell ",
 )
@@ -58,6 +60,7 @@ def test_dashboard_v3_generates_from_all_fixture_layers(tmp_path: Path) -> None:
     result = write_dashboard_v3(
         merge_dir=dirs["merged"],
         snapshot_dir=dirs["snapshot"],
+        dashboard_dir=dirs["dashboard_v2"],
         property_mortgage_dir=dirs["property"],
         sg_snapshot_dir=dirs["sg"],
         out_dir=tmp_path / "dashboard_v3",
@@ -79,14 +82,20 @@ def test_dashboard_v3_generates_from_all_fixture_layers(tmp_path: Path) -> None:
     assert result.property_count == 1
     assert result.cpf_count == 1
     assert WarningCode.DASHBOARD_V3_GENERATED_WITH_WARNINGS in result.warning_codes
+    summary = json.loads(result.output_paths["dashboard_summary"].read_text(encoding="utf-8"))
+    assert summary["dashboard_v2_summary_present"] is True
+    assert summary["dashboard_v2_account_count"] == 4
 
 
-def test_dashboard_v3_writes_expected_csv_shapes(tmp_path: Path) -> None:
+def test_dashboard_v3_writes_expected_csv_shapes_and_consistent_balance_sheet(
+    tmp_path: Path,
+) -> None:
     dirs = _generate_fixture_chain(tmp_path)
 
     result = write_dashboard_v3(
         merge_dir=dirs["merged"],
         snapshot_dir=dirs["snapshot"],
+        dashboard_dir=dirs["dashboard_v2"],
         property_mortgage_dir=dirs["property"],
         sg_snapshot_dir=dirs["sg"],
         out_dir=tmp_path / "dashboard_v3",
@@ -101,6 +110,20 @@ def test_dashboard_v3_writes_expected_csv_shapes(tmp_path: Path) -> None:
     assert any(row["category"] == "integrated_net_worth" for row in balance_rows)
     assert any(row["layer"] == "cpf" for row in breakdown_rows)
     assert any(row["layer"] == "property" for row in breakdown_rows)
+    by_category = {row["category"]: row for row in balance_rows}
+    assert by_category["property_equity"]["amount"] == "200000.00"
+    assert by_category["mortgage_liabilities"]["amount"] == ""
+    expected_net_worth = (
+        _number(by_category["account_nav"]["amount"])
+        + _number(by_category["property_equity"]["amount"])
+        + _number(by_category["cpf_retirement_assets"]["amount"])
+        + _number(by_category["srs_retirement_assets"]["amount"])
+    )
+    assert _number(by_category["integrated_net_worth"]["amount"]) == expected_net_worth
+    assert any(
+        row["item_label"] == "gross_mortgage_liabilities" and row["amount"] == "300000.00"
+        for row in breakdown_rows
+    )
 
 
 def test_dashboard_v3_missing_property_snapshot_warns_not_fails(tmp_path: Path) -> None:
@@ -109,6 +132,7 @@ def test_dashboard_v3_missing_property_snapshot_warns_not_fails(tmp_path: Path) 
     result = write_dashboard_v3(
         merge_dir=dirs["merged"],
         snapshot_dir=dirs["snapshot"],
+        dashboard_dir=dirs["dashboard_v2"],
         property_mortgage_dir=tmp_path / "missing_property",
         sg_snapshot_dir=dirs["sg"],
         out_dir=tmp_path / "dashboard_v3",
@@ -124,6 +148,7 @@ def test_dashboard_v3_missing_sg_snapshot_warns_not_fails(tmp_path: Path) -> Non
     result = write_dashboard_v3(
         merge_dir=dirs["merged"],
         snapshot_dir=dirs["snapshot"],
+        dashboard_dir=dirs["dashboard_v2"],
         property_mortgage_dir=dirs["property"],
         sg_snapshot_dir=tmp_path / "missing_sg",
         out_dir=tmp_path / "dashboard_v3",
@@ -164,6 +189,8 @@ def test_dashboard_v3_cli_generates_fixture_dashboard_without_local_env(
             str(dirs["merged"]),
             "--snapshot-dir",
             str(dirs["snapshot"]),
+            "--dashboard-dir",
+            str(dirs["dashboard_v2"]),
             "--property-mortgage-dir",
             str(dirs["property"]),
             "--sg-snapshot-dir",
@@ -219,6 +246,7 @@ def test_dashboard_v3_outputs_exclude_raw_ids_and_forbidden_markers(tmp_path: Pa
     result = write_dashboard_v3(
         merge_dir=dirs["merged"],
         snapshot_dir=dirs["snapshot"],
+        dashboard_dir=dirs["dashboard_v2"],
         property_mortgage_dir=dirs["property"],
         sg_snapshot_dir=dirs["sg"],
         out_dir=tmp_path / "dashboard_v3",
@@ -315,3 +343,7 @@ def _generate_fixture_chain(tmp_path: Path) -> dict[str, Path]:
 def _read_rows(path: Path) -> list[dict[str, str]]:
     with path.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
+
+
+def _number(value: str) -> float:
+    return float(value or "0")

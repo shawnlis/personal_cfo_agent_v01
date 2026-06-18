@@ -16,7 +16,7 @@ SCHEMA_VERSION = "v0.5.0"
 
 DASHBOARD_V3_STATEMENT = (
     "This is an offline Personal CFO dashboard for review only. It is not "
-    "investment, tax, estate, insurance, trading, or filing advice."
+    "an instruction to invest, take market action, insure, file taxes, or move cash."
 )
 
 NET_WORTH_PROGRESS_FIELDNAMES = [
@@ -60,6 +60,7 @@ ASSET_LIABILITY_BREAKDOWN_FIELDNAMES = [
 class DashboardV3Result:
     merge_dir: Path
     snapshot_dir: Path
+    dashboard_dir: Path | None
     property_mortgage_dir: Path | None
     sg_snapshot_dir: Path | None
     output_dir: Path | None
@@ -83,6 +84,7 @@ def write_dashboard_v3(
     merge_dir: Path,
     snapshot_dir: Path,
     out_dir: Path,
+    dashboard_dir: Path | None = None,
     property_mortgage_dir: Path | None = None,
     sg_snapshot_dir: Path | None = None,
 ) -> DashboardV3Result:
@@ -97,39 +99,52 @@ def write_dashboard_v3(
 
     if not merge_dir.exists() or not snapshot_dir.exists():
         warnings.append(WarningCode.DASHBOARD_V3_INPUT_MISSING)
-        return _failed_result(merge_dir, snapshot_dir, property_mortgage_dir, sg_snapshot_dir, warnings)
+        return _failed_result(
+            merge_dir, snapshot_dir, dashboard_dir, property_mortgage_dir, sg_snapshot_dir, warnings
+        )
     if not account_path.exists():
         warnings.append(WarningCode.DASHBOARD_V3_MERGE_LEDGER_MISSING)
-        return _failed_result(merge_dir, snapshot_dir, property_mortgage_dir, sg_snapshot_dir, warnings)
+        return _failed_result(
+            merge_dir, snapshot_dir, dashboard_dir, property_mortgage_dir, sg_snapshot_dir, warnings
+        )
     if not net_worth_path.exists():
         warnings.append(WarningCode.DASHBOARD_V3_SNAPSHOT_HISTORY_MISSING)
-        return _failed_result(merge_dir, snapshot_dir, property_mortgage_dir, sg_snapshot_dir, warnings)
+        return _failed_result(
+            merge_dir, snapshot_dir, dashboard_dir, property_mortgage_dir, sg_snapshot_dir, warnings
+        )
 
     account_rows = _read_csv(account_path)
     position_rows = _read_csv(position_path) if position_path.exists() else []
     net_worth_rows = _read_csv(net_worth_path)
     if not net_worth_rows:
         warnings.append(WarningCode.DASHBOARD_V3_SNAPSHOT_HISTORY_EMPTY)
-        return _failed_result(merge_dir, snapshot_dir, property_mortgage_dir, sg_snapshot_dir, warnings)
+        return _failed_result(
+            merge_dir, snapshot_dir, dashboard_dir, property_mortgage_dir, sg_snapshot_dir, warnings
+        )
 
     account_history_rows = _read_csv(account_history_path) if account_history_path.exists() else []
     provider_history_rows = _read_csv(provider_history_path) if provider_history_path.exists() else []
+    dashboard_summary, dashboard_warning_text = _load_dashboard_v2_inputs(
+        dashboard_dir, snapshot_dir, warnings
+    )
     latest_snapshot = net_worth_rows[-1]
     input_warning_values = _input_warning_values(
         account_rows,
         net_worth_rows,
         account_history_rows,
         provider_history_rows,
+        _dashboard_warning_rows(dashboard_summary),
         text=_read_text(snapshot_dir / "snapshot_warnings.md"),
     )
+    input_warning_values.update(_warning_codes_from_text(dashboard_warning_text))
 
     property_summary = _load_property_summary(property_mortgage_dir, warnings)
     sg_summary = _load_sg_summary(sg_snapshot_dir, warnings)
 
     property_equity = _sum_mapping(property_summary.get("total_equity_by_currency"))
-    mortgage_liabilities = _sum_optional(
-        _sum_mapping(property_summary.get("unlinked_liability_total_by_currency")),
-        _sum_mortgage_ledger(property_mortgage_dir),
+    gross_mortgage_liabilities = _sum_mortgage_ledger(property_mortgage_dir)
+    unlinked_mortgage_liabilities = _sum_mapping(
+        property_summary.get("unlinked_liability_total_by_currency")
     )
     cpf_rows = _read_optional_csv(sg_snapshot_dir / "cpf_snapshot_ledger.csv") if sg_snapshot_dir else []
     srs_rows = _read_optional_csv(sg_snapshot_dir / "srs_snapshot_ledger.csv") if sg_snapshot_dir else []
@@ -143,7 +158,7 @@ def write_dashboard_v3(
         + (property_equity or 0.0)
         + (cpf_total or 0.0)
         + (srs_total or 0.0)
-        - abs(mortgage_liabilities or 0.0)
+        - abs(unlinked_mortgage_liabilities or 0.0)
     )
     base_currency = _clean(latest_snapshot.get("base_currency")) or _first_currency(
         account_rows, cpf_rows, srs_rows
@@ -166,7 +181,7 @@ def write_dashboard_v3(
             property_equity=property_equity,
             cpf_total=cpf_total,
             srs_total=srs_total,
-            mortgage_liabilities=mortgage_liabilities,
+            mortgage_liabilities=unlinked_mortgage_liabilities,
             integrated_net_worth=integrated_net_worth if row is latest_snapshot else None,
             warnings=warnings,
         )
@@ -178,7 +193,7 @@ def write_dashboard_v3(
         property_equity=property_equity,
         cpf_total=cpf_total,
         srs_total=srs_total,
-        mortgage_liabilities=mortgage_liabilities,
+        mortgage_liabilities=unlinked_mortgage_liabilities,
         integrated_net_worth=integrated_net_worth,
         warnings=warnings,
     )
@@ -186,6 +201,8 @@ def write_dashboard_v3(
         account_rows=account_rows,
         position_rows=position_rows,
         property_summary=property_summary,
+        gross_mortgage_liabilities=gross_mortgage_liabilities,
+        unlinked_mortgage_liabilities=unlinked_mortgage_liabilities,
         cpf_rows=cpf_rows,
         srs_rows=srs_rows,
         tax_rows=tax_rows,
@@ -202,6 +219,11 @@ def write_dashboard_v3(
         "snapshot_history_primary": True,
         "merge_dir": str(merge_dir),
         "snapshot_dir": str(snapshot_dir),
+        "dashboard_dir": str(dashboard_dir) if dashboard_dir else "",
+        "dashboard_v2_summary_present": bool(dashboard_summary),
+        "dashboard_v2_account_count": _parse_int(dashboard_summary.get("account_count")) or 0,
+        "dashboard_v2_provider_count": _parse_int(dashboard_summary.get("provider_count")) or 0,
+        "dashboard_v2_position_count": _parse_int(dashboard_summary.get("position_count")) or 0,
         "property_mortgage_dir": str(property_mortgage_dir) if property_mortgage_dir else "",
         "sg_snapshot_dir": str(sg_snapshot_dir) if sg_snapshot_dir else "",
         "account_count": len(account_rows),
@@ -218,7 +240,11 @@ def write_dashboard_v3(
         "liquid_investable_assets_available": "yes" if account_nav is not None else "no",
         "property_equity_available": "yes" if property_equity is not None else "no",
         "retirement_assets_available": "yes" if cpf_total is not None or srs_total is not None else "no",
-        "liabilities_available": "yes" if mortgage_liabilities is not None or hdb_rows else "no",
+        "liabilities_available": "yes" if gross_mortgage_liabilities is not None or hdb_rows else "no",
+        "gross_mortgage_liabilities_available": "yes" if gross_mortgage_liabilities is not None else "no",
+        "unlinked_mortgage_liabilities_available": (
+            "yes" if unlinked_mortgage_liabilities is not None else "no"
+        ),
         "warning_codes": [code.value for code in warnings],
     }
 
@@ -248,6 +274,7 @@ def write_dashboard_v3(
     return DashboardV3Result(
         merge_dir=merge_dir,
         snapshot_dir=snapshot_dir,
+        dashboard_dir=dashboard_dir,
         property_mortgage_dir=property_mortgage_dir,
         sg_snapshot_dir=sg_snapshot_dir,
         output_dir=out_dir,
@@ -270,6 +297,7 @@ def write_dashboard_v3(
 def _failed_result(
     merge_dir: Path,
     snapshot_dir: Path,
+    dashboard_dir: Path | None,
     property_mortgage_dir: Path | None,
     sg_snapshot_dir: Path | None,
     warnings: list[WarningCode],
@@ -277,6 +305,7 @@ def _failed_result(
     return DashboardV3Result(
         merge_dir=merge_dir,
         snapshot_dir=snapshot_dir,
+        dashboard_dir=dashboard_dir,
         property_mortgage_dir=property_mortgage_dir,
         sg_snapshot_dir=sg_snapshot_dir,
         output_dir=None,
@@ -304,6 +333,40 @@ def _load_sg_summary(path: Path | None, warnings: list[WarningCode]) -> dict[str
         warnings.append(WarningCode.DASHBOARD_V3_SG_SNAPSHOT_MISSING)
         return {}
     return summary
+
+
+def _load_dashboard_v2_inputs(
+    dashboard_dir: Path | None,
+    snapshot_dir: Path,
+    warnings: list[WarningCode],
+) -> tuple[dict[str, Any], str]:
+    candidates: list[Path] = []
+    if dashboard_dir is not None:
+        candidates.append(dashboard_dir)
+    candidates.extend(_dashboard_dirs_from_snapshot_manifest(snapshot_dir))
+    for candidate in candidates:
+        summary = _read_json(candidate / "dashboard_v040_summary.json")
+        if summary is not None:
+            return summary, _read_text(candidate / "dashboard_warnings.md")
+    warnings.append(WarningCode.DASHBOARD_V3_DASHBOARD_V2_SUMMARY_MISSING)
+    return {}, ""
+
+
+def _dashboard_dirs_from_snapshot_manifest(snapshot_dir: Path) -> list[Path]:
+    manifest = _read_json(snapshot_dir / "snapshot_manifest.json")
+    if not isinstance(manifest, dict):
+        return []
+    raw_dir = _clean(manifest.get("input_dashboard_dir"))
+    if not raw_dir:
+        return []
+    return [Path(raw_dir)]
+
+
+def _dashboard_warning_rows(summary: dict[str, Any]) -> list[dict[str, str]]:
+    warnings = summary.get("warning_codes") if isinstance(summary, dict) else []
+    if not isinstance(warnings, list):
+        return []
+    return [{"warning_codes": ";".join(str(code) for code in warnings if code)}]
 
 
 def _net_worth_progress_row(
@@ -371,6 +434,8 @@ def _breakdown_rows(
     account_rows: list[dict[str, str]],
     position_rows: list[dict[str, str]],
     property_summary: dict[str, Any],
+    gross_mortgage_liabilities: float | None,
+    unlinked_mortgage_liabilities: float | None,
     cpf_rows: list[dict[str, str]],
     srs_rows: list[dict[str, str]],
     tax_rows: list[dict[str, str]],
@@ -390,6 +455,10 @@ def _breakdown_rows(
     rows.append(_breakdown_row("positions", "drilldown_count", "position_rows", None, base_currency, len(position_rows), warnings))
     for currency, amount in sorted((property_summary.get("total_equity_by_currency") or {}).items()):
         rows.append(_breakdown_row("property", "equity", "property_equity", _parse_number(amount), currency, _parse_int(property_summary.get("property_count")) or 0, warnings))
+    if gross_mortgage_liabilities is not None:
+        rows.append(_breakdown_row("mortgage", "linked_or_unlinked_liability", "gross_mortgage_liabilities", gross_mortgage_liabilities, base_currency, _parse_int(property_summary.get("mortgage_count")) or 0, warnings))
+    if unlinked_mortgage_liabilities is not None:
+        rows.append(_breakdown_row("mortgage", "extra_liability", "unlinked_mortgage_liabilities", unlinked_mortgage_liabilities, base_currency, _parse_int(property_summary.get("unlinked_mortgage_count")) or 0, warnings))
     if cpf_rows:
         rows.append(_breakdown_row("cpf", "retirement_assets", "cpf_total", _sum_field(cpf_rows, "total"), _first_currency(cpf_rows), len(cpf_rows), warnings))
     if srs_rows:
@@ -434,8 +503,9 @@ def _markdown(
         DASHBOARD_V3_STATEMENT,
         "",
         "Dashboard v3 integrates offline account NAV, snapshot history, property and mortgage, and Singapore manual snapshot layers.",
-        "Account NAV and snapshot history are the primary sources. Property, CPF, SRS, tax, and HDB layers are manual offline review layers.",
-        "No external account connection, browser automation, trading, filing, or recommendation workflow is used.",
+        "Account NAV and snapshot history are the primary sources. Dashboard v2 summary is used as supporting context.",
+        "Property, CPF, SRS, tax, and HDB layers are manual offline review layers.",
+        "No external account connection, browser automation, market execution, filing, or action workflow is used.",
         "",
         "## Summary",
         f"- Account count: {summary['account_count']}",
@@ -531,17 +601,6 @@ def _sum_mortgage_ledger(path: Path | None) -> float | None:
     if not ledger.exists():
         return None
     return _sum_field(_read_csv(ledger), "outstanding_balance")
-
-
-def _sum_optional(*values: float | None) -> float | None:
-    total = 0.0
-    found = False
-    for value in values:
-        if value is None:
-            continue
-        total += value
-        found = True
-    return total if found else None
 
 
 def _sum_mapping(value: object) -> float | None:

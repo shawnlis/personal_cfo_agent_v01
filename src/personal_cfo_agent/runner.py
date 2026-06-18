@@ -778,6 +778,7 @@ def _dashboard_v3_cli(args: argparse.Namespace, parser: argparse.ArgumentParser)
     result = write_dashboard_v3(
         merge_dir=args.merge_dir,
         snapshot_dir=args.snapshot_dir,
+        dashboard_dir=args.dashboard_dir,
         property_mortgage_dir=args.property_mortgage_dir,
         sg_snapshot_dir=args.sg_snapshot_dir,
         out_dir=args.out_dir,
@@ -966,6 +967,7 @@ def _format_dashboard_v3_result(result: DashboardV3Result) -> list[str]:
         "Broker connections used: no",
         f"Merge input directory: {result.merge_dir}",
         f"Snapshot input directory: {result.snapshot_dir}",
+        f"Dashboard v2 input directory: {result.dashboard_dir or ''}",
         f"Property/mortgage input directory: {result.property_mortgage_dir or ''}",
         f"Singapore snapshot input directory: {result.sg_snapshot_dir or ''}",
         f"Output directory: {result.output_dir or ''}",

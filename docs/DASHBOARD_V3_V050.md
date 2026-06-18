@@ -2,7 +2,7 @@
 
 Dashboard v3 is an offline integrated net worth dashboard over already-generated Personal CFO outputs.
 
-It does not connect to brokers, banks, CPF, IRAS, HDB, SingPass, browsers, or external accounts. It does not trade, move cash, file taxes, create recommendations, or create scheduler jobs.
+It does not connect to brokers, banks, CPF, IRAS, HDB, SingPass, browsers, or external accounts. It does not perform market execution, move cash, file taxes, create action instructions, or create scheduler jobs.
 
 ## Command
 
@@ -10,6 +10,7 @@ It does not connect to brokers, banks, CPF, IRAS, HDB, SingPass, browsers, or ex
 python .\scripts\personal_cfo_agent.py `
   --dashboard-v3 `
   --merge-dir .\reports\personal_cfo_agent\merged_v033_fixture `
+  --dashboard-dir .\reports\personal_cfo_agent\dashboard_v040_fixture `
   --snapshot-dir .\reports\personal_cfo_agent\snapshots_v042_fixture `
   --property-mortgage-dir .\reports\personal_cfo_agent\property_mortgage_v043_fixture `
   --sg-snapshot-dir .\reports\personal_cfo_agent\sg_snapshot_v044_fixture `
@@ -19,6 +20,7 @@ python .\scripts\personal_cfo_agent.py `
 ## Inputs
 
 - v0.3.3 merged account NAV ledger: primary account/provider NAV layer.
+- v0.4.0 Dashboard v2 summary: supporting account/provider dashboard context.
 - v0.4.2 snapshot history: primary net worth history layer.
 - v0.4.3 property/mortgage snapshot: optional offline manual property and liability layer.
 - v0.4.4 Singapore manual snapshot: optional offline manual CPF, SRS, tax review, and HDB loan availability layer.
@@ -47,6 +49,7 @@ The dashboard includes total net worth, liquid/investable assets when available,
 - `DASHBOARD_V3_MERGE_LEDGER_MISSING`
 - `DASHBOARD_V3_SNAPSHOT_HISTORY_MISSING`
 - `DASHBOARD_V3_SNAPSHOT_HISTORY_EMPTY`
+- `DASHBOARD_V3_DASHBOARD_V2_SUMMARY_MISSING`
 - `DASHBOARD_V3_PROPERTY_SNAPSHOT_MISSING`
 - `DASHBOARD_V3_SG_SNAPSHOT_MISSING`
 - `DASHBOARD_V3_REVIEW_REQUIRED`
