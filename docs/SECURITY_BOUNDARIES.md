@@ -27,11 +27,11 @@ All connector configuration must come from environment variables. The applicatio
 
 ## Live Connector Rule
 
-IBKR, Tiger, and Moomoo now have supervised read-only proof workflows. Each live workflow requires an explicit provider-specific command, manual local setup, and `--allow-live-read`; no live workflow is run by default. Generated live outputs must stay under ignored `reports/` paths.
+IBKR, Tiger, Moomoo, and Webull have supervised read-only proof workflows or proof-in-progress workflows. Each live workflow requires an explicit provider-specific command, manual local setup, and `--allow-live-read`; no live workflow is run by default. Generated live outputs must stay under ignored `reports/` paths.
 
-## Webull Feasibility Rule
+## Webull Read-Only Rule
 
-v0.5.4 Webull support is readiness/config diagnostics only. It may inspect redacted environment presence and SDK importability, but it must not connect to Webull, construct a live API client, read account data, move cash, or expose execution workflows. Webull live-read work requires a separate explicit approval and a new supervised acceptance task.
+v0.5.6 Webull support is a supervised read-only proof path. Readiness and connection diagnostics remain offline and redacted. The live path must require `--provider webull --allow-live-read --webull-data-diagnostics`, may call only official account list, account balance/assets, and account positions query surfaces, and must not expose execution workflows, cash movement, transaction history, browser login, cookie/session scraping, raw account identifiers, credentials, or committed generated reports.
 
 ## Offline Merge Rule
 
