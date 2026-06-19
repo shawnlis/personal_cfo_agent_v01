@@ -81,3 +81,21 @@ Readiness and diagnostics were rerun after the user installed the official Webul
 - Warning codes: `WEBULL_ACCOUNT_LIST_QUERY_ATTEMPTED`, `WEBULL_ACCOUNT_QUERY_FAILED`, `PROVIDER_FETCH_FAILED`, `WEBULL_ACCOUNT_QUERY_EXCEPTION_SANITIZED`, `WEBULL_ASSET_QUERY_SKIPPED`, `WEBULL_POSITION_QUERY_SKIPPED`, `WEBULL_LIVE_READ_FAILED`
 
 The SDK and client initialized successfully, but the supervised read-only proof failed closed at the account-query stage with a sanitized SDK exception category. Raw SDK error text was not recorded in docs or PR metadata. Asset/NAV and position queries were not attempted after the account-query failure. No generated report bundle was produced.
+
+## Token Preflight Result
+
+Token/account-permission preflight was added after the account-query failure and run without printing credentials, tokens, raw account IDs, balances, positions, or raw responses.
+
+- SDK import result: OK
+- SDK module detected: `webull`
+- Client constructed: yes
+- Token preflight attempted: yes
+- Token present: yes, redacted
+- Token status category: `PENDING`
+- SMS/app verification required: yes
+- Account service permission available: unknown
+- Account query should proceed: no
+- Live account/NAV/position retry attempted after preflight: no
+- Warning codes: `WEBULL_TOKEN_PREFLIGHT_ATTEMPTED`, `WEBULL_TOKEN_STATUS_PENDING`, `WEBULL_ACCOUNT_QUERY_BLOCKED_BY_TOKEN`, `WEBULL_TOKEN_VERIFICATION_REQUIRED`, `WEBULL_ACCOUNT_PERMISSION_UNKNOWN`, `WEBULL_ACCOUNT_QUERY_BLOCKED_BY_PERMISSION`
+
+Because token status is `PENDING` and account permission is unknown, account list, asset/NAV, and position queries remain blocked. Complete Webull App/SMS token verification before any further supervised read-only account-query retry.

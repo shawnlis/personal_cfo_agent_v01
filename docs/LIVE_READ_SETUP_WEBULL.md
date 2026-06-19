@@ -48,6 +48,14 @@ Both commands are local-only. They check redacted config presence and SDK import
 - `SDK_NOT_INSTALLED`
 - `WEBULL_READINESS_OK`
 
+Token/account-permission preflight:
+
+```powershell
+python .\scripts\personal_cfo_agent.py --provider webull --token-preflight
+```
+
+This command may construct the SDK client and call only the Webull token preflight endpoint. It does not call account list, balance/assets, positions, orders, history, or cash movement APIs. It reports only redacted token status categories and account-permission gate status. If token status is `PENDING`, finish Webull App/SMS verification before any account query retry. If token status is not `NORMAL`, or account permission is denied or unknown, account query should remain blocked.
+
 Supervised read-only data diagnostics:
 
 ```powershell
@@ -94,6 +102,17 @@ v0.5.6 does not:
 - `WEBULL_ACCOUNT_QUERY_EXCEPTION_SANITIZED`
 - `WEBULL_ASSET_QUERY_SKIPPED`
 - `WEBULL_POSITION_QUERY_SKIPPED`
+- `WEBULL_TOKEN_PREFLIGHT_ATTEMPTED`
+- `WEBULL_TOKEN_STATUS_NORMAL`
+- `WEBULL_TOKEN_STATUS_PENDING`
+- `WEBULL_TOKEN_STATUS_INVALID`
+- `WEBULL_TOKEN_STATUS_EXPIRED`
+- `WEBULL_TOKEN_STATUS_UNKNOWN`
+- `WEBULL_TOKEN_VERIFICATION_REQUIRED`
+- `WEBULL_ACCOUNT_PERMISSION_UNKNOWN`
+- `WEBULL_ACCOUNT_PERMISSION_DENIED`
+- `WEBULL_ACCOUNT_QUERY_BLOCKED_BY_TOKEN`
+- `WEBULL_ACCOUNT_QUERY_BLOCKED_BY_PERMISSION`
 - `WEBULL_ASSET_QUERY_FAILED`
 - `WEBULL_POSITION_QUERY_FAILED`
 - `WEBULL_NO_DATA_RETURNED`

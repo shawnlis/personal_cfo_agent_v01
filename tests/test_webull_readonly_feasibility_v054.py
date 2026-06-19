@@ -13,6 +13,9 @@ from personal_cfo_agent.providers.webull_connection_diagnostics import (
     run_webull_connection_diagnostics,
 )
 from personal_cfo_agent.providers.webull_provider import WebullProvider
+from personal_cfo_agent.providers.webull_token_preflight import (
+    run_webull_token_preflight,
+)
 from personal_cfo_agent.providers.webull_readonly_adapter import (
     WebullAccountRow,
     WebullCashRow,
@@ -476,6 +479,137 @@ def test_webull_account_query_generic_exception_is_sanitized() -> None:
     assert "WEBULL_ACCOUNT_SENTINEL" not in str(diagnostics)
 
 
+def test_webull_token_preflight_normal_allows_account_query_gate() -> None:
+    diagnostics = run_webull_token_preflight(
+        _enabled_env(),
+        import_module=_fake_token_preflight_importer,
+        token_operation_factory=lambda client: _TokenOperationFixture(
+            {
+                "token": "TOKEN_SENTINEL",
+                "status": "NORMAL",
+                "accountPermission": "available",
+            }
+        ),
+    )
+
+    redacted = diagnostics.to_redacted_dict()
+    assert redacted["token_status_category"] == "NORMAL"
+    assert redacted["token_present"] is True
+    assert redacted["account_permission_status"] == "yes"
+    assert redacted["account_query_should_proceed"] is True
+    assert WarningCode.WEBULL_TOKEN_STATUS_NORMAL.value in redacted["warning_codes"]
+    assert "TOKEN_SENTINEL" not in str(redacted)
+
+
+def test_webull_token_preflight_pending_blocks_with_verification_warning() -> None:
+    diagnostics = run_webull_token_preflight(
+        _enabled_env(),
+        import_module=_fake_token_preflight_importer,
+        token_operation_factory=lambda client: _TokenOperationFixture(
+            {"token": "TOKEN_SENTINEL", "status": "PENDING"}
+        ),
+    )
+
+    redacted = diagnostics.to_redacted_dict()
+    assert redacted["token_status_category"] == "PENDING"
+    assert redacted["sms_app_verification_required"] == "yes"
+    assert redacted["account_query_should_proceed"] is False
+    assert WarningCode.WEBULL_TOKEN_VERIFICATION_REQUIRED.value in redacted["warning_codes"]
+    assert WarningCode.WEBULL_ACCOUNT_QUERY_BLOCKED_BY_TOKEN.value in redacted[
+        "warning_codes"
+    ]
+
+
+def test_webull_token_preflight_invalid_or_expired_blocks_account_query() -> None:
+    for status, warning in (
+        ("INVALID", WarningCode.WEBULL_TOKEN_STATUS_INVALID),
+        ("EXPIRED", WarningCode.WEBULL_TOKEN_STATUS_EXPIRED),
+    ):
+        diagnostics = run_webull_token_preflight(
+            _enabled_env(),
+            import_module=_fake_token_preflight_importer,
+            token_operation_factory=lambda client, status=status: _TokenOperationFixture(
+                {"token": "TOKEN_SENTINEL", "status": status}
+            ),
+        )
+        redacted = diagnostics.to_redacted_dict()
+
+        assert redacted["token_status_category"] == status
+        assert redacted["account_query_should_proceed"] is False
+        assert warning.value in redacted["warning_codes"]
+        assert WarningCode.WEBULL_ACCOUNT_QUERY_BLOCKED_BY_TOKEN.value in redacted[
+            "warning_codes"
+        ]
+
+
+def test_webull_token_preflight_unknown_status_blocks_account_query() -> None:
+    diagnostics = run_webull_token_preflight(
+        _enabled_env(),
+        import_module=_fake_token_preflight_importer,
+        token_operation_factory=lambda client: _TokenOperationFixture(
+            {"token": "TOKEN_SENTINEL", "status": "SURPRISE"}
+        ),
+    )
+
+    redacted = diagnostics.to_redacted_dict()
+    assert redacted["token_status_category"] == "UNKNOWN"
+    assert redacted["sms_app_verification_required"] == "unknown"
+    assert redacted["account_query_should_proceed"] is False
+    assert WarningCode.WEBULL_TOKEN_STATUS_UNKNOWN.value in redacted["warning_codes"]
+
+
+def test_webull_token_preflight_permission_denied_blocks_account_query() -> None:
+    diagnostics = run_webull_token_preflight(
+        _enabled_env(),
+        import_module=_fake_token_preflight_importer,
+        token_operation_factory=lambda client: _TokenOperationFixture(
+            {
+                "token": "TOKEN_SENTINEL",
+                "status": "NORMAL",
+                "accountPermission": "denied",
+            }
+        ),
+    )
+
+    redacted = diagnostics.to_redacted_dict()
+    assert redacted["token_status_category"] == "NORMAL"
+    assert redacted["account_permission_status"] == "denied"
+    assert redacted["account_query_should_proceed"] is False
+    assert WarningCode.WEBULL_ACCOUNT_PERMISSION_DENIED.value in redacted["warning_codes"]
+    assert WarningCode.WEBULL_ACCOUNT_QUERY_BLOCKED_BY_PERMISSION.value in redacted[
+        "warning_codes"
+    ]
+
+
+def test_webull_token_preflight_cli_redacts_values(monkeypatch, capsys) -> None:
+    import personal_cfo_agent.runner as runner_module
+
+    monkeypatch.setattr(
+        runner_module,
+        "run_webull_token_preflight",
+        lambda env: run_webull_token_preflight(
+            _enabled_env(),
+            import_module=_fake_token_preflight_importer,
+            token_operation_factory=lambda client: _TokenOperationFixture(
+                {"token": "TOKEN_SENTINEL", "status": "PENDING"}
+            ),
+        ),
+    )
+    monkeypatch.setenv("CFO_WEBULL_ENABLED", "true")
+    monkeypatch.setenv("CFO_WEBULL_APP_KEY", "APP_KEY_SENTINEL")
+    monkeypatch.setenv("CFO_WEBULL_APP_SECRET", "APP_SECRET_SENTINEL")
+
+    exit_code = main(["--provider", "webull", "--token-preflight"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Webull token/account preflight (values redacted)" in output
+    assert "Token status category: PENDING" in output
+    assert "TOKEN_SENTINEL" not in output
+    assert "APP_KEY_SENTINEL" not in output
+    assert "APP_SECRET_SENTINEL" not in output
+
+
 def test_webull_adapter_suppresses_sdk_stdout_and_maps_payloads(capsys) -> None:
     class _FakeClient:
         def get_account_list(self):
@@ -585,6 +719,42 @@ class _FailingAdapter:
 
     def collect(self) -> WebullReadOnlySnapshot:
         raise self._exc
+
+
+class _FakeApiClient:
+    def __init__(self, *args, **kwargs) -> None:
+        self.args = args
+        self.kwargs = kwargs
+
+
+class _TokenOperationFixture:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def create_token(self, token):
+        return _JsonResponseFixture(self._payload)
+
+
+class _JsonResponseFixture:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def json(self) -> dict[str, object]:
+        return dict(self._payload)
+
+
+def _fake_token_preflight_importer(name: str):
+    class _CoreModule:
+        ApiClient = _FakeApiClient
+
+    class _TokenModule:
+        TokenOperation = _TokenOperationFixture
+
+    if name == "webull.core.client":
+        return _CoreModule
+    if name.endswith("token_operation"):
+        return _TokenModule
+    raise ImportError(name)
 
 
 def _fixture_webull_snapshot(account_id: str) -> WebullReadOnlySnapshot:
