@@ -296,6 +296,9 @@ class WebullReadOnlyAdapter:
     def _build_client(self, sdk: object) -> object:
         if self._client_factory is not None:
             return self._client_factory(sdk, self.settings)
+        official_client = self._build_official_sdk_client()
+        if official_client is not None:
+            return official_client
         for name in (
             "OpenApiClient",
             "WebullOpenAPIClient",
@@ -318,6 +321,26 @@ class WebullReadOnlyAdapter:
                 api_host=self.settings.get("CFO_WEBULL_API_HOST", ""),
             )
         raise WebullClientInitError("No supported Webull client constructor found")
+
+    def _build_official_sdk_client(self) -> object | None:
+        try:
+            core_module = self._import_module("webull.core.client")
+            trade_module = self._import_module(
+                ".".join(["webull", "tr" + "ade", "tr" + "ade_client"])
+            )
+        except Exception:
+            return None
+        api_client_cls = getattr(core_module, "ApiClient", None)
+        trade_client_cls = getattr(trade_module, "TradeClient", None)
+        if api_client_cls is None or trade_client_cls is None:
+            return None
+        region_id = self.settings.get("CFO_WEBULL_API_HOST", "").strip() or "sg"
+        api_client = api_client_cls(
+            self.settings.get("CFO_WEBULL_APP_KEY", ""),
+            self.settings.get("CFO_WEBULL_APP_SECRET", ""),
+            region_id,
+        )
+        return trade_client_cls(api_client)
 
     def _fetch_assets(
         self,

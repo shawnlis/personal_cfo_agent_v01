@@ -55,17 +55,19 @@ Generated report bundles must stay under ignored `reports/` paths and must not b
 
 ## Current Acceptance Result
 
-Readiness and diagnostics were rerun after the user configured local Webull credentials. Credential presence is redacted and no values were printed. The provider is enabled and app key/app secret are present, but the local Webull SDK module is not installed/importable, so the supervised live read was not attempted.
+Readiness and diagnostics were rerun after the user installed the official Webull Python SDK and configured local Webull credentials. Credential presence is redacted and no values were printed.
 
-- Readiness result: `SDK_NOT_INSTALLED`
-- Diagnostics result: redacted/offline
+- SDK import result: OK
+- SDK module detected: `webull`
+- Readiness result: `WEBULL_READINESS_OK`
+- Diagnostics result: redacted/offline, `WEBULL_READINESS_OK`
 - Live connection attempted by diagnostics: no
-- Supervised live read attempted: no
+- Supervised live read attempted: yes, exactly once
 - Supervised live read success: no
 - Account count redacted: 0
 - Position count: 0
 - Normalized rows: 0
 - Report path generated: no
-- Warning codes: `SDK_NOT_INSTALLED`
+- Warning codes: `WEBULL_ACCOUNT_QUERY_FAILED`, `PROVIDER_FETCH_FAILED`, `WEBULL_LIVE_READ_FAILED`
 
-If a supported Webull SDK module is installed later, rerun readiness and diagnostics first. Only if those pass should the supervised read-only command be run once, then this section should be updated with only redacted status, counts, warning codes, and report path.
+The SDK and client initialized successfully, but the supervised read-only proof failed closed at the account-query stage. Asset/NAV and position queries were not attempted after the account-query failure. No generated report bundle was produced.

@@ -30,6 +30,8 @@ tiger_openapi_config*/
 tiger_openapi_config*
 tiger_openapi_token*
 *_tiger_openapi_config.properties
+conf/
+webull_trade_sdk.log
 .env
 .env.*
 !.env.example

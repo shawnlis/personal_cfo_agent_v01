@@ -22,7 +22,7 @@ CFO_WEBULL_API_HOST=
 CFO_WEBULL_SDK_MODULE=
 ```
 
-`CFO_WEBULL_SDK_MODULE` is optional. It lets the readiness check test a locally installed SDK module name without importing unrelated packages. The default readiness probe tries documented/plausible Webull OpenAPI Python module names, but it never constructs a client and never sends an API request.
+`CFO_WEBULL_SDK_MODULE` is optional. It lets the readiness check test a locally installed SDK module name without importing unrelated packages. The default readiness probe includes the official package import root `webull` plus documented/plausible Webull OpenAPI Python module names, but it never constructs a client and never sends an API request.
 
 ## Commands
 
