@@ -69,6 +69,49 @@ def test_provider_reported_nav_is_primary_source(tmp_path: Path) -> None:
     assert WarningCode.ACCOUNT_NAV_PROVIDER_REPORTED in result.warning_codes
 
 
+def test_account_nav_marker_market_value_is_provider_reported_nav(tmp_path: Path) -> None:
+    input_root = tmp_path / "inputs"
+    marker = _row("ibkr", "NAV", asset_type="account_nav", market_value="1234.56")
+    _write_bundle(input_root, "ibkr", "ibkr_bundle", [marker])
+
+    result = merge_provider_bundles(
+        input_root=input_root,
+        out_dir=tmp_path / "reports" / "merged",
+        today=date(2026, 6, 15),
+    )
+
+    account_row = _read_rows(result.output_paths["merged_account_nav_ledger"])[0]
+    position_rows = _read_rows(result.output_paths["merged_position_ledger"])
+    assert account_row["account_nav"] == "1234.56"
+    assert account_row["provider_reported_nav_available"] == "yes"
+    assert account_row["nav_source"] == "provider_reported"
+    assert account_row["total_assets"] == "1234.56"
+    assert position_rows == []
+    assert WarningCode.ACCOUNT_NAV_PROVIDER_REPORTED in result.warning_codes
+
+
+def test_account_nav_marker_currency_is_used_for_provider_reported_nav(
+    tmp_path: Path,
+) -> None:
+    input_root = tmp_path / "inputs"
+    marker = _row("moomoo", "NAV", asset_type="account_nav", market_value="1234.56")
+    marker["currency"] = "HKD"
+    cash = _row("moomoo", "USD", asset_type="cash", market_value="10.00")
+    cash["currency"] = "USD"
+    _write_bundle(input_root, "moomoo", "moomoo_bundle", [marker, cash])
+
+    result = merge_provider_bundles(
+        input_root=input_root,
+        out_dir=tmp_path / "reports" / "merged",
+        today=date(2026, 6, 15),
+    )
+
+    account_row = _read_rows(result.output_paths["merged_account_nav_ledger"])[0]
+    assert account_row["account_nav"] == "1234.56"
+    assert account_row["base_currency"] == "HKD"
+    assert WarningCode.CURRENCY_MISSING.value not in account_row["warning_codes"]
+
+
 def test_derived_nav_from_cash_and_positions_warns(tmp_path: Path) -> None:
     input_root = tmp_path / "inputs"
     _write_bundle(

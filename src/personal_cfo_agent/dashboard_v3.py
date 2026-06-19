@@ -79,6 +79,12 @@ class DashboardV3Result:
     generated: bool = False
 
 
+@dataclass(frozen=True)
+class _FxContext:
+    base_currency: str
+    rates_to_base: dict[str, float]
+
+
 def write_dashboard_v3(
     *,
     merge_dir: Path,
@@ -87,6 +93,7 @@ def write_dashboard_v3(
     dashboard_dir: Path | None = None,
     property_mortgage_dir: Path | None = None,
     sg_snapshot_dir: Path | None = None,
+    fx_rates_input: Path | None = None,
 ) -> DashboardV3Result:
     """Write an integrated offline dashboard from existing local report bundles."""
 
@@ -127,6 +134,7 @@ def write_dashboard_v3(
     dashboard_summary, dashboard_warning_text = _load_dashboard_v2_inputs(
         dashboard_dir, snapshot_dir, warnings
     )
+    fx_context = _load_fx_context(fx_rates_input, warnings)
     latest_snapshot = net_worth_rows[-1]
     input_warning_values = _input_warning_values(
         account_rows,
@@ -141,28 +149,79 @@ def write_dashboard_v3(
     property_summary = _load_property_summary(property_mortgage_dir, warnings)
     sg_summary = _load_sg_summary(sg_snapshot_dir, warnings)
 
-    property_equity = _sum_mapping(property_summary.get("total_equity_by_currency"))
-    gross_mortgage_liabilities = _sum_mortgage_ledger(property_mortgage_dir)
-    unlinked_mortgage_liabilities = _sum_mapping(
-        property_summary.get("unlinked_liability_total_by_currency")
-    )
     cpf_rows = _read_optional_csv(sg_snapshot_dir / "cpf_snapshot_ledger.csv") if sg_snapshot_dir else []
     srs_rows = _read_optional_csv(sg_snapshot_dir / "srs_snapshot_ledger.csv") if sg_snapshot_dir else []
     tax_rows = _read_optional_csv(sg_snapshot_dir / "tax_snapshot_ledger.csv") if sg_snapshot_dir else []
     hdb_rows = _read_optional_csv(sg_snapshot_dir / "hdb_loan_snapshot_ledger.csv") if sg_snapshot_dir else []
-    cpf_total = _sum_field(cpf_rows, "total")
-    srs_total = _sum_field(srs_rows, "total")
-    account_nav = _parse_number(latest_snapshot.get("total_account_nav"))
-    integrated_net_worth = (
-        (account_nav or 0.0)
-        + (property_equity or 0.0)
-        + (cpf_total or 0.0)
-        + (srs_total or 0.0)
-        - abs(unlinked_mortgage_liabilities or 0.0)
+    mixed_currency_nav = (
+        "SNAPSHOT_MIXED_CURRENCY_NAV" in input_warning_values
+        or _mixed_or_missing_account_nav_currency(account_rows)
     )
-    base_currency = _clean(latest_snapshot.get("base_currency")) or _first_currency(
+    if mixed_currency_nav:
+        warnings.append(WarningCode.DASHBOARD_V3_MIXED_CURRENCY_NAV)
+    base_currency = _clean(latest_snapshot.get("base_currency")) or _single_account_nav_currency(
+        account_rows
+    ) or _first_currency(
         account_rows, cpf_rows, srs_rows
     )
+    fx_required = _fx_required_for_top_level(
+        account_rows=account_rows,
+        property_summary=property_summary,
+        cpf_rows=cpf_rows,
+        srs_rows=srs_rows,
+        base_currency=base_currency,
+    )
+    if fx_context is not None:
+        base_currency = fx_context.base_currency
+        warnings.append(WarningCode.DASHBOARD_V3_FX_NORMALIZATION_APPLIED)
+        account_nav = _sum_rows_converted(
+            account_rows, "account_nav", "base_currency", fx_context, warnings
+        )
+        property_equity = _sum_mapping_converted(
+            property_summary.get("total_equity_by_currency"), fx_context, warnings
+        )
+        gross_mortgage_liabilities = _sum_mortgage_ledger(
+            property_mortgage_dir, fx_context=fx_context, warnings=warnings
+        )
+        unlinked_mortgage_liabilities = _sum_mapping_converted(
+            property_summary.get("unlinked_liability_total_by_currency"), fx_context, warnings
+        )
+        cpf_total = _sum_rows_converted(cpf_rows, "total", "currency", fx_context, warnings)
+        srs_total = _sum_rows_converted(srs_rows, "total", "currency", fx_context, warnings)
+    elif fx_required:
+        warnings.append(WarningCode.DASHBOARD_V3_FX_RATE_MISSING)
+        account_nav = None
+        property_equity = None
+        gross_mortgage_liabilities = None
+        unlinked_mortgage_liabilities = None
+        cpf_total = None
+        srs_total = None
+        base_currency = "MIXED"
+    else:
+        account_nav = (
+            None if mixed_currency_nav else _parse_number(latest_snapshot.get("total_account_nav"))
+        )
+        property_equity = _sum_mapping(property_summary.get("total_equity_by_currency"))
+        gross_mortgage_liabilities = _sum_mortgage_ledger(property_mortgage_dir)
+        unlinked_mortgage_liabilities = _sum_mapping(
+            property_summary.get("unlinked_liability_total_by_currency")
+        )
+        cpf_total = _sum_field(cpf_rows, "total")
+        srs_total = _sum_field(srs_rows, "total")
+    integrated_net_worth = None
+    if (
+        account_nav is not None
+        and property_equity is not None
+        and cpf_total is not None
+        and srs_total is not None
+    ):
+        integrated_net_worth = (
+            account_nav
+            + property_equity
+            + cpf_total
+            + srs_total
+            - abs(unlinked_mortgage_liabilities or 0.0)
+        )
 
     if _review_required(input_warning_values, property_summary, sg_summary):
         warnings.append(WarningCode.DASHBOARD_V3_REVIEW_REQUIRED)
@@ -178,10 +237,12 @@ def write_dashboard_v3(
         _net_worth_progress_row(
             row,
             base_currency=base_currency,
+            account_nav=account_nav if row is latest_snapshot else None,
+            override_account_nav=row is latest_snapshot and (fx_context is not None or fx_required),
             property_equity=property_equity,
             cpf_total=cpf_total,
             srs_total=srs_total,
-            mortgage_liabilities=unlinked_mortgage_liabilities,
+            mortgage_liabilities=gross_mortgage_liabilities,
             integrated_net_worth=integrated_net_worth if row is latest_snapshot else None,
             warnings=warnings,
         )
@@ -193,7 +254,7 @@ def write_dashboard_v3(
         property_equity=property_equity,
         cpf_total=cpf_total,
         srs_total=srs_total,
-        mortgage_liabilities=unlinked_mortgage_liabilities,
+        mortgage_liabilities=gross_mortgage_liabilities,
         integrated_net_worth=integrated_net_worth,
         warnings=warnings,
     )
@@ -208,6 +269,7 @@ def write_dashboard_v3(
         tax_rows=tax_rows,
         hdb_rows=hdb_rows,
         base_currency=base_currency,
+        fx_context=fx_context,
         warnings=warnings,
     )
     summary = {
@@ -226,6 +288,12 @@ def write_dashboard_v3(
         "dashboard_v2_position_count": _parse_int(dashboard_summary.get("position_count")) or 0,
         "property_mortgage_dir": str(property_mortgage_dir) if property_mortgage_dir else "",
         "sg_snapshot_dir": str(sg_snapshot_dir) if sg_snapshot_dir else "",
+        "fx_rates_input": str(fx_rates_input) if fx_rates_input else "",
+        "fx_normalization_applied": "yes" if fx_context is not None else "no",
+        "fx_base_currency": fx_context.base_currency if fx_context is not None else "",
+        "fx_rate_currencies": (
+            sorted(fx_context.rates_to_base) if fx_context is not None else []
+        ),
         "account_count": len(account_rows),
         "provider_count": len({row.get("provider") for row in account_rows if row.get("provider")}),
         "position_count": len(position_rows),
@@ -394,6 +462,8 @@ def _net_worth_progress_row(
     row: dict[str, str],
     *,
     base_currency: str,
+    account_nav: float | None,
+    override_account_nav: bool,
     property_equity: float | None,
     cpf_total: float | None,
     srs_total: float | None,
@@ -404,8 +474,14 @@ def _net_worth_progress_row(
     return {
         "snapshot_date": _clean(row.get("snapshot_date")),
         "snapshot_id": _clean(row.get("snapshot_id")),
-        "base_currency": _clean(row.get("base_currency")) or base_currency,
-        "total_account_nav": _clean(row.get("total_account_nav")),
+        "base_currency": (
+            base_currency if override_account_nav else _clean(row.get("base_currency")) or base_currency
+        ),
+        "total_account_nav": (
+            _number_to_text(account_nav)
+            if override_account_nav
+            else _clean(row.get("total_account_nav"))
+        ),
         "property_equity": _number_to_text(property_equity),
         "cpf_total": _number_to_text(cpf_total),
         "srs_total": _number_to_text(srs_total),
@@ -462,17 +538,30 @@ def _breakdown_rows(
     tax_rows: list[dict[str, str]],
     hdb_rows: list[dict[str, str]],
     base_currency: str,
+    fx_context: _FxContext | None,
     warnings: list[WarningCode],
 ) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
-    provider_totals: dict[str, float] = {}
+    provider_totals: dict[tuple[str, str], float] = {}
+    provider_missing_currency: set[tuple[str, str]] = set()
     for row in account_rows:
         provider = _clean(row.get("provider")) or "unknown"
-        provider_totals[provider] = provider_totals.get(provider, 0.0) + (
-            _parse_number(row.get("account_nav")) or 0.0
-        )
-    for provider, amount in sorted(provider_totals.items()):
-        rows.append(_breakdown_row("account_nav", "provider", provider, amount, base_currency, 1, warnings))
+        native_currency = _clean(row.get("base_currency"))
+        currency = fx_context.base_currency if fx_context is not None else native_currency
+        currency = currency or base_currency
+        amount = _parse_number(row.get("account_nav")) or 0.0
+        if fx_context is not None:
+            rate = _lookup_rate_for_currency(native_currency, fx_context)
+            if rate is None:
+                provider_missing_currency.add((provider, fx_context.base_currency))
+                continue
+            amount *= rate
+        key = (provider, currency)
+        provider_totals[key] = provider_totals.get(key, 0.0) + amount
+    for (provider, currency), amount in sorted(provider_totals.items()):
+        rows.append(_breakdown_row("account_nav", "provider", provider, amount, currency, 1, warnings))
+    for provider, currency in sorted(provider_missing_currency - set(provider_totals)):
+        rows.append(_breakdown_row("account_nav", "provider", provider, None, currency, 1, warnings))
     rows.append(_breakdown_row("positions", "drilldown_count", "position_rows", None, base_currency, len(position_rows), warnings))
     for currency, amount in sorted((property_summary.get("total_equity_by_currency") or {}).items()):
         rows.append(_breakdown_row("property", "equity", "property_equity", _parse_number(amount), currency, _parse_int(property_summary.get("property_count")) or 0, warnings))
@@ -616,6 +705,8 @@ def _markdown(
         f"- Retirement assets available: {summary['retirement_assets_available']}",
         f"- Liabilities available: {summary['liabilities_available']}",
         f"- Review required: {'yes' if WarningCode.DASHBOARD_V3_REVIEW_REQUIRED in warnings else 'no'}",
+        f"- FX normalization applied: {summary['fx_normalization_applied']}",
+        f"- FX base currency: {_summary_text(summary, 'fx_base_currency')}",
         "",
         "## Data Source Layer Status",
         *[
@@ -646,6 +737,7 @@ def _markdown(
         f"- History-first output rows: {summary['net_worth_history_count']}",
         "- The CSV output keeps the numeric progression in `net_worth_progress.csv`.",
         "- Latest integrated row combines account NAV with available manual layers.",
+        "- Mixed-currency totals require explicit local FX rates before this section reports a numeric net worth.",
         "",
         "## Balance Sheet Breakdown",
         "- Primary account NAV remains separate from manual property, CPF, SRS, and liability layers.",
@@ -760,13 +852,94 @@ def _review_required(
     return False
 
 
-def _sum_mortgage_ledger(path: Path | None) -> float | None:
+def _load_fx_context(path: Path | None, warnings: list[WarningCode]) -> _FxContext | None:
+    if path is None:
+        return None
+    payload = _read_json(path)
+    if not isinstance(payload, dict):
+        warnings.append(WarningCode.DASHBOARD_V3_FX_RATE_MISSING)
+        return None
+    base_currency = _clean(payload.get("base_currency"))
+    raw_rates = payload.get("rates_to_base") or payload.get("rates")
+    if not base_currency or not isinstance(raw_rates, dict):
+        warnings.append(WarningCode.DASHBOARD_V3_FX_RATE_MISSING)
+        return None
+    rates: dict[str, float] = {}
+    for currency, value in raw_rates.items():
+        currency_code = _clean(currency)
+        rate = _parse_number(value)
+        if not currency_code or rate is None or rate <= 0:
+            warnings.append(WarningCode.DASHBOARD_V3_FX_RATE_MISSING)
+            return None
+        rates[currency_code] = rate
+    rates.setdefault(base_currency, 1.0)
+    return _FxContext(base_currency=base_currency, rates_to_base=rates)
+
+
+def _fx_required_for_top_level(
+    *,
+    account_rows: list[dict[str, str]],
+    property_summary: dict[str, Any],
+    cpf_rows: list[dict[str, str]],
+    srs_rows: list[dict[str, str]],
+    base_currency: str,
+) -> bool:
+    currencies: list[str] = []
+    missing = False
+    for row in account_rows:
+        if _parse_number(row.get("account_nav")) is None:
+            continue
+        currency = _clean(row.get("base_currency"))
+        if not currency:
+            missing = True
+        else:
+            currencies.append(currency)
+    for mapping_name in ("total_equity_by_currency", "unlinked_liability_total_by_currency"):
+        value = property_summary.get(mapping_name)
+        if isinstance(value, dict):
+            for currency, amount in value.items():
+                if _parse_number(amount) is not None:
+                    currency_code = _clean(currency)
+                    if currency_code:
+                        currencies.append(currency_code)
+                    else:
+                        missing = True
+    for rows in (cpf_rows, srs_rows):
+        for row in rows:
+            if _parse_number(row.get("total")) is None:
+                continue
+            currency = _clean(row.get("currency"))
+            if not currency:
+                missing = True
+            else:
+                currencies.append(currency)
+    unique = {currency for currency in currencies if currency}
+    if missing:
+        return True
+    if len(unique) > 1:
+        return True
+    if unique and base_currency and next(iter(unique)) != base_currency:
+        return True
+    return False
+
+
+def _sum_mortgage_ledger(
+    path: Path | None,
+    *,
+    fx_context: _FxContext | None = None,
+    warnings: list[WarningCode] | None = None,
+) -> float | None:
     if path is None:
         return None
     ledger = path / "mortgage_liability_ledger.csv"
     if not ledger.exists():
         return None
-    return _sum_field(_read_csv(ledger), "outstanding_balance")
+    rows = _read_csv(ledger)
+    if fx_context is not None:
+        return _sum_rows_converted(
+            rows, "outstanding_balance", "currency", fx_context, warnings or []
+        )
+    return _sum_field(rows, "outstanding_balance")
 
 
 def _sum_mapping(value: object) -> float | None:
@@ -781,6 +954,74 @@ def _sum_mapping(value: object) -> float | None:
         total += parsed
         found = True
     return total if found else None
+
+
+def _sum_mapping_converted(
+    value: object,
+    fx_context: _FxContext,
+    warnings: list[WarningCode],
+) -> float | None:
+    if not isinstance(value, dict):
+        return None
+    total = 0.0
+    found = False
+    missing_rate = False
+    for currency, amount in value.items():
+        parsed = _parse_number(amount)
+        if parsed is None:
+            continue
+        rate = _rate_for_currency(_clean(currency), fx_context, warnings)
+        if rate is None:
+            missing_rate = True
+            continue
+        total += parsed * rate
+        found = True
+    if missing_rate:
+        return None
+    return total if found else None
+
+
+def _sum_rows_converted(
+    rows: list[dict[str, str]],
+    value_field: str,
+    currency_field: str,
+    fx_context: _FxContext,
+    warnings: list[WarningCode],
+) -> float | None:
+    total = 0.0
+    found = False
+    missing_rate = False
+    for row in rows:
+        parsed = _parse_number(row.get(value_field))
+        if parsed is None:
+            continue
+        rate = _rate_for_currency(_clean(row.get(currency_field)), fx_context, warnings)
+        if rate is None:
+            missing_rate = True
+            continue
+        total += parsed * rate
+        found = True
+    if missing_rate:
+        return None
+    return total if found else None
+
+
+def _rate_for_currency(
+    currency: str,
+    fx_context: _FxContext,
+    warnings: list[WarningCode],
+) -> float | None:
+    rate = _lookup_rate_for_currency(currency, fx_context)
+    if rate is None:
+        warnings.append(WarningCode.DASHBOARD_V3_FX_RATE_MISSING)
+    return rate
+
+
+def _lookup_rate_for_currency(currency: str, fx_context: _FxContext) -> float | None:
+    currency = _clean(currency)
+    if not currency:
+        return None
+    return fx_context.rates_to_base.get(currency)
 
 
 def _sum_field(rows: list[dict[str, str]], field: str) -> float | None:
@@ -845,6 +1086,26 @@ def _first_currency(*groups: list[dict[str, str]]) -> str:
             currency = _clean(row.get("currency") or row.get("base_currency"))
             if currency:
                 return currency
+    return ""
+
+
+def _mixed_or_missing_account_nav_currency(account_rows: list[dict[str, str]]) -> bool:
+    rows_with_nav = [
+        row for row in account_rows if _parse_number(row.get("account_nav")) is not None
+    ]
+    if not rows_with_nav:
+        return False
+    currencies = [_clean(row.get("base_currency")) for row in rows_with_nav]
+    return any(not currency for currency in currencies) or len(set(currencies)) != 1
+
+
+def _single_account_nav_currency(account_rows: list[dict[str, str]]) -> str:
+    rows_with_nav = [
+        row for row in account_rows if _parse_number(row.get("account_nav")) is not None
+    ]
+    currencies = {_clean(row.get("base_currency")) for row in rows_with_nav}
+    if len(currencies) == 1:
+        return next(iter(currencies))
     return ""
 
 

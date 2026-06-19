@@ -6,7 +6,7 @@ import json
 import re
 import shutil
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -156,6 +156,10 @@ def validate_private_inputs(*, input_dir: Path) -> PrivateInputValidationResult:
             WarningCode.PRIVATE_INPUT_SCHEMA_INVALID,
             WarningCode.PRIVATE_INPUT_REQUIRED_FIELD_MISSING,
             WarningCode.PRIVATE_INPUT_RAW_IDENTIFIER_DETECTED,
+            WarningCode.PROPERTY_REQUIRED_FIELD_MISSING,
+            WarningCode.PROPERTY_OWNERSHIP_MISSING,
+            WarningCode.PROPERTY_VALUATION_MISSING,
+            WarningCode.MORTGAGE_REQUIRED_FIELD_MISSING,
         }
         for code in warnings
     )
@@ -280,6 +284,7 @@ def _validate_one_file(path: Path, key: str) -> PrivateInputFileValidation:
             warnings.append(WarningCode.PRIVATE_INPUT_REQUIRED_FIELD_MISSING)
         if any(not _has_value(row.get(field)) for field in _optional_fields_for(key)):
             warnings.append(WarningCode.PRIVATE_INPUT_OPTIONAL_FIELD_MISSING)
+        warnings.extend(_field_shape_warnings(key, row))
     return PrivateInputFileValidation(
         file_name=path.name,
         present=True,
@@ -361,6 +366,54 @@ def _contains_raw_identifier(value: Any) -> bool:
     if isinstance(value, str):
         return bool(_NRIC_PATTERN.search(value))
     return False
+
+
+def _field_shape_warnings(key: str, row: dict[str, Any]) -> list[WarningCode]:
+    warnings: list[WarningCode] = []
+    if key == "property":
+        if _parse_ownership_pct(row.get("ownership_pct")) is None:
+            warnings.append(WarningCode.PROPERTY_OWNERSHIP_MISSING)
+        if _parse_number(row.get("valuation_amount")) is None:
+            warnings.append(WarningCode.PROPERTY_VALUATION_MISSING)
+        valuation_date = _parse_date(row.get("valuation_date"))
+        if valuation_date is None:
+            warnings.append(WarningCode.MISSING_VALUATION_DATE)
+        elif (date.today() - valuation_date).days > 90:
+            warnings.append(WarningCode.PROPERTY_VALUATION_STALE)
+    elif key == "mortgage":
+        if _parse_number(row.get("outstanding_balance")) is None:
+            warnings.append(WarningCode.MORTGAGE_REQUIRED_FIELD_MISSING)
+    return warnings
+
+
+def _parse_number(value: object) -> float | None:
+    text = str(value).strip().replace(",", "") if value is not None else ""
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _parse_ownership_pct(value: object) -> float | None:
+    text = str(value).strip().replace(",", "") if value is not None else ""
+    if not text:
+        return None
+    if text.endswith("%"):
+        parsed = _parse_number(text[:-1])
+        return parsed / 100.0 if parsed is not None else None
+    return _parse_number(text)
+
+
+def _parse_date(value: object) -> date | None:
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 def _has_value(value: object) -> bool:

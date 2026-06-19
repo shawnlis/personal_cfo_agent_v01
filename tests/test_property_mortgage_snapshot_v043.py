@@ -88,6 +88,29 @@ def test_equity_calculation_uses_owned_value_minus_linked_mortgage(tmp_path: Pat
     assert summary["total_equity_by_currency"]["SGD"] == "200000.00"
 
 
+def test_equity_calculation_accepts_percent_ownership_input(tmp_path: Path) -> None:
+    property_input, mortgage_input = _write_inputs(
+        tmp_path,
+        valuation_amount="1000000.00",
+        ownership_pct="50%",
+        outstanding_balance="300000.00",
+    )
+
+    result = record_property_mortgage_snapshot(
+        property_input=property_input,
+        mortgage_input=mortgage_input,
+        out_dir=tmp_path / "out",
+        generated_at=_generated_at(),
+    )
+
+    assert result.generated
+    summary = json.loads(result.output_paths["property_equity_summary"].read_text(encoding="utf-8"))
+    property_rows = _read_rows(result.output_paths["property_asset_ledger"])
+    assert property_rows[0]["ownership_pct"] == "0.50"
+    assert summary["property_equity_rows"][0]["owned_property_value"] == "500000.00"
+    assert summary["property_equity_rows"][0]["equity"] == "200000.00"
+
+
 def test_stale_valuation_warns_but_generates(tmp_path: Path) -> None:
     property_input, mortgage_input = _write_inputs(tmp_path, valuation_date="2025-01-01")
 

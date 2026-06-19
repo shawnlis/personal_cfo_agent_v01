@@ -156,7 +156,12 @@ def load_tiger_config(env: Mapping[str, str]) -> ProviderConfig:
         required_env_vars=required,
         settings={
             key: env.get(key, "")
-            for key in ("CFO_TIGER_ENABLED", *required, "CFO_ACCOUNT_HASH_SALT")
+            for key in (
+                "CFO_TIGER_ENABLED",
+                *required,
+                "CFO_TIGER_BASE_CURRENCY",
+                "CFO_ACCOUNT_HASH_SALT",
+            )
         },
     )
 

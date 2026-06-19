@@ -160,7 +160,26 @@ class MoomooProvider(ProviderBase):
         ]
 
     def fetch_balances(self) -> list[RawBalance]:
-        return []
+        snapshot = self._require_snapshot()
+        return [
+            RawBalance(
+                account_id=row.account_id,
+                asset_id="MOOMOO-ACCOUNT-NAV",
+                asset_type="account_nav",
+                name="Moomoo total_assets",
+                currency=row.currency,
+                amount=row.account_nav,
+                source_timestamp=row.source_timestamp,
+                liquidity_bucket="account_nav",
+                risk_bucket="account_nav",
+                source_confidence="moomoo_read_only_live",
+                needs_review=False,
+                warning_codes=[],
+                notes="Moomoo provider-reported total_assets",
+            )
+            for row in snapshot.accounts
+            if row.account_nav is not None
+        ]
 
     def disconnect(self) -> None:
         return None

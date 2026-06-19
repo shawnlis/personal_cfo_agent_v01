@@ -12,6 +12,8 @@ class MoomooAccountRow:
     account_id: str
     account_type: str = "moomoo"
     currency: str | None = None
+    account_nav: float | None = None
+    source_timestamp: str = ""
     notes: str = ""
 
 

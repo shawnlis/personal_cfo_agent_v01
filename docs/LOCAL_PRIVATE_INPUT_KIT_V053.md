@@ -57,6 +57,8 @@ Use labels and hashes instead:
 - `linked_property_id_hash`
 - provider or lender labels
 
+For property ownership, `ownership_pct` may be entered as a decimal fraction such as `0.50` or as a percent string such as `50%`. It is normalized internally before equity is calculated.
+
 ## Validate Without Printing Values
 
 ```powershell
@@ -67,7 +69,7 @@ python .\scripts\personal_cfo_agent.py `
 
 Validation reports only file presence, row counts, and warning codes. It does not print private values.
 
-Validation fails closed for missing required fields or raw identifiers. Optional missing fields produce warnings.
+Validation fails closed for missing required fields, raw identifiers, unusable property ownership/valuation values, or unusable mortgage balances. Optional missing fields and stale property valuation dates produce warnings.
 
 ## Run Manual Snapshot Chain
 

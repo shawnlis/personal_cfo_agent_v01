@@ -63,6 +63,8 @@ class _DiagnosticState:
     account_filter_mismatch: bool = False
     account_info_query_attempted: bool = False
     account_info_query_success: bool = False
+    account_nav: float | None = None
+    account_nav_currency: str | None = None
     accinfo_query_attempted: bool = False
     accinfo_query_success: bool = False
     accinfo_failure_stage: str | None = None
@@ -312,6 +314,14 @@ class MoomooReadOnlyAdapter:
         position_rows: list[MoomooPositionRow] = []
         try:
             with _suppress_sdk_console_output():
+                if self.account_id == "moomoo_default":
+                    selected_account_id = self._select_read_account_id_by_account_nav(
+                        context,
+                        sdk,
+                        selected_account_id,
+                        discovery.candidate_account_ids,
+                        state,
+                    )
                 cash_rows = self._collect_cash(
                     context, sdk, source_timestamp, selected_account_id, state
                 )
@@ -375,7 +385,9 @@ class MoomooReadOnlyAdapter:
             accounts=[
                 MoomooAccountRow(
                     account_id=selected_account_id,
-                    currency=account_currency,
+                    currency=state.account_nav_currency or account_currency,
+                    account_nav=state.account_nav,
+                    source_timestamp=source_timestamp,
                     notes="Moomoo OpenD read-only account",
                 )
             ],
@@ -446,6 +458,61 @@ class MoomooReadOnlyAdapter:
         if selected != "moomoo_default":
             state.selected_account_hash = hash_account_id(selected, self.account_hash_salt)
         return selected
+
+    def _select_read_account_id_by_account_nav(
+        self,
+        context: Any,
+        sdk: Any,
+        selected_account_id: Any,
+        candidate_account_ids: list[Any],
+        state: "_DiagnosticState",
+    ) -> Any:
+        """Prefer the discovered account with usable provider-reported NAV.
+
+        Moomoo/Futu may expose several REAL/ACTIVE accounts. The first account
+        selected from get_acc_list can be valid but still have zero funds data,
+        so use accinfo_query(total_assets) as a read-only tie breaker before
+        collecting the final cash and position rows.
+        """
+
+        query = _first_callable(context, ["accinfo_query"])
+        if query is None:
+            return selected_account_id
+        account_ids = _ordered_account_ids(selected_account_id, candidate_account_ids)
+        if len(account_ids) <= 1:
+            return selected_account_id
+
+        best_account_id = selected_account_id
+        best_account_nav: float | None = None
+        for account_id in account_ids:
+            try:
+                ret_code, data = _call_account_query(
+                    query,
+                    sdk,
+                    account_id=account_id,
+                    state=state,
+                    stage="account_nav_selection",
+                )
+            except Exception as exc:
+                state.add_terminal_warnings(_unlock_warning(exc))
+                continue
+            if ret_code != _ret_ok(sdk):
+                state.add_terminal_warnings(_unlock_warning(data))
+                continue
+            account_nav = _account_nav_from_rows(_rows(data))
+            if account_nav is None or abs(account_nav) <= 1e-9:
+                continue
+            if best_account_nav is None or account_nav > best_account_nav:
+                best_account_id = account_id
+                best_account_nav = account_nav
+
+        if str(best_account_id) != str(selected_account_id):
+            state.selected_account_hash = hash_account_id(
+                str(best_account_id), self.account_hash_salt
+            )
+            state.add_warning(WarningCode.MOOMOO_SELECTED_ACCOUNT_HASHED)
+            state.add_warning(WarningCode.MOOMOO_EXPLICIT_ACC_ID_SELECTED)
+        return best_account_id
 
     def _collect_cash(
         self,
@@ -521,6 +588,20 @@ class MoomooReadOnlyAdapter:
         # query, not a generic cash-currency row list. Keep this mapping narrow
         # and synthetic-fixture tested before relying on live cash normalization.
         for row in rows:
+            if state.account_nav is None:
+                account_nav = _first_float(
+                    row,
+                    [
+                        "total_assets",
+                        "net_asset_value",
+                        "account_nav",
+                        "total_nav",
+                    ],
+                )
+                if account_nav is not None:
+                    state.account_nav = account_nav
+                    currency = _first_value(row, ["currency"], None)
+                    state.account_nav_currency = str(currency) if currency else None
             for field_name, currency in _cash_field_currency_pairs(row):
                 cash_amount = _float_value(row.get(field_name))
                 if cash_amount is None:
@@ -636,6 +717,36 @@ class MoomooReadOnlyAdapter:
         if not positions:
             state.add_warning(WarningCode.MOOMOO_POSITION_DATA_EMPTY)
         return positions
+
+
+def _ordered_account_ids(selected_account_id: Any, candidate_account_ids: list[Any]) -> list[Any]:
+    account_ids: list[Any] = []
+    seen: set[str] = set()
+    for account_id in [selected_account_id, *candidate_account_ids]:
+        if account_id in {None, ""}:
+            continue
+        key = str(account_id)
+        if key in seen:
+            continue
+        account_ids.append(account_id)
+        seen.add(key)
+    return account_ids
+
+
+def _account_nav_from_rows(rows: list[dict[str, Any]]) -> float | None:
+    for row in rows:
+        account_nav = _first_float(
+            row,
+            [
+                "total_assets",
+                "net_asset_value",
+                "account_nav",
+                "total_nav",
+            ],
+        )
+        if account_nav is not None:
+            return account_nav
+    return None
 
 
 def _load_sdk() -> Any:

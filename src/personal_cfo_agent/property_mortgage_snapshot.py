@@ -205,7 +205,7 @@ def _validate_properties(
         for field in ("property_id_hash", "label", "type", "country", "currency"):
             if not _clean(row.get(field)):
                 warnings.append(WarningCode.PROPERTY_REQUIRED_FIELD_MISSING)
-        if _parse_number(row.get("ownership_pct")) is None:
+        if _parse_ownership_pct(row.get("ownership_pct")) is None:
             warnings.append(WarningCode.PROPERTY_OWNERSHIP_MISSING)
         if _parse_number(row.get("valuation_amount")) is None:
             warnings.append(WarningCode.PROPERTY_VALUATION_MISSING)
@@ -251,7 +251,7 @@ def _property_ledger_row(row: dict[str, object]) -> dict[str, str]:
         "type": _clean(row.get("type")),
         "country": _clean(row.get("country")),
         "area": _clean(row.get("area")),
-        "ownership_pct": _number_to_text(_parse_number(row.get("ownership_pct"))),
+        "ownership_pct": _number_to_text(_parse_ownership_pct(row.get("ownership_pct"))),
         "valuation_amount": _number_to_text(_parse_number(row.get("valuation_amount"))),
         "currency": _clean(row.get("currency")),
         "valuation_date": _clean(row.get("valuation_date")),
@@ -307,7 +307,7 @@ def _equity_summary(
         property_id = _clean(row.get("property_id_hash"))
         currency = _clean(row.get("currency")) or "UNKNOWN"
         value = _parse_number(row.get("valuation_amount")) or 0.0
-        ownership = _parse_number(row.get("ownership_pct")) or 0.0
+        ownership = _parse_ownership_pct(row.get("ownership_pct")) or 0.0
         owned_value = value * ownership
         linked_mortgage_balance = mortgage_by_property.get(property_id, 0.0)
         equity = owned_value - linked_mortgage_balance
@@ -424,6 +424,16 @@ def _parse_number(value: object) -> float | None:
         return float(text)
     except ValueError:
         return None
+
+
+def _parse_ownership_pct(value: object) -> float | None:
+    text = _clean(value).replace(",", "")
+    if not text:
+        return None
+    if text.endswith("%"):
+        parsed = _parse_number(text[:-1])
+        return parsed / 100.0 if parsed is not None else None
+    return _parse_number(text)
 
 
 def _parse_date(value: object) -> date | None:

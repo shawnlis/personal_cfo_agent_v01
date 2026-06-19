@@ -325,16 +325,10 @@ def _to_account_nav_row(
     as_of_date = _as_of_date(first)
     account_hash = _clean(first.get("account_id_hash"))
     base_currency = _base_currency(source_rows)
-    reported_nav = _first_number(
-        source_rows,
-        [
-            "account_nav",
-            "provider_reported_nav",
-            "net_liquidation",
-            "net_asset_value",
-            "total_nav",
-        ],
-    )
+    reported_nav = _provider_reported_nav(source_rows)
+    reported_nav_currency = _provider_reported_nav_currency(source_rows)
+    if reported_nav is not None and reported_nav_currency:
+        base_currency = reported_nav_currency
     total_assets = _first_number(source_rows, ["total_assets"])
     cash_total = _sum_market_value(source_rows, asset_types={"cash"})
     securities_market_value = _sum_market_value(
@@ -391,7 +385,11 @@ def _to_account_nav_row(
         "as_of_date": as_of_date,
         "base_currency": base_currency,
         "account_nav": _number_to_text(account_nav),
-        "total_assets": _number_to_text(total_assets if total_assets is not None else derived_nav),
+        "total_assets": _number_to_text(
+            total_assets
+            if total_assets is not None
+            else (reported_nav if provider_reported_available else derived_nav)
+        ),
         "cash_total": _number_to_text(cash_total),
         "securities_market_value": _number_to_text(securities_market_value),
         "margin_or_debt": _number_to_text(margin_or_debt),
@@ -411,7 +409,7 @@ def _to_position_row(
 ) -> dict[str, str] | None:
     provider = _clean(source.get("provider")) or bundle.provider
     asset_type = _clean(source.get("asset_type"))
-    if asset_type == "account_nav" and _clean(source.get("account_nav")):
+    if asset_type == "account_nav":
         return None
     source_bundle_id, source_snapshot_id = _source_ids(bundle, provider, source)
     return {
@@ -830,6 +828,47 @@ def _first_number(rows: list[dict[str, str]], fields: list[str]) -> float | None
             if value is not None:
                 return value
     return None
+
+
+def _provider_reported_nav(rows: list[dict[str, str]]) -> float | None:
+    explicit_nav = _first_number(
+        rows,
+        [
+            "account_nav",
+            "provider_reported_nav",
+            "net_liquidation",
+            "net_asset_value",
+            "total_nav",
+        ],
+    )
+    if explicit_nav is not None:
+        return explicit_nav
+    for row in rows:
+        if _clean(row.get("asset_type")) != "account_nav":
+            continue
+        nav = _parse_number(row.get("market_value"))
+        if nav is not None:
+            return nav
+    return None
+
+
+def _provider_reported_nav_currency(rows: list[dict[str, str]]) -> str:
+    explicit_fields = [
+        "account_nav",
+        "provider_reported_nav",
+        "net_liquidation",
+        "net_asset_value",
+        "total_nav",
+    ]
+    for row in rows:
+        if any(_parse_number(row.get(field)) is not None for field in explicit_fields):
+            return _clean(row.get("base_currency")) or _clean(row.get("currency"))
+    for row in rows:
+        if _clean(row.get("asset_type")) != "account_nav":
+            continue
+        if _parse_number(row.get("market_value")) is not None:
+            return _clean(row.get("base_currency")) or _clean(row.get("currency"))
+    return ""
 
 
 def _sum_market_value(

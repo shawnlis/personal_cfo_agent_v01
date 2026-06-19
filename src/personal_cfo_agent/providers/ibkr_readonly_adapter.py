@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import threading
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -84,6 +85,36 @@ class IBKRReadOnlyAdapter:
                 self.cash: list[IBKRCashRow] = []
                 self.positions: list[IBKRPositionRow] = []
 
+            def _upsert_account(
+                self,
+                account: str,
+                *,
+                currency: str | None = None,
+                account_nav: float | None = None,
+                notes: str = "IBKR account summary",
+            ) -> None:
+                existing = self.accounts.get(account)
+                if existing is None:
+                    self.accounts[account] = IBKRAccountRow(
+                        account_id=account,
+                        currency=currency or None,
+                        account_nav=account_nav,
+                        source_timestamp=source_timestamp,
+                        notes=notes,
+                    )
+                    return
+                self.accounts[account] = replace(
+                    existing,
+                    currency=currency or existing.currency,
+                    account_nav=(
+                        account_nav
+                        if account_nav is not None
+                        else existing.account_nav
+                    ),
+                    source_timestamp=existing.source_timestamp or source_timestamp,
+                    notes=existing.notes or notes,
+                )
+
             def nextValidId(self, orderId: int) -> None:  # noqa: N802
                 self.api_handshake_seen = True
                 self.ready_event.set()
@@ -118,14 +149,20 @@ class IBKRReadOnlyAdapter:
                 self.account_summary_callback_seen = True
                 if self.account_filter and account != self.account_filter:
                     return
-                self.accounts.setdefault(
+                self._upsert_account(
                     account,
-                    IBKRAccountRow(
-                        account_id=account,
-                        currency=currency or None,
-                        notes="IBKR account summary",
-                    ),
+                    currency=currency or None,
+                    notes="IBKR account summary",
                 )
+                if tag == "NetLiquidation":
+                    account_nav = _safe_float(value)
+                    if account_nav is not None:
+                        self._upsert_account(
+                            account,
+                            currency=currency or None,
+                            account_nav=account_nav,
+                            notes="IBKR account summary NetLiquidation",
+                        )
                 if tag in {"TotalCashValue", "CashBalance", "SettledCash"}:
                     amount = _safe_float(value)
                     if amount is not None and currency:
@@ -149,13 +186,10 @@ class IBKRReadOnlyAdapter:
                 symbol = str(getattr(contract, "symbol", "") or "")
                 asset_type = str(getattr(contract, "secType", "") or "unknown").lower()
                 currency = getattr(contract, "currency", None)
-                self.accounts.setdefault(
+                self._upsert_account(
                     account,
-                    IBKRAccountRow(
-                        account_id=account,
-                        currency=currency,
-                        notes="IBKR positions",
-                    ),
+                    currency=currency,
+                    notes="IBKR positions",
                 )
                 self.positions.append(
                     IBKRPositionRow(

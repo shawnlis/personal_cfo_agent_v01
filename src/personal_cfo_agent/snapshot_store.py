@@ -162,6 +162,8 @@ def record_snapshot(
         warnings.append(WarningCode.SNAPSHOT_WARNINGS_PRESENT)
     if "MIXED_AS_OF_DATES" in input_warning_values or "DASHBOARD_V2_MIXED_AS_OF_DATES" in input_warning_values:
         warnings.append(WarningCode.SNAPSHOT_MIXED_AS_OF_DATES)
+    if _mixed_or_missing_account_nav_currency(account_rows):
+        warnings.append(WarningCode.SNAPSHOT_MIXED_CURRENCY_NAV)
     if "STALE_PROVIDER_BUNDLE" in input_warning_values or "DASHBOARD_V2_STALE_DATA_WARNING" in input_warning_values:
         warnings.append(WarningCode.SNAPSHOT_STALE_INPUT_WARNING)
 
@@ -304,12 +306,12 @@ def _net_worth_history_row(
     warning_count: int,
     review_required: bool,
 ) -> dict[str, str]:
-    base_currencies = _sorted_values(row.get("base_currency") for row in account_rows)
-    total_nav = _sum_field(account_rows, "account_nav")
+    base_currency = _single_account_nav_currency(account_rows)
+    total_nav = _sum_field(account_rows, "account_nav") if base_currency else None
     return {
         "snapshot_date": snapshot_date,
         "snapshot_id": snapshot_id,
-        "base_currency": base_currencies[0] if len(base_currencies) == 1 else "",
+        "base_currency": base_currency,
         "total_account_nav": _number_to_text(total_nav),
         "liquid_net_worth": "",
         "investable_assets": "",
@@ -323,6 +325,27 @@ def _net_worth_history_row(
         "review_required": "yes" if review_required else "no",
         "source_confidence": _source_confidence(account_rows),
     }
+
+
+def _mixed_or_missing_account_nav_currency(account_rows: list[dict[str, str]]) -> bool:
+    rows_with_nav = [
+        row for row in account_rows if _parse_number(row.get("account_nav")) is not None
+    ]
+    if not rows_with_nav:
+        return False
+    currencies = [_clean(row.get("base_currency")) for row in rows_with_nav]
+    return any(not currency for currency in currencies) or len(set(currencies)) != 1
+
+
+def _single_account_nav_currency(account_rows: list[dict[str, str]]) -> str:
+    rows_with_nav = [
+        row for row in account_rows if _parse_number(row.get("account_nav")) is not None
+    ]
+    currencies = {_clean(row.get("base_currency")) for row in rows_with_nav}
+    if len(currencies) == 1:
+        currency = next(iter(currencies))
+        return currency
+    return ""
 
 
 def _account_history_row(

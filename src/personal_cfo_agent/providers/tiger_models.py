@@ -82,6 +82,8 @@ class TigerAccountRow:
     account_id: str
     account_type: str = "tiger"
     currency: str | None = None
+    account_nav: float | None = None
+    source_timestamp: str | None = None
     notes: str = ""
 
 

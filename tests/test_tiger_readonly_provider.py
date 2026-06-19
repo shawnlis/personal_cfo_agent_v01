@@ -780,6 +780,79 @@ def test_tiger_adapter_uses_config_props_path_and_suppresses_sdk_output(
     assert snapshot.diagnostics["client_init_success"] is True
 
 
+def test_tiger_base_currency_config_fills_missing_position_currency(
+    tmp_path, monkeypatch
+) -> None:
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_sdk(
+        monkeypatch,
+        asset_payload=[],
+        position_payload=[
+            {"symbol": "AAPL", "quantity": 1.0, "market_value": 10.0},
+        ],
+    )
+    provider = TigerProvider(
+        _valid_config(
+            {
+                "CFO_TIGER_CONFIG_DIR": str(tmp_path),
+                "CFO_TIGER_BASE_CURRENCY": "usd",
+            }
+        ),
+        allow_live_read=True,
+    )
+
+    snapshot = provider._sync()
+    rows = normalize_snapshot(snapshot)
+    position_rows = [row for row in rows if row.symbol == "AAPL"]
+
+    assert snapshot.accounts[0].currency == "USD"
+    assert len(position_rows) == 1
+    assert position_rows[0].currency == "USD"
+    assert WarningCode.MISSING_CURRENCY not in position_rows[0].warning_codes
+
+
+def test_tiger_prime_asset_segment_sets_currency_nav_and_position_default(
+    tmp_path, monkeypatch
+) -> None:
+    class _Segment:
+        def __init__(self) -> None:
+            self.currency = "USD"
+            self.net_liquidation = 1234.56
+            self.equity_with_loan = 1200.0
+            self._currency_assets = {}
+
+    class _PrimeAssets:
+        @property
+        def segments(self):
+            return {"S": _Segment()}
+
+    _write_placeholder_tiger_config(tmp_path)
+    _install_fake_tiger_sdk(
+        monkeypatch,
+        asset_payload=_PrimeAssets(),
+        position_payload=[
+            {"symbol": "AAPL", "quantity": 1.0, "market_value": 10.0},
+        ],
+    )
+    provider = TigerProvider(
+        _valid_config({"CFO_TIGER_CONFIG_DIR": str(tmp_path)}),
+        allow_live_read=True,
+    )
+
+    snapshot = provider._sync()
+    rows = normalize_snapshot(snapshot)
+    position_rows = [row for row in rows if row.symbol == "AAPL"]
+    nav_rows = [row for row in rows if row.asset_type == "account_nav"]
+
+    assert snapshot.accounts[0].currency == "USD"
+    assert len(position_rows) == 1
+    assert position_rows[0].currency == "USD"
+    assert len(nav_rows) == 1
+    assert nav_rows[0].currency == "USD"
+    assert nav_rows[0].market_value == 1234.56
+    assert WarningCode.ACCOUNT_NAV_PROVIDER_REPORTED in nav_rows[0].warning_codes
+
+
 def test_tiger_adapter_helper_fallback_is_marked_after_official_mode_failure(
     tmp_path, monkeypatch
 ) -> None:

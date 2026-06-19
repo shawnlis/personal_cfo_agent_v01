@@ -118,6 +118,55 @@ def test_validate_private_inputs_detects_missing_required_fields(tmp_path: Path)
     assert WarningCode.PRIVATE_INPUT_VALIDATION_FAILED in result.warning_codes
 
 
+def test_validate_private_inputs_detects_unusable_property_shape(tmp_path: Path) -> None:
+    input_dir = tmp_path / "private_inputs"
+    init_private_input_kit(out_dir=input_dir)
+    property_path = input_dir / "property_snapshot.json"
+    payload = json.loads(property_path.read_text(encoding="utf-8"))
+    payload["properties"][0]["ownership_pct"] = "not_a_number"
+    payload["properties"][0]["valuation_date"] = "2025-01-01"
+    property_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = validate_private_inputs(input_dir=input_dir)
+
+    assert not result.valid
+    assert WarningCode.PROPERTY_OWNERSHIP_MISSING in result.warning_codes
+    assert WarningCode.PROPERTY_VALUATION_STALE in result.warning_codes
+    assert WarningCode.PRIVATE_INPUT_VALIDATION_FAILED in result.warning_codes
+
+
+def test_validate_private_inputs_accepts_percent_property_ownership(tmp_path: Path) -> None:
+    input_dir = tmp_path / "private_inputs"
+    init_private_input_kit(out_dir=input_dir)
+    property_path = input_dir / "property_snapshot.json"
+    payload = json.loads(property_path.read_text(encoding="utf-8"))
+    payload["properties"][0]["ownership_pct"] = "50%"
+    payload["properties"][0]["valuation_date"] = "2025-01-01"
+    property_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = validate_private_inputs(input_dir=input_dir)
+
+    assert result.valid
+    assert WarningCode.PROPERTY_OWNERSHIP_MISSING not in result.warning_codes
+    assert WarningCode.PROPERTY_VALUATION_STALE in result.warning_codes
+    assert WarningCode.PRIVATE_INPUT_VALIDATION_WITH_WARNINGS in result.warning_codes
+
+
+def test_validate_private_inputs_detects_unusable_mortgage_balance(tmp_path: Path) -> None:
+    input_dir = tmp_path / "private_inputs"
+    init_private_input_kit(out_dir=input_dir)
+    mortgage_path = input_dir / "mortgage_snapshot.json"
+    payload = json.loads(mortgage_path.read_text(encoding="utf-8"))
+    payload["mortgages"][0]["outstanding_balance"] = "not_a_number"
+    mortgage_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = validate_private_inputs(input_dir=input_dir)
+
+    assert not result.valid
+    assert WarningCode.MORTGAGE_REQUIRED_FIELD_MISSING in result.warning_codes
+    assert WarningCode.PRIVATE_INPUT_VALIDATION_FAILED in result.warning_codes
+
+
 def test_validate_private_inputs_detects_raw_identifiers(tmp_path: Path) -> None:
     input_dir = tmp_path / "private_inputs"
     init_private_input_kit(out_dir=input_dir)
