@@ -1,0 +1,54 @@
+{
+  "schema_version": "v0.5.7",
+  "snapshot_date": "2026-06-15",
+  "base_currency": "SGD",
+  "source_type": "synthetic_fixture",
+  "review_required": true,
+  "accounts": [
+    {
+      "provider_label": "syfe_trade",
+      "account_label": "Synthetic Syfe Trade account",
+      "account_type": "brokerage",
+      "base_currency": "SGD",
+      "account_nav": "1000.00",
+      "cash_total": "250.00",
+      "securities_market_value": "750.00",
+      "margin_or_debt": "0.00",
+      "as_of_date": "2026-06-15",
+      "source_type": "app_manual",
+      "source_confidence": "synthetic_fixture",
+      "review_required": true,
+      "notes": "Replace this local ignored file with your own values before use."
+    },
+    {
+      "provider_label": "webull",
+      "account_label": "Synthetic Webull account",
+      "account_type": "brokerage",
+      "base_currency": "USD",
+      "account_nav": "2000.00",
+      "cash_total": "",
+      "securities_market_value": "",
+      "margin_or_debt": "",
+      "as_of_date": "2026-06-15",
+      "source_type": "statement_manual",
+      "source_confidence": "synthetic_fixture",
+      "review_required": true,
+      "notes": "Optional cash/security split intentionally blank to exercise warnings."
+    },
+    {
+      "provider_label": "usmart",
+      "account_label": "Synthetic uSMART account",
+      "account_type": "brokerage",
+      "base_currency": "HKD",
+      "account_nav": "3000.00",
+      "cash_total": "1000.00",
+      "securities_market_value": "2000.00",
+      "margin_or_debt": "0.00",
+      "as_of_date": "2026-06-15",
+      "source_type": "app_manual",
+      "source_confidence": "synthetic_fixture",
+      "review_required": true,
+      "notes": "Use labels only. Do not enter account numbers."
+    }
+  ]
+}
