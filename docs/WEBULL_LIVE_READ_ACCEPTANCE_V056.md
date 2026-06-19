@@ -55,9 +55,9 @@ Generated report bundles must stay under ignored `reports/` paths and must not b
 
 ## Current Acceptance Result
 
-Readiness and diagnostics were run after validation. Local Webull configuration was disabled/missing, so the supervised live read was not attempted.
+Readiness and diagnostics were rerun after the user configured local Webull credentials. Credential presence is redacted and no values were printed. The provider is enabled and app key/app secret are present, but the local Webull SDK module is not installed/importable, so the supervised live read was not attempted.
 
-- Readiness result: `PROVIDER_DISABLED`
+- Readiness result: `SDK_NOT_INSTALLED`
 - Diagnostics result: redacted/offline
 - Live connection attempted by diagnostics: no
 - Supervised live read attempted: no
@@ -66,6 +66,6 @@ Readiness and diagnostics were run after validation. Local Webull configuration 
 - Position count: 0
 - Normalized rows: 0
 - Report path generated: no
-- Warning codes: `PROVIDER_DISABLED`
+- Warning codes: `SDK_NOT_INSTALLED`
 
-If local Webull credentials are configured later, rerun readiness and diagnostics first. Only if those pass should the supervised read-only command be run once, then this section should be updated with only redacted status, counts, warning codes, and report path.
+If a supported Webull SDK module is installed later, rerun readiness and diagnostics first. Only if those pass should the supervised read-only command be run once, then this section should be updated with only redacted status, counts, warning codes, and report path.
