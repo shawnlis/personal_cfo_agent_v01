@@ -56,11 +56,16 @@ def test_provider_source_has_no_forbidden_operational_imports_or_calls() -> None
 
 def test_unsupported_connectors_are_blocked_or_feasibility_only() -> None:
     webull = connector_status("webull")
+    usmart = connector_status("usmart")
     poems = connector_status("poems")
     assert webull["status"] == "readiness_feasibility_only"
     assert webull["asset_read"] is False
     assert webull["position_read"] is False
     assert webull["cash_read"] is False
+    assert usmart["status"] == "readiness_feasibility_only"
+    assert usmart["asset_read"] is False
+    assert usmart["position_read"] is False
+    assert usmart["cash_read"] is False
     assert poems["status"] == "unsupported_until_official_api_verified"
     assert "UNOFFICIAL_API_BLOCKED" in poems["warning_codes"]
 

@@ -14,6 +14,7 @@ Personal CFO Agent v0.1 is read-only, offline by default, and connector-first.
 - No Singpass automation.
 - No CPF/IRAS/HDB scraping.
 - No Webull unofficial API.
+- No uSMART live API calls without separate approval.
 - No POEMS unofficial API.
 - No recommendation output.
 - No buy/sell/hold advice.
@@ -32,6 +33,10 @@ IBKR, Tiger, and Moomoo now have supervised read-only proof workflows. Each live
 ## Webull Feasibility Rule
 
 v0.5.4 Webull support is readiness/config diagnostics only. It may inspect redacted environment presence and SDK importability, but it must not connect to Webull, construct a live API client, read account data, move cash, or expose execution workflows. Webull live-read work requires a separate explicit approval and a new supervised acceptance task.
+
+## uSMART Feasibility Rule
+
+v0.5.7 uSMART support is readiness/config diagnostics only. It may inspect redacted environment presence and SDK importability, but it must not connect to uSMART, construct a live API client, read account data, move cash, or expose execution workflows. uSMART live-read work requires a separate explicit approval and a new supervised acceptance task.
 
 ## Offline Merge Rule
 
