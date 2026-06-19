@@ -8,11 +8,26 @@ from pathlib import Path
 
 from personal_cfo_agent.config import connector_status, load_webull_config
 from personal_cfo_agent.models import ConnectionMode, WarningCode
+from personal_cfo_agent.normalizer import normalize_snapshot
 from personal_cfo_agent.providers.webull_connection_diagnostics import (
     run_webull_connection_diagnostics,
 )
 from personal_cfo_agent.providers.webull_provider import WebullProvider
-from personal_cfo_agent.runner import run_readiness_check
+from personal_cfo_agent.providers.webull_token_preflight import (
+    run_webull_token_preflight,
+)
+from personal_cfo_agent.providers.webull_readonly_adapter import (
+    WebullAccountRow,
+    WebullCashRow,
+    WebullClientInitError,
+    WebullFetchError,
+    WebullPositionRow,
+    WebullReadDiagnostics,
+    WebullReadOnlyAdapter,
+    WebullReadOnlySnapshot,
+    WebullSDKNotInstalledError,
+)
+from personal_cfo_agent.runner import main, run_readiness_check
 from personal_cfo_agent.config import RuntimeConfig
 
 
@@ -155,10 +170,10 @@ def test_webull_connection_diagnostics_cli_does_not_call_network_or_print_secret
 def test_webull_connector_status_is_feasibility_only() -> None:
     status = connector_status("webull")
 
-    assert status["status"] == "readiness_feasibility_only"
-    assert status["asset_read"] is False
-    assert status["position_read"] is False
-    assert status["cash_read"] is False
+    assert status["status"] == "supervised_read_only_live_proof_in_progress"
+    assert status["asset_read"] is True
+    assert status["position_read"] is True
+    assert status["cash_read"] is True
 
 
 def test_webull_source_has_no_write_api_markers() -> None:
@@ -184,6 +199,500 @@ def test_webull_readiness_does_not_affect_other_provider_readiness() -> None:
     assert result.statuses[0].provider_name == "webull"
 
 
+def test_webull_live_requires_allow_live_read_gate(tmp_path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/personal_cfo_agent.py",
+            "--provider",
+            "webull",
+            "--webull-data-diagnostics",
+            "--out-dir",
+            str(tmp_path / "reports"),
+        ],
+        cwd=ROOT,
+        env={**os.environ, **_enabled_env({"CFO_WEBULL_SDK_MODULE": "os"})},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "--webull-data-diagnostics requires --allow-live-read" in (
+        result.stdout + result.stderr
+    )
+    assert not (tmp_path / "reports").exists()
+
+
+def test_webull_sdk_missing_fails_closed_in_live_path() -> None:
+    provider = WebullProvider(
+        load_webull_config(_enabled_env({"CFO_WEBULL_SDK_MODULE": "missing_webull_sdk"})),
+        allow_live_read=True,
+        live_adapter=_FailingAdapter(
+            WebullSDKNotInstalledError(
+                "missing",
+                WebullReadDiagnostics(
+                    warning_codes=(
+                        WarningCode.WEBULL_SDK_NOT_INSTALLED,
+                        WarningCode.SDK_NOT_INSTALLED,
+                    )
+                ),
+            )
+        ),
+    )
+
+    snapshot = provider._sync()
+
+    assert not snapshot.has_data()
+    assert WarningCode.WEBULL_SDK_NOT_INSTALLED in snapshot.status.warning_codes
+    assert WarningCode.SDK_NOT_INSTALLED in snapshot.status.warning_codes
+
+
+def test_webull_client_init_failure_fails_closed() -> None:
+    provider = WebullProvider(
+        load_webull_config(_enabled_env({"CFO_WEBULL_SDK_MODULE": "os"})),
+        allow_live_read=True,
+        live_adapter=_FailingAdapter(
+            WebullClientInitError(
+                "init failed",
+                WebullReadDiagnostics(
+                    client_init_attempted=True,
+                    warning_codes=(WarningCode.WEBULL_CLIENT_INIT_FAILED,),
+                ),
+            )
+        ),
+    )
+
+    snapshot = provider._sync()
+
+    assert not snapshot.has_data()
+    assert WarningCode.WEBULL_CLIENT_INIT_FAILED in snapshot.status.warning_codes
+    assert WarningCode.PROVIDER_CONNECTION_FAILED in snapshot.status.warning_codes
+
+
+def test_webull_auth_failure_is_sanitized_as_client_init_failure() -> None:
+    provider = WebullProvider(
+        load_webull_config(_enabled_env({"CFO_WEBULL_SDK_MODULE": "os"})),
+        allow_live_read=True,
+        live_adapter=_FailingAdapter(
+            WebullClientInitError(
+                "auth failed",
+                WebullReadDiagnostics(
+                    client_init_attempted=True,
+                    warning_codes=(WarningCode.WEBULL_AUTH_FAILED,),
+                ),
+            )
+        ),
+    )
+
+    snapshot = provider._sync()
+
+    assert not snapshot.has_data()
+    assert WarningCode.WEBULL_AUTH_FAILED in snapshot.status.warning_codes
+    assert "APP_SECRET_SENTINEL" not in str(snapshot.status.to_dict())
+
+
+def test_webull_account_asset_position_success_normalizes_nav_and_positions() -> None:
+    raw_account_id = "WEBULL_ACCOUNT_SENTINEL"
+    provider = WebullProvider(
+        load_webull_config(_enabled_env({"CFO_WEBULL_SDK_MODULE": "os"})),
+        allow_live_read=True,
+        live_adapter=_SnapshotAdapter(_fixture_webull_snapshot(raw_account_id)),
+    )
+
+    snapshot = provider._sync()
+    rows = normalize_snapshot(snapshot)
+    nav_rows = [row for row in rows if row.asset_type == "account_nav"]
+    position_rows = [row for row in rows if row.symbol == "AAPL"]
+
+    assert snapshot.has_data()
+    assert snapshot.status.connection_mode == ConnectionMode.LIVE_READ
+    assert WarningCode.WEBULL_READ_ONLY_FETCH_OK in snapshot.status.warning_codes
+    assert WarningCode.WEBULL_LIVE_READ_SUCCEEDED in snapshot.status.warning_codes
+    assert len(nav_rows) == 1
+    assert WarningCode.ACCOUNT_NAV_PROVIDER_REPORTED in nav_rows[0].warning_codes
+    assert len(position_rows) == 1
+    assert raw_account_id not in str([row.to_csv_row() for row in rows])
+
+
+def test_webull_fetch_failures_return_stage_warning_codes() -> None:
+    provider = WebullProvider(
+        load_webull_config(_enabled_env({"CFO_WEBULL_SDK_MODULE": "os"})),
+        allow_live_read=True,
+        live_adapter=_FailingAdapter(
+            WebullFetchError(
+                "asset failed",
+                WebullReadDiagnostics(
+                    account_query_attempted=True,
+                    account_query_success=True,
+                    asset_query_attempted=True,
+                    warning_codes=(
+                        WarningCode.WEBULL_ASSET_QUERY_FAILED,
+                        WarningCode.WEBULL_LIVE_READ_FAILED,
+                    ),
+                    stage_failures={"asset_query": "Webull asset query failed"},
+                ),
+            )
+        ),
+    )
+
+    snapshot = provider._sync()
+
+    assert not snapshot.has_data()
+    assert WarningCode.WEBULL_ASSET_QUERY_FAILED in snapshot.status.warning_codes
+    assert WarningCode.WEBULL_LIVE_READ_FAILED in snapshot.status.warning_codes
+    assert snapshot.status.diagnostics["stage_failures"] == {
+        "asset_query": "Webull asset query failed"
+    }
+
+
+def test_webull_account_method_missing_returns_granular_diagnostics() -> None:
+    class _NoAccountMethodClient:
+        pass
+
+    adapter = WebullReadOnlyAdapter(
+        _enabled_env({"CFO_WEBULL_SDK_MODULE": "fake_webull_sdk"}),
+        import_module=lambda name: object(),
+        client_factory=lambda sdk, settings: _NoAccountMethodClient(),
+    )
+
+    try:
+        adapter.collect()
+    except WebullFetchError as exc:
+        diagnostics = exc.diagnostics.to_redacted_dict()
+    else:
+        raise AssertionError("expected account query failure")
+
+    assert diagnostics["account_query_attempted"] is True
+    assert diagnostics["account_query_success"] is False
+    assert diagnostics["account_exception_category_sanitized"] == "method_missing"
+    assert WarningCode.WEBULL_ACCOUNT_LIST_METHOD_MISSING.value in diagnostics["warning_codes"]
+    assert WarningCode.WEBULL_ASSET_QUERY_SKIPPED.value in diagnostics["warning_codes"]
+    assert WarningCode.WEBULL_POSITION_QUERY_SKIPPED.value in diagnostics["warning_codes"]
+
+
+def test_webull_account_auth_failure_is_sanitized_without_raw_values() -> None:
+    class AuthFailure(Exception):
+        pass
+
+    class _AuthFailureClient:
+        def get_account_list(self):
+            raise AuthFailure("APP_SECRET_SENTINEL WEBULL_ACCOUNT_SENTINEL")
+
+    adapter = WebullReadOnlyAdapter(
+        _enabled_env({"CFO_WEBULL_SDK_MODULE": "fake_webull_sdk"}),
+        import_module=lambda name: object(),
+        client_factory=lambda sdk, settings: _AuthFailureClient(),
+    )
+
+    try:
+        adapter.collect()
+    except WebullFetchError as exc:
+        diagnostics = exc.diagnostics.to_redacted_dict()
+    else:
+        raise AssertionError("expected account query failure")
+
+    assert diagnostics["account_exception_category_sanitized"] == "auth_failed"
+    assert WarningCode.WEBULL_ACCOUNT_QUERY_AUTH_FAILED.value in diagnostics["warning_codes"]
+    assert "APP_SECRET_SENTINEL" not in str(diagnostics)
+    assert "WEBULL_ACCOUNT_SENTINEL" not in str(diagnostics)
+
+
+def test_webull_account_empty_list_warns_and_skips_downstream_queries() -> None:
+    class _EmptyAccountClient:
+        def get_account_list(self):
+            return []
+
+    adapter = WebullReadOnlyAdapter(
+        _enabled_env({"CFO_WEBULL_SDK_MODULE": "fake_webull_sdk"}),
+        import_module=lambda name: object(),
+        client_factory=lambda sdk, settings: _EmptyAccountClient(),
+    )
+
+    try:
+        adapter.collect()
+    except WebullFetchError as exc:
+        diagnostics = exc.diagnostics.to_redacted_dict()
+    else:
+        raise AssertionError("expected empty account failure")
+
+    assert diagnostics["account_query_success"] is True
+    assert diagnostics["account_count_redacted"] == 0
+    assert diagnostics["asset_query_attempted"] is False
+    assert diagnostics["position_query_attempted"] is False
+    assert diagnostics["account_exception_category_sanitized"] == "empty_account_list"
+    assert WarningCode.WEBULL_ACCOUNT_LIST_EMPTY.value in diagnostics["warning_codes"]
+
+
+def test_webull_account_selector_mismatch_fails_closed_with_hash_only() -> None:
+    class _AccountClient:
+        def get_account_list(self):
+            return [{"accountId": "WEBULL_ACCOUNT_SENTINEL", "currency": "USD"}]
+
+    adapter = WebullReadOnlyAdapter(
+        _enabled_env(
+            {
+                "CFO_WEBULL_SDK_MODULE": "fake_webull_sdk",
+                "CFO_WEBULL_ACCOUNT_HASH_SELECTOR": "acct_does_not_match",
+            }
+        ),
+        import_module=lambda name: object(),
+        client_factory=lambda sdk, settings: _AccountClient(),
+    )
+
+    try:
+        adapter.collect()
+    except WebullFetchError as exc:
+        diagnostics = exc.diagnostics.to_redacted_dict()
+    else:
+        raise AssertionError("expected selector mismatch failure")
+
+    assert diagnostics["account_selector_present"] is True
+    assert diagnostics["selected_account_hash"] == "not selected"
+    assert diagnostics["account_exception_category_sanitized"] == "account_selector_mismatch"
+    assert WarningCode.WEBULL_ACCOUNT_SELECTOR_MISMATCH.value in diagnostics["warning_codes"]
+    assert "WEBULL_ACCOUNT_SENTINEL" not in str(diagnostics)
+
+
+def test_webull_account_query_generic_exception_is_sanitized() -> None:
+    class _GenericFailureClient:
+        def get_account_list(self):
+            raise RuntimeError("raw upstream details WEBULL_ACCOUNT_SENTINEL")
+
+    adapter = WebullReadOnlyAdapter(
+        _enabled_env({"CFO_WEBULL_SDK_MODULE": "fake_webull_sdk"}),
+        import_module=lambda name: object(),
+        client_factory=lambda sdk, settings: _GenericFailureClient(),
+    )
+
+    try:
+        adapter.collect()
+    except WebullFetchError as exc:
+        diagnostics = exc.diagnostics.to_redacted_dict()
+    else:
+        raise AssertionError("expected account query failure")
+
+    assert diagnostics["account_exception_category_sanitized"] == "exception_sanitized"
+    assert WarningCode.WEBULL_ACCOUNT_QUERY_EXCEPTION_SANITIZED.value in diagnostics[
+        "warning_codes"
+    ]
+    assert "WEBULL_ACCOUNT_SENTINEL" not in str(diagnostics)
+
+
+def test_webull_token_preflight_normal_allows_account_query_gate() -> None:
+    diagnostics = run_webull_token_preflight(
+        _enabled_env(),
+        import_module=_fake_token_preflight_importer,
+        token_operation_factory=lambda client: _TokenOperationFixture(
+            {
+                "token": "TOKEN_SENTINEL",
+                "status": "NORMAL",
+                "accountPermission": "available",
+            }
+        ),
+    )
+
+    redacted = diagnostics.to_redacted_dict()
+    assert redacted["token_status_category"] == "NORMAL"
+    assert redacted["token_present"] is True
+    assert redacted["account_permission_status"] == "yes"
+    assert redacted["account_query_should_proceed"] is True
+    assert WarningCode.WEBULL_TOKEN_STATUS_NORMAL.value in redacted["warning_codes"]
+    assert "TOKEN_SENTINEL" not in str(redacted)
+
+
+def test_webull_token_preflight_pending_blocks_with_verification_warning() -> None:
+    diagnostics = run_webull_token_preflight(
+        _enabled_env(),
+        import_module=_fake_token_preflight_importer,
+        token_operation_factory=lambda client: _TokenOperationFixture(
+            {"token": "TOKEN_SENTINEL", "status": "PENDING"}
+        ),
+    )
+
+    redacted = diagnostics.to_redacted_dict()
+    assert redacted["token_status_category"] == "PENDING"
+    assert redacted["sms_app_verification_required"] == "yes"
+    assert redacted["account_query_should_proceed"] is False
+    assert WarningCode.WEBULL_TOKEN_VERIFICATION_REQUIRED.value in redacted["warning_codes"]
+    assert WarningCode.WEBULL_ACCOUNT_QUERY_BLOCKED_BY_TOKEN.value in redacted[
+        "warning_codes"
+    ]
+
+
+def test_webull_token_preflight_invalid_or_expired_blocks_account_query() -> None:
+    for status, warning in (
+        ("INVALID", WarningCode.WEBULL_TOKEN_STATUS_INVALID),
+        ("EXPIRED", WarningCode.WEBULL_TOKEN_STATUS_EXPIRED),
+    ):
+        diagnostics = run_webull_token_preflight(
+            _enabled_env(),
+            import_module=_fake_token_preflight_importer,
+            token_operation_factory=lambda client, status=status: _TokenOperationFixture(
+                {"token": "TOKEN_SENTINEL", "status": status}
+            ),
+        )
+        redacted = diagnostics.to_redacted_dict()
+
+        assert redacted["token_status_category"] == status
+        assert redacted["account_query_should_proceed"] is False
+        assert warning.value in redacted["warning_codes"]
+        assert WarningCode.WEBULL_ACCOUNT_QUERY_BLOCKED_BY_TOKEN.value in redacted[
+            "warning_codes"
+        ]
+
+
+def test_webull_token_preflight_unknown_status_blocks_account_query() -> None:
+    diagnostics = run_webull_token_preflight(
+        _enabled_env(),
+        import_module=_fake_token_preflight_importer,
+        token_operation_factory=lambda client: _TokenOperationFixture(
+            {"token": "TOKEN_SENTINEL", "status": "SURPRISE"}
+        ),
+    )
+
+    redacted = diagnostics.to_redacted_dict()
+    assert redacted["token_status_category"] == "UNKNOWN"
+    assert redacted["sms_app_verification_required"] == "unknown"
+    assert redacted["account_query_should_proceed"] is False
+    assert WarningCode.WEBULL_TOKEN_STATUS_UNKNOWN.value in redacted["warning_codes"]
+
+
+def test_webull_token_preflight_permission_denied_blocks_account_query() -> None:
+    diagnostics = run_webull_token_preflight(
+        _enabled_env(),
+        import_module=_fake_token_preflight_importer,
+        token_operation_factory=lambda client: _TokenOperationFixture(
+            {
+                "token": "TOKEN_SENTINEL",
+                "status": "NORMAL",
+                "accountPermission": "denied",
+            }
+        ),
+    )
+
+    redacted = diagnostics.to_redacted_dict()
+    assert redacted["token_status_category"] == "NORMAL"
+    assert redacted["account_permission_status"] == "denied"
+    assert redacted["account_query_should_proceed"] is False
+    assert WarningCode.WEBULL_ACCOUNT_PERMISSION_DENIED.value in redacted["warning_codes"]
+    assert WarningCode.WEBULL_ACCOUNT_QUERY_BLOCKED_BY_PERMISSION.value in redacted[
+        "warning_codes"
+    ]
+
+
+def test_webull_token_preflight_cli_redacts_values(monkeypatch, capsys) -> None:
+    import personal_cfo_agent.runner as runner_module
+
+    monkeypatch.setattr(
+        runner_module,
+        "run_webull_token_preflight",
+        lambda env: run_webull_token_preflight(
+            _enabled_env(),
+            import_module=_fake_token_preflight_importer,
+            token_operation_factory=lambda client: _TokenOperationFixture(
+                {"token": "TOKEN_SENTINEL", "status": "PENDING"}
+            ),
+        ),
+    )
+    monkeypatch.setenv("CFO_WEBULL_ENABLED", "true")
+    monkeypatch.setenv("CFO_WEBULL_APP_KEY", "APP_KEY_SENTINEL")
+    monkeypatch.setenv("CFO_WEBULL_APP_SECRET", "APP_SECRET_SENTINEL")
+
+    exit_code = main(["--provider", "webull", "--token-preflight"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Webull token/account preflight (values redacted)" in output
+    assert "Token status category: PENDING" in output
+    assert "TOKEN_SENTINEL" not in output
+    assert "APP_KEY_SENTINEL" not in output
+    assert "APP_SECRET_SENTINEL" not in output
+
+
+def test_webull_adapter_suppresses_sdk_stdout_and_maps_payloads(capsys) -> None:
+    class _FakeClient:
+        def get_account_list(self):
+            print("SDK_ACCOUNT_STDOUT")
+            return [{"accountId": "WEBULL_ACCOUNT_SENTINEL", "currency": "USD"}]
+
+        def get_account_balance(self, account_id):
+            print("SDK_BALANCE_STDOUT")
+            return {"netAssetValue": "123.45", "cashBalance": "23.45", "currency": "USD"}
+
+        def get_account_positions(self, account_id):
+            print("SDK_POSITION_STDOUT")
+            return [{"symbol": "AAPL", "quantity": "1", "marketValue": "100"}]
+
+    adapter = WebullReadOnlyAdapter(
+        _enabled_env({"CFO_WEBULL_SDK_MODULE": "fake_webull_sdk"}),
+        import_module=lambda name: object(),
+        client_factory=lambda sdk, settings: _FakeClient(),
+    )
+
+    snapshot = adapter.collect()
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert captured.err == ""
+    assert snapshot.diagnostics["sdk_output_suppressed"] is True
+    assert snapshot.diagnostics["account_count_redacted"] == 1
+    assert snapshot.diagnostics["position_count"] == 1
+    assert "WEBULL_ACCOUNT_SENTINEL" not in str(snapshot.diagnostics)
+
+
+def test_webull_cli_data_diagnostics_redacts_and_writes_report(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    import personal_cfo_agent.providers.webull_provider as provider_module
+
+    monkeypatch.setattr(
+        provider_module.WebullProvider,
+        "_build_adapter",
+        lambda self: _SnapshotAdapter(_fixture_webull_snapshot("WEBULL_ACCOUNT_SENTINEL")),
+    )
+    monkeypatch.setenv("CFO_WEBULL_ENABLED", "true")
+    monkeypatch.setenv("CFO_WEBULL_APP_KEY", "APP_KEY_SENTINEL")
+    monkeypatch.setenv("CFO_WEBULL_APP_SECRET", "APP_SECRET_SENTINEL")
+    monkeypatch.setenv("CFO_WEBULL_API_HOST", "api.example.invalid")
+    monkeypatch.setenv("CFO_WEBULL_SDK_MODULE", "os")
+    out_dir = tmp_path / "webull_report"
+
+    exit_code = main(
+        [
+            "--provider",
+            "webull",
+            "--allow-live-read",
+            "--webull-data-diagnostics",
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Webull data-path diagnostics (values redacted)" in output
+    assert "WEBULL_ACCOUNT_SENTINEL" not in output
+    assert "APP_KEY_SENTINEL" not in output
+    assert "APP_SECRET_SENTINEL" not in output
+    assert (out_dir / "normalized_asset_ledger.csv").exists()
+    assert (out_dir / "provider_sync_summary.json").exists()
+
+
+def test_webull_reports_are_gitignored() -> None:
+    assert _is_ignored("reports/personal_cfo_agent/webull_v056_live_acceptance")
+
+
+def test_webull_source_has_no_credential_literals_or_raw_account_output() -> None:
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "src" / "personal_cfo_agent" / "providers").glob("webull_*.py"))
+    )
+    assert "APP_KEY_SENTINEL" not in source
+    assert "APP_SECRET_SENTINEL" not in source
+    assert "WEBULL_ACCOUNT_SENTINEL" not in source
+
+
 def _enabled_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = {
         "CFO_WEBULL_ENABLED": "true",
@@ -194,6 +703,127 @@ def _enabled_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     if extra:
         env.update(extra)
     return env
+
+
+class _SnapshotAdapter:
+    def __init__(self, snapshot: WebullReadOnlySnapshot) -> None:
+        self._snapshot = snapshot
+
+    def collect(self) -> WebullReadOnlySnapshot:
+        return self._snapshot
+
+
+class _FailingAdapter:
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def collect(self) -> WebullReadOnlySnapshot:
+        raise self._exc
+
+
+class _FakeApiClient:
+    def __init__(self, *args, **kwargs) -> None:
+        self.args = args
+        self.kwargs = kwargs
+
+
+class _TokenOperationFixture:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def create_token(self, token):
+        return _JsonResponseFixture(self._payload)
+
+
+class _JsonResponseFixture:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def json(self) -> dict[str, object]:
+        return dict(self._payload)
+
+
+def _fake_token_preflight_importer(name: str):
+    class _CoreModule:
+        ApiClient = _FakeApiClient
+
+    class _TokenModule:
+        TokenOperation = _TokenOperationFixture
+
+    if name == "webull.core.client":
+        return _CoreModule
+    if name.endswith("token_operation"):
+        return _TokenModule
+    raise ImportError(name)
+
+
+def _fixture_webull_snapshot(account_id: str) -> WebullReadOnlySnapshot:
+    diagnostics = WebullReadDiagnostics(
+        sdk_import_ok=True,
+        sdk_module_detected="mock_webull_sdk",
+        client_init_attempted=True,
+        client_init_success=True,
+        account_query_attempted=True,
+        account_query_success=True,
+        asset_query_attempted=True,
+        asset_query_success=True,
+        position_query_attempted=True,
+        position_query_success=True,
+        account_count_redacted=1,
+        selected_account_hash="acct_fixture_hash",
+        position_count=1,
+        normalized_rows_possible=3,
+        sdk_output_suppressed=True,
+        warning_codes=(
+            WarningCode.WEBULL_READ_ONLY_FETCH_OK,
+            WarningCode.WEBULL_LIVE_READ_SUCCEEDED,
+        ),
+    )
+    return WebullReadOnlySnapshot(
+        accounts=[
+            WebullAccountRow(
+                account_id=account_id,
+                account_type="cash",
+                currency="USD",
+                account_nav=123.45,
+                source_timestamp="2026-06-19T00:00:00+00:00",
+            )
+        ],
+        cash=[
+            WebullCashRow(
+                account_id=account_id,
+                currency="USD",
+                amount=23.45,
+                source_timestamp="2026-06-19T00:00:00+00:00",
+            )
+        ],
+        positions=[
+            WebullPositionRow(
+                account_id=account_id,
+                asset_id="AAPL",
+                asset_type="equity",
+                symbol="AAPL",
+                name="Apple Inc synthetic",
+                quantity=1.0,
+                currency="USD",
+                market_value=100.0,
+                cost_basis=90.0,
+                source_timestamp="2026-06-19T00:00:00+00:00",
+            )
+        ],
+        diagnostics=diagnostics.to_redacted_dict(),
+    )
+
+
+def _is_ignored(path: str) -> bool:
+    result = subprocess.run(
+        ["git", "check-ignore", path],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def _raise_import_error(name: str) -> None:

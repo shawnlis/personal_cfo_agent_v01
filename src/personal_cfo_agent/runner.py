@@ -76,6 +76,10 @@ from personal_cfo_agent.providers.webull_connection_diagnostics import (
     WebullConnectionDiagnostics,
     run_webull_connection_diagnostics,
 )
+from personal_cfo_agent.providers.webull_token_preflight import (
+    WebullTokenPreflight,
+    run_webull_token_preflight,
+)
 from personal_cfo_agent.provider_bundle_merge import MergeResult, merge_provider_bundles
 from personal_cfo_agent.property_mortgage_snapshot import (
     PropertyMortgageSnapshotResult,
@@ -203,7 +207,7 @@ def _attach_diagnostic_normalized_rows(
         row_counts[row.provider] = row_counts.get(row.provider, 0) + 1
     updated: list[ProviderStatus] = []
     for status in statuses:
-        if status.provider_name != "tiger" or not status.diagnostics:
+        if status.provider_name not in {"tiger", "webull"} or not status.diagnostics:
             updated.append(status)
             continue
         diagnostics = dict(status.diagnostics)
@@ -308,7 +312,7 @@ def collect_provider_snapshots(config: RuntimeConfig) -> list[RawProviderSnapsho
         providers.append(
             WebullProvider(
                 load_webull_config(config.env),
-                allow_live_read=False,
+                allow_live_read=config.allow_live_read,
             )
         )
     if config.provider in {"all", "manual"}:
@@ -373,6 +377,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--tiger-data-diagnostics",
         action="store_true",
         help="Print redacted Tiger live data-path diagnostics after a gated read.",
+    )
+    parser.add_argument(
+        "--webull-data-diagnostics",
+        action="store_true",
+        help="Print redacted Webull live data-path diagnostics after a gated read.",
+    )
+    parser.add_argument(
+        "--token-preflight",
+        action="store_true",
+        help="Run redacted Webull token/account-permission preflight only.",
     )
     parser.add_argument(
         "--merge-provider-bundles",
@@ -632,6 +646,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "--connection-diagnostics is currently implemented for --provider ibkr, moomoo, tiger, or webull"
             )
         return _connection_diagnostics_cli(args.provider, local_env_result.exists)
+    if args.token_preflight:
+        if args.provider != "webull":
+            parser.error("--token-preflight requires --provider webull")
+        if args.allow_live_read:
+            parser.error("--token-preflight cannot be combined with --allow-live-read")
+        if args.readiness_check or args.connection_diagnostics:
+            parser.error(
+                "--token-preflight cannot be combined with --readiness-check or --connection-diagnostics"
+            )
+        if args.webull_data_diagnostics:
+            parser.error("--token-preflight cannot be combined with --webull-data-diagnostics")
+        return _webull_token_preflight_cli()
     if args.account_discovery:
         if args.provider != "moomoo":
             parser.error("--account-discovery requires --provider moomoo")
@@ -683,6 +709,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--tiger-data-diagnostics cannot be combined with --readiness-check")
         if not args.allow_live_read:
             parser.error("--tiger-data-diagnostics requires --allow-live-read")
+    if args.webull_data_diagnostics:
+        if args.provider != "webull":
+            parser.error("--webull-data-diagnostics requires --provider webull")
+        if args.readiness_check:
+            parser.error("--webull-data-diagnostics cannot be combined with --readiness-check")
+        if not args.allow_live_read:
+            parser.error("--webull-data-diagnostics requires --allow-live-read")
     if args.readiness_check and args.provider not in {"ibkr", "moomoo", "tiger", "webull"}:
         parser.error(
             "--readiness-check is currently implemented for --provider ibkr, moomoo, tiger, or webull"
@@ -695,6 +728,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("Read-only Moomoo sync only. No order methods are exposed.")
     if args.provider == "tiger" and args.allow_live_read:
         print("Read-only Tiger sync only. No order methods are exposed.")
+    if args.provider == "webull" and args.allow_live_read:
+        print("Read-only Webull sync only. Execution and cash movement are not exposed.")
     result = run(
         RuntimeConfig(
             allow_live_read=args.allow_live_read,
@@ -703,6 +738,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ibkr_data_diagnostics=args.ibkr_data_diagnostics,
             moomoo_data_diagnostics=args.moomoo_data_diagnostics,
             tiger_data_diagnostics=args.tiger_data_diagnostics,
+            webull_data_diagnostics=args.webull_data_diagnostics,
             manual_snapshot_path=args.manual_snapshot,
             dashboard=args.dashboard,
             dashboard_assumptions_path=args.dashboard_assumptions,
@@ -722,6 +758,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(line)
         if args.tiger_data_diagnostics and status.provider_name == "tiger":
             for line in _format_tiger_data_diagnostics(status.diagnostics):
+                print(line)
+        if args.webull_data_diagnostics and status.provider_name == "webull":
+            for line in _format_webull_data_diagnostics(status.diagnostics):
                 print(line)
     if result.output_dir is None:
         print("No provider produced data; no reports generated.")
@@ -1334,6 +1373,13 @@ def _moomoo_read_context_probe_cli() -> int:
     return 0
 
 
+def _webull_token_preflight_cli() -> int:
+    diagnostics = run_webull_token_preflight(dict(os.environ))
+    for line in _format_webull_token_preflight(diagnostics):
+        print(line)
+    return 0
+
+
 def _format_ibkr_connection_diagnostics(
     diagnostics: IBKRConnectionDiagnostics,
 ) -> list[str]:
@@ -1623,6 +1669,76 @@ def _format_tiger_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
         f"Cash query attempted: {_yes_no(bool(diagnostics.get('cash_query_attempted')))}",
         f"Cash query success: {_yes_no(bool(diagnostics.get('cash_query_success')))}",
         f"Cash currency count: {diagnostics.get('cash_currency_count', 0)}",
+        f"Normalized rows: {diagnostics.get('normalized_rows', 0)}",
+        f"SDK output suppressed: {_yes_no(bool(diagnostics.get('sdk_output_suppressed')))}",
+        f"Data diagnostic warning codes: {warning_text}",
+        f"Stage failures: {stage_text}",
+    ]
+
+
+def _format_webull_token_preflight(diagnostics: WebullTokenPreflight) -> list[str]:
+    data = diagnostics.to_redacted_dict()
+    warning_codes = data.get("warning_codes") or []
+    warning_text = ", ".join(str(code) for code in warning_codes) or "None"
+    stage_failures = data.get("stage_failures") or {}
+    if isinstance(stage_failures, dict):
+        stage_text = ", ".join(
+            f"{key}={value}" for key, value in stage_failures.items()
+        ) or "None"
+    else:
+        stage_text = "unavailable"
+    return [
+        "Webull token/account preflight (values redacted)",
+        f"SDK import OK: {_yes_no(bool(data.get('sdk_import_ok')))}",
+        f"SDK module detected: {data.get('sdk_module_detected', 'unavailable')}",
+        f"Client constructed: {_yes_no(bool(data.get('client_constructed')))}",
+        f"Token preflight attempted: {_yes_no(bool(data.get('token_preflight_attempted')))}",
+        f"Token present: {_yes_no(bool(data.get('token_present')))}",
+        f"Token status category: {data.get('token_status_category', 'UNKNOWN')}",
+        "SMS/app verification required: "
+        f"{data.get('sms_app_verification_required', 'unknown')}",
+        f"Account service permission available: {data.get('account_permission_status', 'unknown')}",
+        "Account query should proceed: "
+        f"{_yes_no(bool(data.get('account_query_should_proceed')))}",
+        "Sanitized exception category: "
+        f"{data.get('exception_category_sanitized', 'none')}",
+        f"Preflight warning codes: {warning_text}",
+        f"Stage failures: {stage_text}",
+    ]
+
+
+def _format_webull_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
+    if not diagnostics:
+        return ["Webull data-path diagnostics (values redacted): unavailable"]
+    warning_codes = diagnostics.get("warning_codes") or []
+    warning_text = ", ".join(str(code) for code in warning_codes) or "None"
+    stage_failures = diagnostics.get("stage_failures") or {}
+    if isinstance(stage_failures, dict):
+        stage_text = ", ".join(
+            f"{key}={value}" for key, value in stage_failures.items()
+        ) or "None"
+    else:
+        stage_text = "unavailable"
+    return [
+        "Webull data-path diagnostics (values redacted)",
+        f"SDK import OK: {_yes_no(bool(diagnostics.get('sdk_import_ok')))}",
+        f"SDK module detected: {diagnostics.get('sdk_module_detected', 'unavailable')}",
+        f"Client init attempted: {_yes_no(bool(diagnostics.get('client_init_attempted')))}",
+        f"Client init success: {_yes_no(bool(diagnostics.get('client_init_success')))}",
+        f"Auth/session ready: {diagnostics.get('auth_session_ready', 'unknown')}",
+        f"Account query attempted: {_yes_no(bool(diagnostics.get('account_query_attempted')))}",
+        f"Account query success: {_yes_no(bool(diagnostics.get('account_query_success')))}",
+        f"Account count redacted: {diagnostics.get('account_count_redacted', 0)}",
+        f"Account selector present: {_yes_no(bool(diagnostics.get('account_selector_present')))}",
+        "Sanitized exception category: "
+        f"{diagnostics.get('account_exception_category_sanitized', 'none')}",
+        f"Selected account hash: {diagnostics.get('selected_account_hash', 'not selected')}",
+        f"Asset/NAV query attempted: {_yes_no(bool(diagnostics.get('asset_query_attempted')))}",
+        f"Asset/NAV query success: {_yes_no(bool(diagnostics.get('asset_query_success')))}",
+        f"Position query attempted: {_yes_no(bool(diagnostics.get('position_query_attempted')))}",
+        f"Position query success: {_yes_no(bool(diagnostics.get('position_query_success')))}",
+        f"Position count: {diagnostics.get('position_count', 0)}",
+        f"Normalized rows possible: {diagnostics.get('normalized_rows_possible', 0)}",
         f"Normalized rows: {diagnostics.get('normalized_rows', 0)}",
         f"SDK output suppressed: {_yes_no(bool(diagnostics.get('sdk_output_suppressed')))}",
         f"Data diagnostic warning codes: {warning_text}",

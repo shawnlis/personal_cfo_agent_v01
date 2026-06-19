@@ -21,6 +21,7 @@ class RuntimeConfig:
     ibkr_data_diagnostics: bool = False
     moomoo_data_diagnostics: bool = False
     tiger_data_diagnostics: bool = False
+    webull_data_diagnostics: bool = False
     manual_snapshot_path: Path | None = None
     dashboard: bool = False
     dashboard_assumptions_path: Path | None = None
@@ -74,13 +75,13 @@ CONNECTOR_STATUS_MATRIX: dict[str, dict[str, object]] = {
         "notes": "v0.3.1 supervised read-only proof; TigerOpen must be configured locally",
     },
     "webull": {
-        "status": "readiness_feasibility_only",
-        "method": "official OpenAPI readiness scaffold; no live API calls",
-        "asset_read": False,
-        "position_read": False,
-        "cash_read": False,
+        "status": "supervised_read_only_live_proof_in_progress",
+        "method": "official OpenAPI account list, account balance, and account positions through supervised local session",
+        "asset_read": True,
+        "position_read": True,
+        "cash_read": True,
         "implementation_priority": None,
-        "notes": "v0.5.4 readiness/config diagnostics only; future live read requires separate approval",
+        "notes": "v0.5.6 adds explicit --allow-live-read supervised read-only proof path; no execution or cash movement workflow",
     },
     "poems": {
         "status": "unsupported_until_official_api_verified",
@@ -179,6 +180,11 @@ def load_webull_config(env: Mapping[str, str]) -> ProviderConfig:
                 *required,
                 "CFO_WEBULL_API_HOST",
                 "CFO_WEBULL_SDK_MODULE",
+                "CFO_WEBULL_TOTAL_ASSET_CURRENCY",
+                "CFO_WEBULL_ACCOUNT_HASH_SELECTOR",
+                "CFO_WEBULL_ACCOUNT_HASH",
+                "CFO_WEBULL_ACCOUNT_ID_HASH",
+                "CFO_ACCOUNT_HASH_SALT",
             )
         },
     )

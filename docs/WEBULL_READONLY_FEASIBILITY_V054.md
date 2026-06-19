@@ -15,7 +15,9 @@ v0.5.4 establishes a safe Webull OpenAPI feasibility foundation. It is intention
 
 ## Current Status
 
-Status: `readiness_feasibility_only`
+Status as of v0.5.4: `readiness_feasibility_only`
+
+Status as of v0.5.6: superseded by the separately approved supervised read-only proof path in `docs/WEBULL_LIVE_READ_ACCEPTANCE_V056.md`.
 
 The diagnostics verify only:
 
@@ -40,4 +42,4 @@ The official Webull OpenAPI surface includes account-management and execution-ca
 
 ## Future Approval Gate
 
-A later live-read task must be separately approved before any Webull account-data call is implemented. That future task should start with account/context discovery, redaction tests, explicit read-only endpoint allowlists, and a supervised run that records only sanitized diagnostics and normalized rows.
+The later live-read task was separately approved for v0.5.6 and is documented in `docs/WEBULL_LIVE_READ_ACCEPTANCE_V056.md`. The v0.5.4 readiness commands remain available and still perform no live connection.

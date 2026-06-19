@@ -16,6 +16,7 @@ from personal_cfo_agent.models import WarningCode
 
 
 DEFAULT_WEBULL_SDK_MODULE_CANDIDATES = (
+    "webull",
     "webull_openapi",
     "webull.openapi",
     "webull_openapi_python_sdk",
