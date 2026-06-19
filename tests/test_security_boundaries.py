@@ -54,11 +54,13 @@ def test_provider_source_has_no_forbidden_operational_imports_or_calls() -> None
             assert re.search(pattern, text, flags=re.IGNORECASE) is None, path
 
 
-def test_unsupported_connectors_are_blocked() -> None:
+def test_unsupported_connectors_are_blocked_or_feasibility_only() -> None:
     webull = connector_status("webull")
     poems = connector_status("poems")
-    assert webull["status"] == "unsupported_until_official_api_verified"
-    assert "UNOFFICIAL_API_BLOCKED" in webull["warning_codes"]
+    assert webull["status"] == "readiness_feasibility_only"
+    assert webull["asset_read"] is False
+    assert webull["position_read"] is False
+    assert webull["cash_read"] is False
     assert poems["status"] == "unsupported_until_official_api_verified"
     assert "UNOFFICIAL_API_BLOCKED" in poems["warning_codes"]
 

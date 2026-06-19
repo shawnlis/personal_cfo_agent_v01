@@ -29,6 +29,10 @@ All connector configuration must come from environment variables. The applicatio
 
 IBKR, Tiger, and Moomoo now have supervised read-only proof workflows. Each live workflow requires an explicit provider-specific command, manual local setup, and `--allow-live-read`; no live workflow is run by default. Generated live outputs must stay under ignored `reports/` paths.
 
+## Webull Feasibility Rule
+
+v0.5.4 Webull support is readiness/config diagnostics only. It may inspect redacted environment presence and SDK importability, but it must not connect to Webull, construct a live API client, read account data, move cash, or expose execution workflows. Webull live-read work requires a separate explicit approval and a new supervised acceptance task.
+
 ## Offline Merge Rule
 
 v0.3.3 multi-provider normalized ledger merge is offline only and account-NAV-first. It reads existing normalized bundles under local ignored `reports/` paths or synthetic fixture inputs, writes account NAV and best-effort position outputs under ignored `reports/` paths, and must not connect to brokers, call broker SDKs, move cash, place orders, or produce recommendation output.
