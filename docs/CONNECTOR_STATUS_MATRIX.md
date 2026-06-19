@@ -42,6 +42,10 @@ v0.5.4 adds Webull OpenAPI readiness/config diagnostics only. Webull API documen
 
 v0.5.7 adds a local-only manual NAV input workflow for Syfe Trade, Webull, uSMART, and other manual account sources. It creates ignored local JSON inputs and provider-bundle-compatible account NAV rows for the offline merge pipeline. It does not connect to brokers, call APIs, move cash, place orders, or produce recommendation output.
 
+## Unified Private Input Center
+
+v0.5.8 adds a preferred local-only input center that consolidates manual NAV, property/mortgage, CPF, SRS, tax, and HDB loan manual sections into one ignored JSON file. It reuses the existing offline snapshot and provider-bundle modules. Split v0.5.3 and v0.5.7 commands remain supported. The input center does not connect to brokers, banks, CPF, IRAS, HDB, SingPass, browsers, or external accounts.
+
 ## Unsupported Until Official API Verified
 
 | Platform | Status | Method | Priority | Notes |
