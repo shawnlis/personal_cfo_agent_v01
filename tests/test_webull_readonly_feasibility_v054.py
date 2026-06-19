@@ -58,6 +58,17 @@ def test_webull_sdk_missing_is_reported_after_config_present() -> None:
     assert diagnostics.live_connection_attempted is False
 
 
+def test_webull_sdk_import_exception_fails_closed_without_leaking_error_text() -> None:
+    diagnostics = run_webull_connection_diagnostics(
+        _enabled_env({"CFO_WEBULL_SDK_MODULE": "broken_webull_sdk"}),
+        import_module=lambda name: (_raise_runtime_error(name)),
+    )
+
+    assert diagnostics.sdk_import_ok is False
+    assert diagnostics.sdk_module_detected == "unavailable"
+    assert diagnostics.warning_codes == (WarningCode.SDK_NOT_INSTALLED,)
+
+
 def test_webull_readiness_success_with_mocked_sdk_and_config() -> None:
     diagnostics = run_webull_connection_diagnostics(
         _enabled_env({"CFO_WEBULL_SDK_MODULE": "mock_webull_sdk"}),
@@ -187,3 +198,7 @@ def _enabled_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 
 def _raise_import_error(name: str) -> None:
     raise ImportError(name)
+
+
+def _raise_runtime_error(name: str) -> None:
+    raise RuntimeError(f"simulated import failure for {name}")

@@ -84,7 +84,7 @@ def _detect_sdk(
     for candidate in candidates:
         try:
             import_module(candidate)
-        except ImportError:
+        except Exception:
             continue
         return True, candidate
     return False, "unavailable"
