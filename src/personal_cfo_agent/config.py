@@ -180,6 +180,10 @@ def load_webull_config(env: Mapping[str, str]) -> ProviderConfig:
                 *required,
                 "CFO_WEBULL_API_HOST",
                 "CFO_WEBULL_SDK_MODULE",
+                "CFO_WEBULL_TOTAL_ASSET_CURRENCY",
+                "CFO_WEBULL_ACCOUNT_HASH_SELECTOR",
+                "CFO_WEBULL_ACCOUNT_HASH",
+                "CFO_WEBULL_ACCOUNT_ID_HASH",
                 "CFO_ACCOUNT_HASH_SALT",
             )
         },

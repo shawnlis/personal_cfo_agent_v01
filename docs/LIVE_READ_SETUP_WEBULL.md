@@ -20,9 +20,12 @@ CFO_WEBULL_APP_KEY=
 CFO_WEBULL_APP_SECRET=
 CFO_WEBULL_API_HOST=
 CFO_WEBULL_SDK_MODULE=
+CFO_WEBULL_ACCOUNT_HASH_SELECTOR=
 ```
 
 `CFO_WEBULL_SDK_MODULE` is optional. It lets the readiness check test a locally installed SDK module name without importing unrelated packages. The default readiness probe includes the official package import root `webull` plus documented/plausible Webull OpenAPI Python module names, but it never constructs a client and never sends an API request.
+
+`CFO_WEBULL_ACCOUNT_HASH_SELECTOR` is optional. If set, it must contain a previously emitted account hash, never a raw account ID. The live proof fails closed with `WEBULL_ACCOUNT_SELECTOR_MISMATCH` if the selector does not match discovered accounts.
 
 ## Commands
 
@@ -80,6 +83,17 @@ v0.5.6 does not:
 - `WEBULL_CLIENT_INIT_FAILED`
 - `WEBULL_AUTH_FAILED`
 - `WEBULL_ACCOUNT_QUERY_FAILED`
+- `WEBULL_ACCOUNT_LIST_QUERY_ATTEMPTED`
+- `WEBULL_ACCOUNT_LIST_QUERY_OK`
+- `WEBULL_ACCOUNT_LIST_EMPTY`
+- `WEBULL_ACCOUNT_LIST_METHOD_MISSING`
+- `WEBULL_ACCOUNT_QUERY_AUTH_FAILED`
+- `WEBULL_ACCOUNT_QUERY_PERMISSION_DENIED`
+- `WEBULL_ACCOUNT_QUERY_ENDPOINT_FAILED`
+- `WEBULL_ACCOUNT_SELECTOR_MISMATCH`
+- `WEBULL_ACCOUNT_QUERY_EXCEPTION_SANITIZED`
+- `WEBULL_ASSET_QUERY_SKIPPED`
+- `WEBULL_POSITION_QUERY_SKIPPED`
 - `WEBULL_ASSET_QUERY_FAILED`
 - `WEBULL_POSITION_QUERY_FAILED`
 - `WEBULL_NO_DATA_RETURNED`

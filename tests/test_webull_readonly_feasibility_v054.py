@@ -343,6 +343,139 @@ def test_webull_fetch_failures_return_stage_warning_codes() -> None:
     }
 
 
+def test_webull_account_method_missing_returns_granular_diagnostics() -> None:
+    class _NoAccountMethodClient:
+        pass
+
+    adapter = WebullReadOnlyAdapter(
+        _enabled_env({"CFO_WEBULL_SDK_MODULE": "fake_webull_sdk"}),
+        import_module=lambda name: object(),
+        client_factory=lambda sdk, settings: _NoAccountMethodClient(),
+    )
+
+    try:
+        adapter.collect()
+    except WebullFetchError as exc:
+        diagnostics = exc.diagnostics.to_redacted_dict()
+    else:
+        raise AssertionError("expected account query failure")
+
+    assert diagnostics["account_query_attempted"] is True
+    assert diagnostics["account_query_success"] is False
+    assert diagnostics["account_exception_category_sanitized"] == "method_missing"
+    assert WarningCode.WEBULL_ACCOUNT_LIST_METHOD_MISSING.value in diagnostics["warning_codes"]
+    assert WarningCode.WEBULL_ASSET_QUERY_SKIPPED.value in diagnostics["warning_codes"]
+    assert WarningCode.WEBULL_POSITION_QUERY_SKIPPED.value in diagnostics["warning_codes"]
+
+
+def test_webull_account_auth_failure_is_sanitized_without_raw_values() -> None:
+    class AuthFailure(Exception):
+        pass
+
+    class _AuthFailureClient:
+        def get_account_list(self):
+            raise AuthFailure("APP_SECRET_SENTINEL WEBULL_ACCOUNT_SENTINEL")
+
+    adapter = WebullReadOnlyAdapter(
+        _enabled_env({"CFO_WEBULL_SDK_MODULE": "fake_webull_sdk"}),
+        import_module=lambda name: object(),
+        client_factory=lambda sdk, settings: _AuthFailureClient(),
+    )
+
+    try:
+        adapter.collect()
+    except WebullFetchError as exc:
+        diagnostics = exc.diagnostics.to_redacted_dict()
+    else:
+        raise AssertionError("expected account query failure")
+
+    assert diagnostics["account_exception_category_sanitized"] == "auth_failed"
+    assert WarningCode.WEBULL_ACCOUNT_QUERY_AUTH_FAILED.value in diagnostics["warning_codes"]
+    assert "APP_SECRET_SENTINEL" not in str(diagnostics)
+    assert "WEBULL_ACCOUNT_SENTINEL" not in str(diagnostics)
+
+
+def test_webull_account_empty_list_warns_and_skips_downstream_queries() -> None:
+    class _EmptyAccountClient:
+        def get_account_list(self):
+            return []
+
+    adapter = WebullReadOnlyAdapter(
+        _enabled_env({"CFO_WEBULL_SDK_MODULE": "fake_webull_sdk"}),
+        import_module=lambda name: object(),
+        client_factory=lambda sdk, settings: _EmptyAccountClient(),
+    )
+
+    try:
+        adapter.collect()
+    except WebullFetchError as exc:
+        diagnostics = exc.diagnostics.to_redacted_dict()
+    else:
+        raise AssertionError("expected empty account failure")
+
+    assert diagnostics["account_query_success"] is True
+    assert diagnostics["account_count_redacted"] == 0
+    assert diagnostics["asset_query_attempted"] is False
+    assert diagnostics["position_query_attempted"] is False
+    assert diagnostics["account_exception_category_sanitized"] == "empty_account_list"
+    assert WarningCode.WEBULL_ACCOUNT_LIST_EMPTY.value in diagnostics["warning_codes"]
+
+
+def test_webull_account_selector_mismatch_fails_closed_with_hash_only() -> None:
+    class _AccountClient:
+        def get_account_list(self):
+            return [{"accountId": "WEBULL_ACCOUNT_SENTINEL", "currency": "USD"}]
+
+    adapter = WebullReadOnlyAdapter(
+        _enabled_env(
+            {
+                "CFO_WEBULL_SDK_MODULE": "fake_webull_sdk",
+                "CFO_WEBULL_ACCOUNT_HASH_SELECTOR": "acct_does_not_match",
+            }
+        ),
+        import_module=lambda name: object(),
+        client_factory=lambda sdk, settings: _AccountClient(),
+    )
+
+    try:
+        adapter.collect()
+    except WebullFetchError as exc:
+        diagnostics = exc.diagnostics.to_redacted_dict()
+    else:
+        raise AssertionError("expected selector mismatch failure")
+
+    assert diagnostics["account_selector_present"] is True
+    assert diagnostics["selected_account_hash"] == "not selected"
+    assert diagnostics["account_exception_category_sanitized"] == "account_selector_mismatch"
+    assert WarningCode.WEBULL_ACCOUNT_SELECTOR_MISMATCH.value in diagnostics["warning_codes"]
+    assert "WEBULL_ACCOUNT_SENTINEL" not in str(diagnostics)
+
+
+def test_webull_account_query_generic_exception_is_sanitized() -> None:
+    class _GenericFailureClient:
+        def get_account_list(self):
+            raise RuntimeError("raw upstream details WEBULL_ACCOUNT_SENTINEL")
+
+    adapter = WebullReadOnlyAdapter(
+        _enabled_env({"CFO_WEBULL_SDK_MODULE": "fake_webull_sdk"}),
+        import_module=lambda name: object(),
+        client_factory=lambda sdk, settings: _GenericFailureClient(),
+    )
+
+    try:
+        adapter.collect()
+    except WebullFetchError as exc:
+        diagnostics = exc.diagnostics.to_redacted_dict()
+    else:
+        raise AssertionError("expected account query failure")
+
+    assert diagnostics["account_exception_category_sanitized"] == "exception_sanitized"
+    assert WarningCode.WEBULL_ACCOUNT_QUERY_EXCEPTION_SANITIZED.value in diagnostics[
+        "warning_codes"
+    ]
+    assert "WEBULL_ACCOUNT_SENTINEL" not in str(diagnostics)
+
+
 def test_webull_adapter_suppresses_sdk_stdout_and_maps_payloads(capsys) -> None:
     class _FakeClient:
         def get_account_list(self):

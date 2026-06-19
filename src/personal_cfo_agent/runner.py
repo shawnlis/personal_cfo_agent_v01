@@ -1666,9 +1666,13 @@ def _format_webull_data_diagnostics(diagnostics: dict[str, object]) -> list[str]
         f"SDK module detected: {diagnostics.get('sdk_module_detected', 'unavailable')}",
         f"Client init attempted: {_yes_no(bool(diagnostics.get('client_init_attempted')))}",
         f"Client init success: {_yes_no(bool(diagnostics.get('client_init_success')))}",
+        f"Auth/session ready: {diagnostics.get('auth_session_ready', 'unknown')}",
         f"Account query attempted: {_yes_no(bool(diagnostics.get('account_query_attempted')))}",
         f"Account query success: {_yes_no(bool(diagnostics.get('account_query_success')))}",
         f"Account count redacted: {diagnostics.get('account_count_redacted', 0)}",
+        f"Account selector present: {_yes_no(bool(diagnostics.get('account_selector_present')))}",
+        "Sanitized exception category: "
+        f"{diagnostics.get('account_exception_category_sanitized', 'none')}",
         f"Selected account hash: {diagnostics.get('selected_account_hash', 'not selected')}",
         f"Asset/NAV query attempted: {_yes_no(bool(diagnostics.get('asset_query_attempted')))}",
         f"Asset/NAV query success: {_yes_no(bool(diagnostics.get('asset_query_success')))}",
