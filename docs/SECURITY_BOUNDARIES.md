@@ -64,3 +64,7 @@ v0.5.3 local private input kit is template, validation, and offline manual snaps
 ## Manual NAV Input Rule
 
 v0.5.7 unified manual NAV input is local-only. It generates a static HTML worksheet, initializes an ignored local JSON file, validates schema/warnings without printing private values, and converts account NAV rows into a provider-bundle-compatible output for the offline merge pipeline. It must not connect to brokers, banks, CPF, IRAS, HDB, SingPass, browsers, or external accounts. Raw account IDs, raw account numbers, NRIC/FIN, login details, secrets, exact local values in docs, and generated reports must not be committed. The provider bundle must emit `account_id_hash` only.
+
+## Unified Private Input Center Rule
+
+v0.5.8 unified private input center is local-only and is the preferred manual input workflow for manual NAV, property/mortgage, CPF, SRS, tax, and HDB loan sections. It generates a static local HTML worksheet, initializes one ignored JSON file, validates counts/warnings without printing private values, and reuses existing offline snapshot modules. It must not connect to brokers, banks, CPF, IRAS, HDB, SingPass, browsers, or external accounts. It must not use external scripts, browser automation, credential material, raw account IDs, raw account numbers, raw addresses, NRIC/FIN, government identifiers, exact local values in docs, generated report commits, money movement, tax filing, or recommendation output.

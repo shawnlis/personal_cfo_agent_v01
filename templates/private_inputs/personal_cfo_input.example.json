@@ -1,0 +1,140 @@
+{
+  "schema_version": "v0.5.8",
+  "snapshot_date": "2026-01-01",
+  "base_currency": "SGD",
+  "source_type": "synthetic_fixture",
+  "review_required": true,
+  "manual_nav_accounts": [
+    {
+      "provider_label": "syfe_trade",
+      "account_label": "Synthetic Syfe Trade account",
+      "account_type": "brokerage",
+      "base_currency": "SGD",
+      "account_nav": "1000.00",
+      "cash_total": "250.00",
+      "securities_market_value": "750.00",
+      "margin_or_debt": "0.00",
+      "as_of_date": "2026-01-01",
+      "source_type": "app_manual",
+      "source_confidence": "synthetic_fixture",
+      "review_required": true,
+      "notes": "Replace this ignored local file before real use."
+    },
+    {
+      "provider_label": "webull",
+      "account_label": "Synthetic Webull account",
+      "account_type": "brokerage",
+      "base_currency": "USD",
+      "account_nav": "2000.00",
+      "cash_total": "",
+      "securities_market_value": "",
+      "margin_or_debt": "",
+      "as_of_date": "2026-01-01",
+      "source_type": "statement_manual",
+      "source_confidence": "synthetic_fixture",
+      "review_required": true,
+      "notes": "Optional cash/security split intentionally blank to exercise warnings."
+    },
+    {
+      "provider_label": "usmart",
+      "account_label": "Synthetic uSMART account",
+      "account_type": "brokerage",
+      "base_currency": "HKD",
+      "account_nav": "3000.00",
+      "cash_total": "1000.00",
+      "securities_market_value": "2000.00",
+      "margin_or_debt": "0.00",
+      "as_of_date": "2026-01-01",
+      "source_type": "app_manual",
+      "source_confidence": "synthetic_fixture",
+      "review_required": true,
+      "notes": "Use labels only. Do not enter account numbers."
+    }
+  ],
+  "properties": [
+    {
+      "property_id_hash": "prop_placeholder_hash",
+      "label": "Placeholder property label",
+      "type": "residential_property",
+      "country": "SG",
+      "area": "Placeholder area",
+      "ownership_pct": "0.00",
+      "valuation_amount": "0.00",
+      "currency": "SGD",
+      "valuation_date": "2026-01-01",
+      "source": "local_manual_placeholder",
+      "confidence": "manual_review_required",
+      "review_required": true
+    }
+  ],
+  "mortgages": [
+    {
+      "loan_id_hash": "loan_placeholder_hash",
+      "linked_property_id_hash": "prop_placeholder_hash",
+      "lender_label": "Placeholder lender label",
+      "outstanding_balance": "0.00",
+      "currency": "SGD",
+      "interest_rate": "0.00",
+      "rate_type": "manual_review_required",
+      "monthly_payment": "0.00",
+      "repricing_date": "2026-01-01",
+      "maturity_date": "2026-01-01",
+      "snapshot_date": "2026-01-01",
+      "review_required": true
+    }
+  ],
+  "cpf": [
+    {
+      "snapshot_date": "2026-01-01",
+      "oa": "0.00",
+      "sa": "0.00",
+      "ma": "0.00",
+      "ra": "0.00",
+      "total": "0.00",
+      "currency": "SGD",
+      "source_type": "local_manual_placeholder",
+      "source_date": "2026-01-01",
+      "review_required": true
+    }
+  ],
+  "srs": [
+    {
+      "snapshot_date": "2026-01-01",
+      "provider_label": "Placeholder SRS provider label",
+      "cash": "0.00",
+      "investments_value": "0.00",
+      "total": "0.00",
+      "contribution_ytd": "0.00",
+      "currency": "SGD",
+      "tax_wrapper": true,
+      "source_type": "local_manual_placeholder",
+      "source_date": "2026-01-01",
+      "review_required": true
+    }
+  ],
+  "tax": [
+    {
+      "year_of_assessment": "2026",
+      "assessable_income_available": false,
+      "tax_payable_available": false,
+      "tax_paid_available": false,
+      "reliefs_available": false,
+      "source_type": "local_manual_placeholder",
+      "source_date": "2026-01-01",
+      "review_required": true
+    }
+  ],
+  "hdb_loans": [
+    {
+      "snapshot_date": "2026-01-01",
+      "loan_id_hash": "hdb_loan_placeholder_hash",
+      "linked_property_id_hash": "prop_placeholder_hash",
+      "monthly_installment_available": false,
+      "outstanding_balance_available": false,
+      "currency": "SGD",
+      "source_type": "local_manual_placeholder",
+      "source_date": "2026-01-01",
+      "review_required": true
+    }
+  ]
+}

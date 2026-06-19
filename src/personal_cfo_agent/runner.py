@@ -53,6 +53,16 @@ from personal_cfo_agent.models import (
     WarningCode,
 )
 from personal_cfo_agent.normalizer import normalize_snapshots
+from personal_cfo_agent.private_input_center import (
+    PrivateInputCenterFormResult,
+    PrivateInputCenterInitResult,
+    PrivateInputCenterSnapshotResult,
+    PrivateInputCenterValidationResult,
+    generate_private_input_center_form,
+    init_private_input_center,
+    private_input_center_to_snapshots,
+    validate_private_input_center,
+)
 from personal_cfo_agent.providers import (
     IBKRProvider,
     ManualSnapshotProvider,
@@ -489,6 +499,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Convert manual NAV input JSON into an offline provider bundle.",
     )
     parser.add_argument(
+        "--private-input-center-form",
+        action="store_true",
+        help="Generate a local-only static HTML unified private input center form.",
+    )
+    parser.add_argument(
+        "--init-private-input-center",
+        action="store_true",
+        help="Copy the unified private input center placeholder JSON into an ignored local file.",
+    )
+    parser.add_argument(
+        "--validate-private-input-center",
+        action="store_true",
+        help="Validate a unified private input center JSON without printing values.",
+    )
+    parser.add_argument(
+        "--private-input-center-to-snapshots",
+        action="store_true",
+        help="Convert unified private input center JSON into offline snapshots and provider bundle outputs.",
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Allow --init-private-input-kit to overwrite existing local placeholder files.",
@@ -631,6 +661,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _validate_manual_nav_input_cli(args, parser)
     if args.manual_nav_to_provider_bundle:
         return _manual_nav_to_provider_bundle_cli(args, parser)
+    if args.private_input_center_form:
+        return _private_input_center_form_cli(args, parser)
+    if args.init_private_input_center:
+        return _init_private_input_center_cli(args, parser)
+    if args.validate_private_input_center:
+        return _validate_private_input_center_cli(args, parser)
+    if args.private_input_center_to_snapshots:
+        return _private_input_center_to_snapshots_cli(args, parser)
     if args.dashboard_v3:
         return _dashboard_v3_cli(args, parser)
     if args.sg_manual_snapshot:
@@ -934,6 +972,133 @@ def _manual_nav_to_provider_bundle_cli(
     return 0 if result.generated else 1
 
 
+def _private_input_center_form_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_private_input_center_cli_scope(args, parser, "--private-input-center-form")
+    if args.out_dir is None:
+        parser.error("--private-input-center-form requires --out-dir")
+    if args.input_file is not None or args.out_file is not None:
+        parser.error("--private-input-center-form uses --out-dir only")
+    result = generate_private_input_center_form(out_dir=args.out_dir)
+    for line in _format_private_input_center_form_result(result):
+        print(line)
+    return 0
+
+
+def _init_private_input_center_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_private_input_center_cli_scope(args, parser, "--init-private-input-center")
+    if args.out_file is None:
+        parser.error("--init-private-input-center requires --out-file")
+    if args.input_file is not None or args.out_dir is not None:
+        parser.error("--init-private-input-center uses --out-file only")
+    result = init_private_input_center(out_file=args.out_file, overwrite=args.overwrite)
+    for line in _format_private_input_center_init_result(result):
+        print(line)
+    return 0
+
+
+def _validate_private_input_center_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_private_input_center_cli_scope(
+        args, parser, "--validate-private-input-center"
+    )
+    if args.overwrite:
+        parser.error("--validate-private-input-center cannot be combined with --overwrite")
+    if args.input_file is None:
+        parser.error("--validate-private-input-center requires --input-file")
+    if args.out_file is not None or args.out_dir is not None:
+        parser.error("--validate-private-input-center uses --input-file only")
+    result = validate_private_input_center(input_file=args.input_file)
+    for line in _format_private_input_center_validation_result(result):
+        print(line)
+    return 0 if result.valid else 1
+
+
+def _private_input_center_to_snapshots_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_private_input_center_cli_scope(
+        args, parser, "--private-input-center-to-snapshots"
+    )
+    if args.overwrite:
+        parser.error("--private-input-center-to-snapshots cannot be combined with --overwrite")
+    if args.input_file is None:
+        parser.error("--private-input-center-to-snapshots requires --input-file")
+    if args.out_dir is None:
+        parser.error("--private-input-center-to-snapshots requires --out-dir")
+    if args.out_file is not None:
+        parser.error("--private-input-center-to-snapshots uses --out-dir, not --out-file")
+    local_env_result = load_local_env_file()
+    if local_env_result.exists:
+        print(f"Loaded local environment from {LOCAL_ENV_FILENAME}; values redacted")
+    result = private_input_center_to_snapshots(
+        input_file=args.input_file,
+        out_dir=args.out_dir,
+        env=dict(os.environ),
+    )
+    for line in _format_private_input_center_snapshot_result(result):
+        print(line)
+    return 0 if result.generated else 1
+
+
+def _validate_private_input_center_cli_scope(
+    args: argparse.Namespace, parser: argparse.ArgumentParser, command_name: str
+) -> None:
+    commands = [
+        args.private_input_center_form,
+        args.init_private_input_center,
+        args.validate_private_input_center,
+        args.private_input_center_to_snapshots,
+    ]
+    if sum(1 for enabled in commands if enabled) > 1:
+        parser.error("private input center commands cannot be combined")
+    if args.allow_live_read:
+        parser.error(f"{command_name} cannot be combined with --allow-live-read")
+    if args.readiness_check or args.connection_diagnostics:
+        parser.error(f"{command_name} cannot be combined with readiness or diagnostics")
+    if args.account_discovery or args.read_context_probe:
+        parser.error(f"{command_name} cannot be combined with Moomoo discovery probes")
+    if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
+        parser.error(f"{command_name} cannot be combined with data diagnostics")
+    if (
+        args.merge_provider_bundles
+        or args.dashboard_v2
+        or args.dashboard_v3
+        or args.dashboard
+        or args.record_snapshot
+        or args.property_mortgage_snapshot
+        or args.sg_manual_snapshot
+        or args.init_private_input_kit
+        or args.validate_private_inputs
+        or args.run_manual_snapshot_chain
+        or args.manual_nav_form
+        or args.init_manual_nav_input
+        or args.validate_manual_nav_input
+        or args.manual_nav_to_provider_bundle
+    ):
+        parser.error(f"{command_name} cannot be combined with other offline workflows")
+    if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
+        parser.error(f"{command_name} cannot be combined with manual snapshot utilities")
+    if args.input_dir is not None:
+        parser.error(f"{command_name} uses --input-file/--out-file rather than --input-dir")
+    if any(
+        value is not None
+        for value in (
+            args.property_input,
+            args.mortgage_input,
+            args.cpf_input,
+            args.srs_input,
+            args.tax_input,
+            args.hdb_loan_input,
+        )
+    ):
+        parser.error(f"{command_name} uses the unified --input-file")
+
+
 def _validate_manual_nav_cli_scope(
     args: argparse.Namespace, parser: argparse.ArgumentParser, command_name: str
 ) -> None:
@@ -964,6 +1129,10 @@ def _validate_manual_nav_cli_scope(
         or args.init_private_input_kit
         or args.validate_private_inputs
         or args.run_manual_snapshot_chain
+        or args.private_input_center_form
+        or args.init_private_input_center
+        or args.validate_private_input_center
+        or args.private_input_center_to_snapshots
     ):
         parser.error(f"{command_name} cannot be combined with other offline workflows")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
@@ -1003,6 +1172,10 @@ def _validate_private_input_cli_scope(
         or args.record_snapshot
         or args.property_mortgage_snapshot
         or args.sg_manual_snapshot
+        or args.private_input_center_form
+        or args.init_private_input_center
+        or args.validate_private_input_center
+        or args.private_input_center_to_snapshots
     ):
         parser.error(f"{command_name} cannot be combined with report generators")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
@@ -1318,6 +1491,86 @@ def _format_manual_nav_bundle_result(result: ManualNavBundleResult) -> list[str]
         f"Output files: {files}",
         f"Warning codes: {warnings}",
     ]
+
+
+def _format_private_input_center_form_result(
+    result: PrivateInputCenterFormResult,
+) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    return [
+        "Personal CFO Private Input Center form v0.5.8 (offline)",
+        "External connections used: no",
+        f"Output directory: {result.output_dir}",
+        f"Form file: {result.output_path.name}",
+        f"Warning codes: {warnings}",
+    ]
+
+
+def _format_private_input_center_init_result(
+    result: PrivateInputCenterInitResult,
+) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    return [
+        "Personal CFO Private Input Center initialization v0.5.8 (offline)",
+        "External connections used: no",
+        f"Output file: {result.output_file}",
+        f"Created: {_yes_no(result.created)}",
+        f"Skipped existing file: {_yes_no(result.skipped)}",
+        f"Overwritten: {_yes_no(result.overwritten)}",
+        f"Warning codes: {warnings}",
+    ]
+
+
+def _format_private_input_center_validation_result(
+    result: PrivateInputCenterValidationResult,
+) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    providers = ", ".join(result.provider_labels) or "None"
+    currencies = ", ".join(result.base_currencies) or "None"
+    return [
+        "Personal CFO Private Input Center validation v0.5.8 (offline)",
+        "External connections used: no",
+        f"Input file: {result.input_file}",
+        f"Validation passed: {_yes_no(result.valid)}",
+        f"Manual NAV account count: {result.manual_nav_account_count}",
+        f"Property count: {result.property_count}",
+        f"Mortgage count: {result.mortgage_count}",
+        f"CPF row count: {result.cpf_count}",
+        f"SRS row count: {result.srs_count}",
+        f"Tax row count: {result.tax_count}",
+        f"HDB loan row count: {result.hdb_loan_count}",
+        f"Provider labels: {providers}",
+        f"Base currencies: {currencies}",
+        f"Warning codes: {warnings}",
+    ]
+
+
+def _format_private_input_center_snapshot_result(
+    result: PrivateInputCenterSnapshotResult,
+) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    output_names: list[str] = []
+    if result.manual_nav_result is not None:
+        output_names.extend(path.name for path in result.manual_nav_result.output_paths.values())
+    if result.property_result is not None:
+        output_names.extend(path.name for path in result.property_result.output_paths.values())
+    if result.sg_result is not None:
+        output_names.extend(path.name for path in result.sg_result.output_paths.values())
+    lines = [
+        "Personal CFO Private Input Center snapshots v0.5.8 (offline)",
+        "External connections used: no",
+        "Broker live reads used: no",
+        f"Input file: {result.input_file}",
+        f"Output directory: {result.output_dir}",
+        f"Manual NAV output directory: {result.manual_nav_output_dir}",
+        f"Property/mortgage output directory: {result.property_output_dir}",
+        f"Singapore snapshot output directory: {result.sg_output_dir}",
+        f"Snapshot outputs generated: {_yes_no(result.generated)}",
+        f"Warning codes: {warnings}",
+    ]
+    if output_names:
+        lines.append("Output files: " + ", ".join(sorted(output_names)))
+    return lines
 
 
 def _format_private_input_validation_result(

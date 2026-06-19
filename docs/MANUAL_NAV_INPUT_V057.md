@@ -4,6 +4,18 @@ v0.5.7 adds a local-only manual account NAV input workflow for brokerage and man
 
 This is not a broker connector. It does not call broker APIs, browser sessions, bank systems, CPF, IRAS, HDB, SingPass, or external accounts.
 
+## Preferred Unified Workflow
+
+v0.5.8 adds `docs/UNIFIED_PRIVATE_INPUT_CENTER_V058.md`, which lets manual NAV accounts live in one ignored local file alongside property/mortgage, CPF, SRS, tax, and HDB loan sections:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --init-private-input-center `
+  --out-file .\private_inputs\personal_cfo_input.local.json
+```
+
+Use the unified private input center when you want one local input surface. The v0.5.7 split commands below still work and remain useful when you only want to update manual NAV.
+
 ## Workflow
 
 Generate a local static worksheet:

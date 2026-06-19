@@ -17,6 +17,18 @@ Only placeholder examples are committed:
 
 These files are schema examples only. Real values belong only in ignored local folders.
 
+## Preferred Unified Workflow
+
+v0.5.8 adds `docs/UNIFIED_PRIVATE_INPUT_CENTER_V058.md` and a single ignored local input file option:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --init-private-input-center `
+  --out-file .\private_inputs\personal_cfo_input.local.json
+```
+
+Use the unified private input center when you want one human-friendly local file covering manual NAV, property/mortgage, CPF, SRS, tax, and HDB loan sections. The split v0.5.3 commands below still work and remain useful for focused debugging or separate source files.
+
 ## Ignored Local Input Folders
 
 Use one of these ignored local paths for real manual inputs:
