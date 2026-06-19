@@ -24,6 +24,7 @@ Required for readiness or live sync:
 Optional:
 
 - `CFO_ACCOUNT_HASH_SALT`
+- `CFO_TIGER_BASE_CURRENCY` for read-only reporting when TigerOpen position/cash payloads do not include explicit currency. Use a real account base currency such as `USD`, `HKD`, or `SGD`; do not guess.
 
 Secrets and local TigerOpen configuration must stay outside Git and outside the repository directory. Do not commit local config, account exports, logs with account data, private keys, or generated reports. If a real Tiger config or private key is ever committed, rotate the key before any further live testing.
 
@@ -168,6 +169,8 @@ With `--tiger-data-diagnostics`, the CLI prints only redacted data-path diagnost
 - Normalized rows.
 - Warning codes.
 - Sanitized stage failures.
+
+If TigerOpen returns positions without per-row currency and no cash currency rows, downstream account NAV merge cannot safely infer the Tiger base currency. In that case, set `CFO_TIGER_BASE_CURRENCY` locally before the supervised read-only refresh. This value is used only to label read-only normalized rows and account NAV currency; it does not enable orders, transfers, or account writes.
 
 ## Output Contract
 

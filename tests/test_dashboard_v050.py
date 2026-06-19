@@ -63,6 +63,7 @@ def test_dashboard_v3_generates_from_all_fixture_layers(tmp_path: Path) -> None:
         dashboard_dir=dirs["dashboard_v2"],
         property_mortgage_dir=dirs["property"],
         sg_snapshot_dir=dirs["sg"],
+        fx_rates_input=_write_fx_rates(tmp_path),
         out_dir=tmp_path / "dashboard_v3",
     )
 
@@ -105,6 +106,7 @@ def test_dashboard_v3_writes_expected_csv_shapes_and_consistent_balance_sheet(
         dashboard_dir=dirs["dashboard_v2"],
         property_mortgage_dir=dirs["property"],
         sg_snapshot_dir=dirs["sg"],
+        fx_rates_input=_write_fx_rates(tmp_path),
         out_dir=tmp_path / "dashboard_v3",
     )
 
@@ -119,7 +121,7 @@ def test_dashboard_v3_writes_expected_csv_shapes_and_consistent_balance_sheet(
     assert any(row["layer"] == "property" for row in breakdown_rows)
     by_category = {row["category"]: row for row in balance_rows}
     assert by_category["property_equity"]["amount"] == "200000.00"
-    assert by_category["mortgage_liabilities"]["amount"] == ""
+    assert by_category["mortgage_liabilities"]["amount"] == "300000.00"
     expected_net_worth = (
         _number(by_category["account_nav"]["amount"])
         + _number(by_category["property_equity"]["amount"])
@@ -131,6 +133,180 @@ def test_dashboard_v3_writes_expected_csv_shapes_and_consistent_balance_sheet(
         row["item_label"] == "gross_mortgage_liabilities" and row["amount"] == "300000.00"
         for row in breakdown_rows
     )
+
+
+def test_dashboard_v3_fx_rates_normalize_mixed_currency_nav(tmp_path: Path) -> None:
+    dirs = _generate_fixture_chain(tmp_path)
+    account_path = dirs["merged"] / "merged_account_nav_ledger.csv"
+    account_rows = _read_rows(account_path)
+    for row in account_rows:
+        row["account_nav"] = "0.00"
+        row["base_currency"] = "SGD"
+    account_rows[0]["account_nav"] = "100.00"
+    account_rows[0]["base_currency"] = "USD"
+    account_rows[1]["account_nav"] = "200.00"
+    account_rows[1]["base_currency"] = "HKD"
+    with account_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(account_rows[0]))
+        writer.writeheader()
+        writer.writerows(account_rows)
+    mixed_snapshot = tmp_path / "snapshot_fx_normalized"
+    assert (
+        main(
+            [
+                "--record-snapshot",
+                "--merge-dir",
+                str(dirs["merged"]),
+                "--dashboard-dir",
+                str(dirs["dashboard_v2"]),
+                "--out-dir",
+                str(mixed_snapshot),
+                "--snapshot-id",
+                "snapshot_v050_fx_normalized",
+            ]
+        )
+        == 0
+    )
+
+    result = write_dashboard_v3(
+        merge_dir=dirs["merged"],
+        snapshot_dir=mixed_snapshot,
+        dashboard_dir=dirs["dashboard_v2"],
+        property_mortgage_dir=dirs["property"],
+        sg_snapshot_dir=dirs["sg"],
+        fx_rates_input=_write_fx_rates(tmp_path, usd="1.30", hkd="0.16", sgd="1.00"),
+        out_dir=tmp_path / "dashboard_v3_fx_normalized",
+    )
+
+    net_worth_rows = _read_rows(result.output_paths["net_worth_progress"])
+    balance_rows = _read_rows(result.output_paths["balance_sheet_summary"])
+    breakdown_rows = _read_rows(result.output_paths["asset_liability_breakdown"])
+    by_category = {row["category"]: row for row in balance_rows}
+
+    assert WarningCode.DASHBOARD_V3_FX_NORMALIZATION_APPLIED in result.warning_codes
+    assert net_worth_rows[0]["base_currency"] == "SGD"
+    assert net_worth_rows[0]["total_account_nav"] == "162.00"
+    assert by_category["account_nav"]["amount"] == "162.00"
+    assert by_category["account_nav"]["currency"] == "SGD"
+    assert {
+        row["currency"] for row in breakdown_rows if row["layer"] == "account_nav"
+    } == {"SGD"}
+
+
+def test_dashboard_v3_fx_rates_do_not_guess_missing_account_currency(
+    tmp_path: Path,
+) -> None:
+    dirs = _generate_fixture_chain(tmp_path)
+    account_path = dirs["merged"] / "merged_account_nav_ledger.csv"
+    account_rows = _read_rows(account_path)
+    for row in account_rows:
+        row["account_nav"] = "0.00"
+        row["base_currency"] = "SGD"
+    account_rows[0]["provider"] = "unknown_currency_provider"
+    account_rows[0]["account_nav"] = "100.00"
+    account_rows[0]["base_currency"] = ""
+    with account_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(account_rows[0]))
+        writer.writeheader()
+        writer.writerows(account_rows)
+    snapshot_dir = tmp_path / "snapshot_missing_currency"
+    assert (
+        main(
+            [
+                "--record-snapshot",
+                "--merge-dir",
+                str(dirs["merged"]),
+                "--dashboard-dir",
+                str(dirs["dashboard_v2"]),
+                "--out-dir",
+                str(snapshot_dir),
+                "--snapshot-id",
+                "snapshot_v050_missing_currency",
+            ]
+        )
+        == 0
+    )
+
+    result = write_dashboard_v3(
+        merge_dir=dirs["merged"],
+        snapshot_dir=snapshot_dir,
+        dashboard_dir=dirs["dashboard_v2"],
+        property_mortgage_dir=dirs["property"],
+        sg_snapshot_dir=dirs["sg"],
+        fx_rates_input=_write_fx_rates(tmp_path),
+        out_dir=tmp_path / "dashboard_v3_missing_currency",
+    )
+
+    balance_rows = _read_rows(result.output_paths["balance_sheet_summary"])
+    breakdown_rows = _read_rows(result.output_paths["asset_liability_breakdown"])
+    by_category = {row["category"]: row for row in balance_rows}
+    provider_rows = {
+        row["item_label"]: row for row in breakdown_rows if row["layer"] == "account_nav"
+    }
+
+    assert WarningCode.DASHBOARD_V3_FX_RATE_MISSING in result.warning_codes
+    assert by_category["account_nav"]["amount"] == ""
+    assert provider_rows["unknown_currency_provider"]["amount"] == ""
+    assert provider_rows["unknown_currency_provider"]["currency"] == "SGD"
+
+
+def test_dashboard_v3_mixed_currency_account_nav_requires_review(
+    tmp_path: Path,
+) -> None:
+    dirs = _generate_fixture_chain(tmp_path)
+    account_path = dirs["merged"] / "merged_account_nav_ledger.csv"
+    account_rows = _read_rows(account_path)
+    account_rows[0]["base_currency"] = "USD"
+    account_rows[1]["base_currency"] = "HKD"
+    with account_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(account_rows[0]))
+        writer.writeheader()
+        writer.writerows(account_rows)
+    mixed_snapshot = tmp_path / "snapshot_mixed_currency"
+    assert (
+        main(
+            [
+                "--record-snapshot",
+                "--merge-dir",
+                str(dirs["merged"]),
+                "--dashboard-dir",
+                str(dirs["dashboard_v2"]),
+                "--out-dir",
+                str(mixed_snapshot),
+                "--snapshot-id",
+                "snapshot_v050_mixed_currency",
+            ]
+        )
+        == 0
+    )
+
+    result = write_dashboard_v3(
+        merge_dir=dirs["merged"],
+        snapshot_dir=mixed_snapshot,
+        dashboard_dir=dirs["dashboard_v2"],
+        property_mortgage_dir=dirs["property"],
+        sg_snapshot_dir=dirs["sg"],
+        out_dir=tmp_path / "dashboard_v3_mixed_currency",
+    )
+
+    net_worth_rows = _read_rows(result.output_paths["net_worth_progress"])
+    balance_rows = _read_rows(result.output_paths["balance_sheet_summary"])
+    breakdown_rows = _read_rows(result.output_paths["asset_liability_breakdown"])
+    by_category = {row["category"]: row for row in balance_rows}
+
+    assert WarningCode.DASHBOARD_V3_MIXED_CURRENCY_NAV in result.warning_codes
+    assert net_worth_rows[0]["base_currency"] == "MIXED"
+    assert net_worth_rows[0]["total_account_nav"] == ""
+    assert net_worth_rows[0]["integrated_net_worth"] == ""
+    assert by_category["account_nav"]["amount"] == ""
+    assert by_category["integrated_net_worth"]["amount"] == ""
+    provider_currency = {
+        row["item_label"]: row["currency"]
+        for row in breakdown_rows
+        if row["layer"] == "account_nav"
+    }
+    assert "USD" in provider_currency.values()
+    assert "HKD" in provider_currency.values()
 
 
 def test_dashboard_v3_missing_property_snapshot_warns_not_fails(tmp_path: Path) -> None:
@@ -261,6 +437,7 @@ def test_dashboard_v3_cli_rejects_live_discovery_and_other_generators(tmp_path: 
     assert "--snapshot-dir" in option_strings
     assert "--property-mortgage-dir" in option_strings
     assert "--sg-snapshot-dir" in option_strings
+    assert "--fx-rates-input" in option_strings
 
     base_args = [
         "--dashboard-v3",
@@ -388,6 +565,26 @@ def _generate_fixture_chain(tmp_path: Path) -> dict[str, Path]:
 def _read_rows(path: Path) -> list[dict[str, str]]:
     with path.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
+
+
+def _write_fx_rates(
+    tmp_path: Path, *, usd: str = "1.00", hkd: str = "1.00", sgd: str = "1.00"
+) -> Path:
+    path = tmp_path / "fx_rates.json"
+    path.write_text(
+        json.dumps(
+            {
+                "base_currency": "SGD",
+                "rates": {
+                    "USD": usd,
+                    "HKD": hkd,
+                    "SGD": sgd,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _number(value: str) -> float:

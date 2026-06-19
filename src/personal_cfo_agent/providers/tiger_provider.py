@@ -157,7 +157,29 @@ class TigerProvider(ProviderBase):
         ]
 
     def fetch_balances(self) -> list[RawBalance]:
-        return []
+        snapshot = self._require_snapshot()
+        balances: list[RawBalance] = []
+        for row in snapshot.accounts:
+            if row.account_nav is None:
+                continue
+            balances.append(
+                RawBalance(
+                    account_id=row.account_id,
+                    asset_id="TIGER-ACCOUNT-NAV",
+                    asset_type="account_nav",
+                    name="Tiger account NAV",
+                    currency=row.currency,
+                    amount=row.account_nav,
+                    liquidity_bucket="account_nav",
+                    risk_bucket="account_nav",
+                    source_timestamp=row.source_timestamp or "",
+                    source_confidence="tiger_provider_reported_nav",
+                    needs_review=False,
+                    warning_codes=[WarningCode.ACCOUNT_NAV_PROVIDER_REPORTED],
+                    notes="TigerOpen provider-reported account NAV",
+                )
+            )
+        return balances
 
     def disconnect(self) -> None:
         return None
@@ -168,6 +190,7 @@ class TigerProvider(ProviderBase):
             config_dir=str(settings["CFO_TIGER_CONFIG_DIR"]),
             account_id=str(settings["CFO_TIGER_ACCOUNT"]),
             account_hash_salt=settings.get("CFO_ACCOUNT_HASH_SALT"),
+            base_currency=settings.get("CFO_TIGER_BASE_CURRENCY"),
         )
 
     def _require_snapshot(self) -> TigerReadOnlySnapshot:

@@ -140,7 +140,26 @@ class IBKRProvider(ProviderBase):
         ]
 
     def fetch_balances(self) -> list[RawBalance]:
-        return []
+        snapshot = self._require_snapshot()
+        return [
+            RawBalance(
+                account_id=row.account_id,
+                asset_id="IBKR-ACCOUNT-NAV",
+                asset_type="account_nav",
+                name="IBKR NetLiquidation",
+                currency=row.currency,
+                amount=row.account_nav,
+                source_timestamp=row.source_timestamp,
+                liquidity_bucket="account_nav",
+                risk_bucket="account_nav",
+                source_confidence="ibkr_read_only_live",
+                needs_review=False,
+                warning_codes=[],
+                notes="IBKR provider-reported NetLiquidation",
+            )
+            for row in snapshot.accounts
+            if row.account_nav is not None
+        ]
 
     def disconnect(self) -> None:
         return None

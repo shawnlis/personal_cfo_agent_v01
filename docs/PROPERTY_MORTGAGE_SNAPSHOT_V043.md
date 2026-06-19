@@ -77,6 +77,8 @@ For each property:
 equity = valuation_amount * ownership_pct - linked mortgage balance
 ```
 
+`ownership_pct` accepts either a decimal fraction such as `0.50` or a percent string such as `50%`. The generated ledger stores the normalized decimal value.
+
 Mortgages without `linked_property_id_hash` remain in the mortgage liability ledger and generate `MORTGAGE_UNLINKED`.
 
 ## Validation Rules

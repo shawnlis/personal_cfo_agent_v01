@@ -42,6 +42,9 @@ class MoomooAccountDiscoveryDiagnostics:
     variant_warning_codes: list[WarningCode] = field(default_factory=list)
     warning_codes: list[WarningCode] = field(default_factory=list)
     selected_account_id: Any | None = field(default=None, repr=False, compare=False)
+    candidate_account_ids: list[Any] = field(
+        default_factory=list, repr=False, compare=False
+    )
     selected_filter_name: str | None = field(default=None, repr=False, compare=False)
     selected_security_firm_name: str | None = field(default=None, repr=False, compare=False)
     selected_need_general_sec_acc: bool = field(default=False, repr=False, compare=False)
@@ -231,6 +234,9 @@ def run_moomoo_account_discovery(
 
     selected = _select_account(candidates)
     account_hashes = _dedupe_text([candidate.account_hash for candidate in candidates])
+    candidate_account_ids = _dedupe_account_ids(
+        [candidate.account_id for candidate in candidates]
+    )
     if selected is None:
         terminal_warnings.extend(
             [
@@ -285,6 +291,7 @@ def run_moomoo_account_discovery(
         variant_warning_codes=_dedupe(variant_warnings),
         warning_codes=warning_codes,
         selected_account_id=selected.account_id if selected else None,
+        candidate_account_ids=candidate_account_ids,
         selected_filter_name=selected.variant.filter_name if selected else None,
         selected_security_firm_name=(
             selected.variant.security_firm_name if selected else None
@@ -635,4 +642,15 @@ def _dedupe_text(values: list[str]) -> list[str]:
         if value and value not in seen:
             result.append(value)
             seen.add(value)
+    return result
+
+
+def _dedupe_account_ids(values: list[Any]) -> list[Any]:
+    seen: set[str] = set()
+    result: list[Any] = []
+    for value in values:
+        key = str(value)
+        if key not in seen:
+            result.append(value)
+            seen.add(key)
     return result

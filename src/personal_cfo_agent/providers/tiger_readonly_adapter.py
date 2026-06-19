@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import io
+import math
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -134,11 +135,16 @@ class TigerReadOnlyAdapter:
     """Collects TigerOpen account data through a private read-only wrapper."""
 
     def __init__(
-        self, config_dir: str, account_id: str, account_hash_salt: str | None = None
+        self,
+        config_dir: str,
+        account_id: str,
+        account_hash_salt: str | None = None,
+        base_currency: str | None = None,
     ) -> None:
         self.config_dir = config_dir
         self.account_id = account_id
         self.account_hash_salt = account_hash_salt
+        self.base_currency = _clean_currency(base_currency)
 
     def collect(self) -> TigerReadOnlySnapshot:
         state = _DiagnosticState()
@@ -289,20 +295,41 @@ class TigerReadOnlyAdapter:
                 [WarningCode.TIGER_CASH_QUERY_FAILED, WarningCode.PROVIDER_FETCH_FAILED],
             )
             raise TigerFetchError("TigerOpen cash query failed", state.to_diagnostics()) from exc
-        position_rows = _position_rows(position_payload, self.account_id, source_timestamp)
+        preliminary_account_currency = _infer_account_currency(
+            cash_rows=cash_rows,
+            position_rows=[],
+            asset_payload=asset_payload,
+            position_payload=position_payload,
+            fallback_currency=self.base_currency,
+        )
+        position_rows = _position_rows(
+            position_payload,
+            self.account_id,
+            source_timestamp,
+            default_currency=self.base_currency or preliminary_account_currency,
+        )
         state.cash_currency_count = len({row.currency for row in cash_rows})
         state.position_count = len(position_rows)
         if not cash_rows and not position_rows:
             state.add_warnings(
                 [WarningCode.TIGER_NO_DATA_RETURNED, WarningCode.TIGER_READ_SUCCEEDED_EMPTY]
             )
-        account_currency = cash_rows[0].currency if cash_rows else None
+        account_currency = _infer_account_currency(
+            cash_rows=cash_rows,
+            position_rows=position_rows,
+            asset_payload=asset_payload,
+            position_payload=position_payload,
+            fallback_currency=self.base_currency,
+        )
+        account_nav = _infer_account_nav(asset_payload, account_currency)
         diagnostics = state.to_diagnostics().to_redacted_dict()
         return TigerReadOnlySnapshot(
             accounts=[
                 TigerAccountRow(
                     account_id=self.account_id,
                     currency=account_currency,
+                    account_nav=account_nav,
+                    source_timestamp=source_timestamp,
                     notes="TigerOpen read-only account",
                 )
             ],
@@ -541,8 +568,23 @@ def _call_first(client: Any, method_names: list[str]) -> Any:
 
 
 def _cash_rows(payload: Any, account_id: str, source_timestamp: str) -> list[TigerCashRow]:
-    rows = _records(payload)
     cash_rows: list[TigerCashRow] = []
+    for asset in _prime_currency_asset_records(payload):
+        amount = _finite_float(asset.get("cash_balance"))
+        currency = _clean_currency(asset.get("currency"))
+        if amount is not None and currency:
+            cash_rows.append(
+                TigerCashRow(
+                    account_id=account_id,
+                    currency=currency,
+                    amount=amount,
+                    source_timestamp=source_timestamp,
+                    notes="TigerOpen prime currency asset cash",
+                )
+            )
+    if cash_rows:
+        return cash_rows
+    rows = _records(payload)
     for row in rows:
         amount = _first_float(row, ["cash", "cash_balance", "available_cash", "total_cash"])
         currency = str(_first_value(row, ["currency", "cash_currency"], "UNKNOWN"))
@@ -560,7 +602,11 @@ def _cash_rows(payload: Any, account_id: str, source_timestamp: str) -> list[Tig
 
 
 def _position_rows(
-    payload: Any, account_id: str, source_timestamp: str
+    payload: Any,
+    account_id: str,
+    source_timestamp: str,
+    *,
+    default_currency: str | None = None,
 ) -> list[TigerPositionRow]:
     positions: list[TigerPositionRow] = []
     for row in _records(payload):
@@ -569,7 +615,7 @@ def _position_rows(
         quantity = _first_float(row, ["quantity", "position", "qty"]) or 0.0
         market_value = _first_float(row, ["market_value", "market_val"])
         cost_basis = _first_float(row, ["cost_basis", "average_cost", "avg_cost"])
-        currency = _first_value(row, ["currency"], None)
+        currency = _first_value(row, ["currency"], default_currency)
         positions.append(
             TigerPositionRow(
                 account_id=account_id,
@@ -588,6 +634,76 @@ def _position_rows(
     return positions
 
 
+def _infer_account_nav(payload: Any, account_currency: str | None) -> float | None:
+    segment_rows = _prime_segment_records(payload)
+    totals: dict[str, float] = {}
+    for row in segment_rows:
+        currency = _clean_currency(row.get("currency"))
+        amount = _first_float(
+            row,
+            ["net_liquidation", "equity_with_loan", "gross_position_value"],
+        )
+        if not currency or amount is None:
+            continue
+        totals[currency] = totals.get(currency, 0.0) + amount
+    if account_currency and account_currency in totals:
+        return totals[account_currency]
+    if len(totals) == 1:
+        return next(iter(totals.values()))
+    for row in _records(payload):
+        amount = _first_float(row, ["net_liquidation", "account_nav", "equity_with_loan"])
+        if amount is not None:
+            return amount
+    return None
+
+
+def _infer_account_currency(
+    *,
+    cash_rows: list[TigerCashRow],
+    position_rows: list[TigerPositionRow],
+    asset_payload: Any,
+    position_payload: Any,
+    fallback_currency: str | None,
+) -> str | None:
+    segment_currencies = sorted(
+        {
+            currency
+            for row in _prime_segment_records(asset_payload)
+            if (currency := _clean_currency(row.get("currency")))
+        }
+    )
+    if len(segment_currencies) == 1:
+        return segment_currencies[0]
+    candidates: list[str] = []
+    candidates.extend(row.currency for row in cash_rows if row.currency)
+    candidates.extend(row.currency for row in position_rows if row.currency)
+    for row in _prime_currency_asset_records(asset_payload):
+        currency = _clean_currency(row.get("currency"))
+        if currency:
+            candidates.append(currency)
+    for payload in (asset_payload, position_payload):
+        for row in _records(payload):
+            currency = _first_value(
+                row,
+                ["base_currency", "currency", "account_currency", "cash_currency"],
+                None,
+            )
+            if currency:
+                candidates.append(str(currency))
+    if fallback_currency:
+        candidates.append(fallback_currency)
+    unique = sorted({_clean_currency(currency) for currency in candidates if currency})
+    unique = [currency for currency in unique if currency]
+    return unique[0] if len(unique) == 1 else None
+
+
+def _clean_currency(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().upper()
+    return text or None
+
+
 def _records(payload: Any) -> list[dict[str, Any]]:
     data = getattr(payload, "data", payload)
     to_dict = getattr(data, "to_dict", None)
@@ -600,6 +716,25 @@ def _records(payload: Any) -> list[dict[str, Any]]:
     if data is None:
         return []
     return [_object_to_dict(data)]
+
+
+def _prime_segment_records(payload: Any) -> list[dict[str, Any]]:
+    segments = getattr(payload, "segments", None)
+    if not isinstance(segments, dict):
+        data = getattr(payload, "data", payload)
+        segments = getattr(data, "segments", None)
+    if not isinstance(segments, dict):
+        return []
+    return [_object_to_dict(segment) for segment in segments.values()]
+
+
+def _prime_currency_asset_records(payload: Any) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for segment in _prime_segment_records(payload):
+        assets = segment.get("_currency_assets") or segment.get("currency_assets")
+        if isinstance(assets, dict):
+            records.extend(_object_to_dict(asset) for asset in assets.values())
+    return records
 
 
 def _object_to_dict(value: Any) -> dict[str, Any]:
@@ -619,9 +754,14 @@ def _first_value(row: dict[str, Any], keys: list[str], default: Any = None) -> A
 
 def _first_float(row: dict[str, Any], keys: list[str]) -> float | None:
     value = _first_value(row, keys)
+    return _finite_float(value)
+
+
+def _finite_float(value: Any) -> float | None:
     if value is None:
         return None
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    return parsed if math.isfinite(parsed) else None

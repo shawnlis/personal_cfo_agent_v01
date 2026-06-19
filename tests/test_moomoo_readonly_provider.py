@@ -1341,6 +1341,103 @@ def test_moomoo_cash_parser_maps_currency_cash_fields(monkeypatch) -> None:
     assert snapshot.status.diagnostics["cash_currency_count"] == 3
 
 
+def test_moomoo_total_assets_normalizes_as_account_nav_row(monkeypatch) -> None:
+    raw_account = "MOOMOO_NAV_ACCOUNT_SENTINEL"
+
+    class _TotalAssetsContext:
+        def __init__(self, *, host: str, port: int) -> None:
+            pass
+
+        def acc_list_query(self):
+            return 0, [
+                {
+                    "acc_id": raw_account,
+                    "trd_env": "REAL",
+                    "trdmarket_auth": ["SG"],
+                    "acc_status": "ACTIVE",
+                }
+            ]
+
+        def accinfo_query(self, *, trd_env, acc_id=0):
+            return 0, [{"total_assets": "2345.67", "currency": "SGD", "sg_cash": 5}]
+
+        def position_list_query(self, *, trd_env, acc_id=0):
+            return 0, []
+
+        def close(self) -> None:
+            pass
+
+    _install_fake_sdk(monkeypatch, _TotalAssetsContext)
+    provider = MoomooProvider(_valid_config(), allow_live_read=True)
+
+    snapshot = provider._sync()
+    rows = normalize_snapshot(snapshot)
+    account_nav_rows = [row for row in rows if row.asset_type == "account_nav"]
+    output_text = "\n".join(str(row.to_csv_row()) for row in rows)
+
+    assert len(account_nav_rows) == 1
+    assert account_nav_rows[0].market_value == 2345.67
+    assert account_nav_rows[0].currency == "SGD"
+    assert account_nav_rows[0].source_confidence == "moomoo_read_only_live"
+    assert raw_account not in output_text
+
+
+def test_moomoo_selects_candidate_account_with_provider_reported_nav(monkeypatch) -> None:
+    zero_account = "MOOMOO_ZERO_NAV_ACCOUNT_SENTINEL"
+    funded_account = "MOOMOO_FUNDED_NAV_ACCOUNT_SENTINEL"
+    calls: list[tuple[str, object]] = []
+
+    class _MultiAccountContext:
+        def __init__(self, *, host: str, port: int, **kwargs) -> None:
+            pass
+
+        def acc_list_query(self):
+            return 0, [
+                {
+                    "acc_id": zero_account,
+                    "trd_env": "REAL",
+                    "trdmarket_auth": ["SG"],
+                    "acc_status": "ACTIVE",
+                },
+                {
+                    "acc_id": funded_account,
+                    "trd_env": "REAL",
+                    "trdmarket_auth": ["SG"],
+                    "acc_status": "ACTIVE",
+                },
+            ]
+
+        def accinfo_query(self, *, trd_env, acc_id=0):
+            calls.append(("accinfo_query", acc_id))
+            if acc_id == funded_account:
+                return 0, [{"total_assets": "3456.78", "currency": "SGD", "sg_cash": 7}]
+            return 0, [{"total_assets": "0", "currency": "SGD", "sg_cash": 0}]
+
+        def position_list_query(self, *, trd_env, acc_id=0):
+            calls.append(("position_list_query", acc_id))
+            return 0, []
+
+        def close(self) -> None:
+            pass
+
+    _install_fake_sdk(monkeypatch, _MultiAccountContext)
+    provider = MoomooProvider(_valid_config(), allow_live_read=True)
+
+    snapshot = provider._sync()
+    rows = normalize_snapshot(snapshot)
+    account_nav_rows = [row for row in rows if row.asset_type == "account_nav"]
+    output_text = "\n".join(str(row.to_csv_row()) for row in rows)
+
+    assert snapshot.accounts[0].account_id == funded_account
+    assert len(account_nav_rows) == 1
+    assert account_nav_rows[0].market_value == 3456.78
+    assert ("accinfo_query", zero_account) in calls
+    assert ("accinfo_query", funded_account) in calls
+    assert ("position_list_query", funded_account) in calls
+    assert zero_account not in output_text
+    assert funded_account not in output_text
+
+
 def test_moomoo_missing_cash_fields_warns_but_positions_normalize(monkeypatch) -> None:
     class _PositionOnlyContext:
         def __init__(self, *, host: str, port: int) -> None:

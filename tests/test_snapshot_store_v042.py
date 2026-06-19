@@ -98,6 +98,34 @@ def test_snapshot_history_files_created(tmp_path: Path) -> None:
     assert len(provider_rows) == 2
 
 
+def test_snapshot_mixed_currency_account_nav_does_not_sum_total_nav(
+    tmp_path: Path,
+) -> None:
+    merge_dir = tmp_path / "merged"
+    dashboard_dir = tmp_path / "dashboard"
+    _write_snapshot_inputs(merge_dir, dashboard_dir)
+    rows = _read_rows(merge_dir / "merged_account_nav_ledger.csv")
+    rows[0]["base_currency"] = "USD"
+    rows[1]["base_currency"] = "HKD"
+    _write_csv(merge_dir / "merged_account_nav_ledger.csv", ACCOUNT_NAV_FIELDNAMES, rows)
+
+    result = record_snapshot(
+        merge_dir=merge_dir,
+        dashboard_dir=dashboard_dir,
+        out_dir=tmp_path / "snapshots",
+        snapshot_id="snapshot_mixed_currency",
+        generated_at=_generated_at(),
+    )
+
+    manifest = json.loads(result.output_paths["snapshot_manifest"].read_text(encoding="utf-8"))
+    net_worth_rows = _read_rows(result.output_paths["net_worth_history"])
+
+    assert WarningCode.SNAPSHOT_MIXED_CURRENCY_NAV in result.warning_codes
+    assert manifest["total_account_nav_available"] == "no"
+    assert net_worth_rows[0]["base_currency"] == ""
+    assert net_worth_rows[0]["total_account_nav"] == ""
+
+
 def test_duplicate_snapshot_id_fails_closed(tmp_path: Path) -> None:
     merge_dir = tmp_path / "merged"
     dashboard_dir = tmp_path / "dashboard"

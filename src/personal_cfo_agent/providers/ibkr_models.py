@@ -12,6 +12,8 @@ class IBKRAccountRow:
     account_id: str
     account_type: str = "ibkr"
     currency: str | None = None
+    account_nav: float | None = None
+    source_timestamp: str = ""
     notes: str = ""
 
 

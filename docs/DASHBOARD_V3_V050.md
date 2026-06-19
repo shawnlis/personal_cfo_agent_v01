@@ -14,6 +14,7 @@ python .\scripts\personal_cfo_agent.py `
   --snapshot-dir .\reports\personal_cfo_agent\snapshots_v042_fixture `
   --property-mortgage-dir .\reports\personal_cfo_agent\property_mortgage_v043_fixture `
   --sg-snapshot-dir .\reports\personal_cfo_agent\sg_snapshot_v044_fixture `
+  --fx-rates-input .\reports\personal_cfo_agent\fx_rates_local.json `
   --out-dir .\reports\personal_cfo_agent\dashboard_v050_fixture
 ```
 
@@ -26,6 +27,23 @@ python .\scripts\personal_cfo_agent.py `
 - v0.4.4 Singapore manual snapshot: optional offline manual CPF, SRS, tax review, and HDB loan availability layer.
 
 Property and Singapore manual layers are optional. Missing optional layers generate warnings rather than failing the dashboard. Missing snapshot history fails closed because Dashboard v3 is history-first.
+
+Mixed-currency top-level net worth requires an explicit local FX rates JSON. Without FX rates, Dashboard v3 still writes review outputs and native-currency drilldowns, but it fails closed for mixed-currency total net worth instead of silently summing USD, HKD, SGD, or unknown-currency rows.
+
+FX rates use this local JSON shape:
+
+```json
+{
+  "base_currency": "SGD",
+  "rates": {
+    "SGD": "1.00",
+    "USD": "1.30",
+    "HKD": "0.16"
+  }
+}
+```
+
+Rates are local review inputs. They are not fetched automatically, and generated/private real-rate files should stay ignored.
 
 ## Outputs
 
@@ -65,6 +83,9 @@ v0.5.3 adds a local private input kit for preparing real manual property/mortgag
 - `DASHBOARD_V3_DASHBOARD_V2_SUMMARY_MISSING`
 - `DASHBOARD_V3_PROPERTY_SNAPSHOT_MISSING`
 - `DASHBOARD_V3_SG_SNAPSHOT_MISSING`
+- `DASHBOARD_V3_MIXED_CURRENCY_NAV`
+- `DASHBOARD_V3_FX_RATE_MISSING`
+- `DASHBOARD_V3_FX_NORMALIZATION_APPLIED`
 - `DASHBOARD_V3_REVIEW_REQUIRED`
 - `DASHBOARD_V3_GENERATED_OK`
 - `DASHBOARD_V3_GENERATED_WITH_WARNINGS`

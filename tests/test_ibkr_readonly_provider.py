@@ -140,6 +140,37 @@ def test_fixture_ibkr_snapshot_normalizes_and_hashes_account_id(tmp_path) -> Non
     assert "account_id_hash" in output_text
 
 
+def test_ibkr_net_liquidation_normalizes_as_account_nav_row() -> None:
+    raw_account_id = "DU1234567"
+    provider = IBKRProvider(
+        _valid_config({"CFO_IBKR_ACCOUNT": raw_account_id}),
+        allow_live_read=True,
+        live_adapter=_FakeAdapter(
+            IBKRReadOnlySnapshot(
+                accounts=[
+                    IBKRAccountRow(
+                        account_id=raw_account_id,
+                        currency="SGD",
+                        account_nav=1234.56,
+                        source_timestamp="2026-06-18T00:00:00+00:00",
+                    )
+                ],
+            )
+        ),
+    )
+
+    snapshot = provider._sync()
+    rows = normalize_snapshot(snapshot)
+    account_nav_rows = [row for row in rows if row.asset_type == "account_nav"]
+    output_text = "\n".join(str(row.to_csv_row()) for row in rows)
+
+    assert len(account_nav_rows) == 1
+    assert account_nav_rows[0].market_value == 1234.56
+    assert account_nav_rows[0].currency == "SGD"
+    assert account_nav_rows[0].source_confidence == "ibkr_read_only_live"
+    assert raw_account_id not in output_text
+
+
 def test_live_read_blocked_when_flag_exists_but_env_disabled() -> None:
     fake_adapter = _FakeAdapter(_fixture_snapshot())
     provider = IBKRProvider(load_ibkr_config({}), allow_live_read=True, live_adapter=fake_adapter)

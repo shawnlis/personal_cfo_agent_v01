@@ -541,6 +541,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Optional Singapore manual snapshot input directory for --dashboard-v3.",
     )
     parser.add_argument(
+        "--fx-rates-input",
+        type=Path,
+        default=None,
+        help="Optional local FX rates JSON for --dashboard-v3 mixed-currency normalization.",
+    )
+    parser.add_argument(
         "--dashboard-assumptions",
         type=Path,
         default=None,
@@ -913,6 +919,7 @@ def _dashboard_v3_cli(args: argparse.Namespace, parser: argparse.ArgumentParser)
         dashboard_dir=args.dashboard_dir,
         property_mortgage_dir=args.property_mortgage_dir,
         sg_snapshot_dir=args.sg_snapshot_dir,
+        fx_rates_input=args.fx_rates_input,
         out_dir=args.out_dir,
     )
     for line in _format_dashboard_v3_result(result):
