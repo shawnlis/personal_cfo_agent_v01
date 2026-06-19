@@ -82,6 +82,15 @@ CONNECTOR_STATUS_MATRIX: dict[str, dict[str, object]] = {
         "implementation_priority": None,
         "notes": "v0.5.4 readiness/config diagnostics only; future live read requires separate approval",
     },
+    "usmart": {
+        "status": "readiness_feasibility_only",
+        "method": "uSMART API readiness scaffold; no live API calls",
+        "asset_read": False,
+        "position_read": False,
+        "cash_read": False,
+        "implementation_priority": None,
+        "notes": "v0.5.7 readiness/config diagnostics only; future live read requires separate approval",
+    },
     "poems": {
         "status": "unsupported_until_official_api_verified",
         "method": "no official retail account API confirmed",
@@ -184,6 +193,24 @@ def load_webull_config(env: Mapping[str, str]) -> ProviderConfig:
     )
 
 
+def load_usmart_config(env: Mapping[str, str]) -> ProviderConfig:
+    required = ("CFO_USMART_API_KEY", "CFO_USMART_API_SECRET")
+    return ProviderConfig(
+        provider_name="usmart",
+        enabled=env_bool(env, "CFO_USMART_ENABLED"),
+        required_env_vars=required,
+        settings={
+            key: env.get(key, "")
+            for key in (
+                "CFO_USMART_ENABLED",
+                *required,
+                "CFO_USMART_API_HOST",
+                "CFO_USMART_SDK_MODULE",
+            )
+        },
+    )
+
+
 def load_manual_config(
     env: Mapping[str, str], manual_snapshot_path: Path | None
 ) -> ProviderConfig:
@@ -208,7 +235,7 @@ def connector_status(provider_name: str) -> dict[str, object]:
             ],
         }
     status = dict(CONNECTOR_STATUS_MATRIX[key])
-    if key == "webull":
+    if key in {"webull", "usmart"}:
         status["warning_codes"] = []
     elif str(status.get("status", "")).startswith("unsupported"):
         status["warning_codes"] = [

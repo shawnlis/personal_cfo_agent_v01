@@ -8,6 +8,7 @@
 | Moomoo | read_only_live_proof_accepted | OpenD + SDK through supervised local session | yes | yes | yes | 1 | v0.3.2 supervised read-only proof; OpenD socket reachability is not enough; redacted `get_acc_list()` account discovery is required before funds/positions/cash; proof generated normalized rows under ignored `reports/` without unlock, orders, transfers, raw IDs, or committed reports |
 | Tiger | read_only_live_proof_accepted | TigerOpen Python SDK through supervised local configuration | yes | yes | yes | 2 | v0.3.1 supervised read-only proof; TigerOpen must be configured locally |
 | Webull | readiness_feasibility_only | Official OpenAPI readiness/config diagnostics only | no | no | no | none | v0.5.4 verifies redacted config and SDK importability only; no live read, execution workflow, or cash movement |
+| uSMART | readiness_feasibility_only | uSMART API readiness/config diagnostics only | no | no | no | none | v0.5.7 verifies redacted config and SDK importability only; no live read, execution workflow, or cash movement |
 
 ## Normalized Ledger Merge
 
@@ -36,6 +37,10 @@ v0.5.0 adds an integrated offline net worth dashboard over v0.3.3 account NAV me
 ## Webull Readiness Feasibility
 
 v0.5.4 adds Webull OpenAPI readiness/config diagnostics only. Webull API documentation includes execution-capable surfaces, so this foundation is deliberately not a live reader. It does not connect to Webull, read account data, move cash, or enable execution workflows. Future Webull live-read work requires separate approval.
+
+## uSMART Readiness Feasibility
+
+v0.5.7 adds uSMART API readiness/config diagnostics only. uSMART API surfaces may include trading and account services, so this foundation is deliberately not a live reader. It does not connect to uSMART, read account data, move cash, or enable execution workflows. Future uSMART live-read work requires separate approval.
 
 ## Unsupported Until Official API Verified
 
