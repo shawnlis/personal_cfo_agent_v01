@@ -16,6 +16,7 @@ from personal_cfo_agent.config import (
     load_manual_config,
     load_moomoo_config,
     load_tiger_config,
+    load_webull_config,
 )
 from personal_cfo_agent.dashboard import write_dashboard
 from personal_cfo_agent.dashboard_v2 import DashboardV2Result, write_dashboard_v2
@@ -47,6 +48,7 @@ from personal_cfo_agent.providers import (
     ManualSnapshotProvider,
     MoomooProvider,
     TigerProvider,
+    WebullProvider,
 )
 from personal_cfo_agent.providers.ibkr_connection_diagnostics import (
     IBKRConnectionDiagnostics,
@@ -69,6 +71,10 @@ from personal_cfo_agent.providers.tiger_connection_diagnostics import (
     run_tiger_config_preflight,
     run_tiger_connection_diagnostics,
     run_tiger_sdk_config_probe,
+)
+from personal_cfo_agent.providers.webull_connection_diagnostics import (
+    WebullConnectionDiagnostics,
+    run_webull_connection_diagnostics,
 )
 from personal_cfo_agent.provider_bundle_merge import MergeResult, merge_provider_bundles
 from personal_cfo_agent.property_mortgage_snapshot import (
@@ -267,6 +273,8 @@ def run_readiness_check(config: RuntimeConfig) -> RunnerResult:
         provider = MoomooProvider(load_moomoo_config(config.env), allow_live_read=False)
     elif config.provider == "tiger":
         provider = TigerProvider(load_tiger_config(config.env), allow_live_read=False)
+    elif config.provider == "webull":
+        provider = WebullProvider(load_webull_config(config.env), allow_live_read=False)
     else:
         return RunnerResult(exit_code=0, statuses=[], normalized_assets=[])
     provider.readiness_check()
@@ -296,6 +304,13 @@ def collect_provider_snapshots(config: RuntimeConfig) -> list[RawProviderSnapsho
                 allow_live_read=config.allow_live_read and config.provider == "tiger",
             )
         )
+    if config.provider == "webull":
+        providers.append(
+            WebullProvider(
+                load_webull_config(config.env),
+                allow_live_read=False,
+            )
+        )
     if config.provider in {"all", "manual"}:
         providers.append(
             ManualSnapshotProvider(
@@ -310,7 +325,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Personal CFO Agent v0.1 runner")
     parser.add_argument(
         "--provider",
-        choices=["all", "ibkr", "moomoo", "tiger", "manual"],
+        choices=["all", "ibkr", "moomoo", "tiger", "webull", "manual"],
         default="all",
         help="Provider mode to run.",
     )
@@ -606,9 +621,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         return _tiger_sdk_config_probe_cli()
     if args.connection_diagnostics:
-        if args.provider not in {"ibkr", "moomoo", "tiger"}:
+        if args.provider not in {"ibkr", "moomoo", "tiger", "webull"}:
             parser.error(
-                "--connection-diagnostics is currently implemented for --provider ibkr, moomoo, or tiger"
+                "--connection-diagnostics is currently implemented for --provider ibkr, moomoo, tiger, or webull"
             )
         return _connection_diagnostics_cli(args.provider, local_env_result.exists)
     if args.account_discovery:
@@ -662,9 +677,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--tiger-data-diagnostics cannot be combined with --readiness-check")
         if not args.allow_live_read:
             parser.error("--tiger-data-diagnostics requires --allow-live-read")
-    if args.readiness_check and args.provider not in {"ibkr", "moomoo", "tiger"}:
+    if args.readiness_check and args.provider not in {"ibkr", "moomoo", "tiger", "webull"}:
         parser.error(
-            "--readiness-check is currently implemented for --provider ibkr, moomoo, or tiger"
+            "--readiness-check is currently implemented for --provider ibkr, moomoo, tiger, or webull"
         )
     if args.as_of_date is not None:
         _validate_as_of_date(args.as_of_date, parser)
@@ -1271,6 +1286,9 @@ def _connection_diagnostics_cli(provider: str, local_env_loaded: bool) -> int:
             local_env_loaded=local_env_loaded,
         )
         lines = _format_moomoo_connection_diagnostics(diagnostics)
+    elif provider == "webull":
+        diagnostics = run_webull_connection_diagnostics(dict(os.environ))
+        lines = _format_webull_connection_diagnostics(diagnostics)
     else:
         diagnostics = run_tiger_connection_diagnostics(dict(os.environ))
         lines = _format_tiger_connection_diagnostics(diagnostics)
@@ -1325,6 +1343,26 @@ def _format_ibkr_connection_diagnostics(
         f"ibapi import status: {'OK' if diagnostics.ibapi_import_ok else 'MISSING'}",
         f"TCP socket reachable host/port: {_yes_no(diagnostics.tcp_socket_reachable)}",
         f"diagnostic warning codes: {warning_text}",
+    ]
+
+
+def _format_webull_connection_diagnostics(
+    diagnostics: WebullConnectionDiagnostics,
+) -> list[str]:
+    warning_text = ", ".join(code.value for code in diagnostics.warning_codes) or "None"
+    sdk_candidates = ", ".join(diagnostics.sdk_module_candidates)
+    return [
+        "Webull readiness diagnostics (values redacted)",
+        f"CFO_WEBULL_ENABLED present and true: {_yes_no(diagnostics.enabled_present and diagnostics.enabled_true)}",
+        f"CFO_WEBULL_APP_KEY present: {_yes_no(diagnostics.app_key_present)}, redacted",
+        f"CFO_WEBULL_APP_SECRET present: {_yes_no(diagnostics.app_secret_present)}, redacted",
+        f"CFO_WEBULL_API_HOST present: {_yes_no(diagnostics.api_host_present)}, redacted",
+        f"SDK module candidates: {sdk_candidates}",
+        f"SDK import status: {'OK' if diagnostics.sdk_import_ok else 'MISSING'}",
+        f"SDK module detected: {diagnostics.sdk_module_detected}",
+        f"Python executable: {diagnostics.python_executable}",
+        f"Live connection attempted: {_yes_no(diagnostics.live_connection_attempted)}",
+        f"Diagnostic warning codes: {warning_text}",
     ]
 
 

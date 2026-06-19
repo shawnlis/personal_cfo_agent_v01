@@ -74,10 +74,13 @@ CONNECTOR_STATUS_MATRIX: dict[str, dict[str, object]] = {
         "notes": "v0.3.1 supervised read-only proof; TigerOpen must be configured locally",
     },
     "webull": {
-        "status": "unsupported_until_official_api_verified",
-        "method": "no official retail API confirmed",
+        "status": "readiness_feasibility_only",
+        "method": "official OpenAPI readiness scaffold; no live API calls",
+        "asset_read": False,
+        "position_read": False,
+        "cash_read": False,
         "implementation_priority": None,
-        "notes": "manual snapshot only unless an official account API is verified",
+        "notes": "v0.5.4 readiness/config diagnostics only; future live read requires separate approval",
     },
     "poems": {
         "status": "unsupported_until_official_api_verified",
@@ -158,6 +161,24 @@ def load_tiger_config(env: Mapping[str, str]) -> ProviderConfig:
     )
 
 
+def load_webull_config(env: Mapping[str, str]) -> ProviderConfig:
+    required = ("CFO_WEBULL_APP_KEY", "CFO_WEBULL_APP_SECRET")
+    return ProviderConfig(
+        provider_name="webull",
+        enabled=env_bool(env, "CFO_WEBULL_ENABLED"),
+        required_env_vars=required,
+        settings={
+            key: env.get(key, "")
+            for key in (
+                "CFO_WEBULL_ENABLED",
+                *required,
+                "CFO_WEBULL_API_HOST",
+                "CFO_WEBULL_SDK_MODULE",
+            )
+        },
+    )
+
+
 def load_manual_config(
     env: Mapping[str, str], manual_snapshot_path: Path | None
 ) -> ProviderConfig:
@@ -182,7 +203,9 @@ def connector_status(provider_name: str) -> dict[str, object]:
             ],
         }
     status = dict(CONNECTOR_STATUS_MATRIX[key])
-    if str(status.get("status", "")).startswith("unsupported"):
+    if key == "webull":
+        status["warning_codes"] = []
+    elif str(status.get("status", "")).startswith("unsupported"):
         status["warning_codes"] = [
             WarningCode.UNSUPPORTED_PROVIDER.value,
             WarningCode.UNOFFICIAL_API_BLOCKED.value,
