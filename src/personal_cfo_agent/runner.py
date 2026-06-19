@@ -36,6 +36,16 @@ from personal_cfo_agent.local_private_input_kit import (
     run_manual_snapshot_chain,
     validate_private_inputs,
 )
+from personal_cfo_agent.manual_nav_input import (
+    ManualNavBundleResult,
+    ManualNavFormResult,
+    ManualNavInitResult,
+    ManualNavValidationResult,
+    generate_manual_nav_form,
+    init_manual_nav_input,
+    manual_nav_to_provider_bundle,
+    validate_manual_nav_input,
+)
 from personal_cfo_agent.models import (
     NormalizedAsset,
     ProviderStatus,
@@ -459,6 +469,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run offline property/mortgage and SG snapshots from local private inputs.",
     )
     parser.add_argument(
+        "--manual-nav-form",
+        action="store_true",
+        help="Generate a local-only static HTML manual NAV input worksheet.",
+    )
+    parser.add_argument(
+        "--init-manual-nav-input",
+        action="store_true",
+        help="Copy the manual NAV placeholder JSON into an ignored local file.",
+    )
+    parser.add_argument(
+        "--validate-manual-nav-input",
+        action="store_true",
+        help="Validate a local manual NAV input JSON without printing values.",
+    )
+    parser.add_argument(
+        "--manual-nav-to-provider-bundle",
+        action="store_true",
+        help="Convert manual NAV input JSON into an offline provider bundle.",
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Allow --init-private-input-kit to overwrite existing local placeholder files.",
@@ -504,6 +534,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Input directory for an existing offline report bundle.",
+    )
+    parser.add_argument(
+        "--input-file",
+        type=Path,
+        default=None,
+        help="Input JSON file for single-file local offline utilities.",
+    )
+    parser.add_argument(
+        "--out-file",
+        type=Path,
+        default=None,
+        help="Output JSON file for single-file local offline utilities.",
     )
     parser.add_argument(
         "--merge-dir",
@@ -581,6 +623,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _validate_private_inputs_cli(args, parser)
     if args.run_manual_snapshot_chain:
         return _run_manual_snapshot_chain_cli(args, parser)
+    if args.manual_nav_form:
+        return _manual_nav_form_cli(args, parser)
+    if args.init_manual_nav_input:
+        return _init_manual_nav_input_cli(args, parser)
+    if args.validate_manual_nav_input:
+        return _validate_manual_nav_input_cli(args, parser)
+    if args.manual_nav_to_provider_bundle:
+        return _manual_nav_to_provider_bundle_cli(args, parser)
     if args.dashboard_v3:
         return _dashboard_v3_cli(args, parser)
     if args.sg_manual_snapshot:
@@ -815,6 +865,123 @@ def _run_manual_snapshot_chain_cli(
     for line in _format_manual_snapshot_chain_result(result):
         print(line)
     return 0 if result.generated else 1
+
+
+def _manual_nav_form_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    _validate_manual_nav_cli_scope(args, parser, "--manual-nav-form")
+    if args.out_dir is None:
+        parser.error("--manual-nav-form requires --out-dir")
+    if args.input_file is not None or args.out_file is not None:
+        parser.error("--manual-nav-form uses --out-dir only")
+    result = generate_manual_nav_form(out_dir=args.out_dir)
+    for line in _format_manual_nav_form_result(result):
+        print(line)
+    return 0
+
+
+def _init_manual_nav_input_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_manual_nav_cli_scope(args, parser, "--init-manual-nav-input")
+    if args.out_file is None:
+        parser.error("--init-manual-nav-input requires --out-file")
+    if args.input_file is not None or args.out_dir is not None:
+        parser.error("--init-manual-nav-input uses --out-file only")
+    result = init_manual_nav_input(out_file=args.out_file, overwrite=args.overwrite)
+    for line in _format_manual_nav_init_result(result):
+        print(line)
+    return 0
+
+
+def _validate_manual_nav_input_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_manual_nav_cli_scope(args, parser, "--validate-manual-nav-input")
+    if args.overwrite:
+        parser.error("--validate-manual-nav-input cannot be combined with --overwrite")
+    if args.input_file is None:
+        parser.error("--validate-manual-nav-input requires --input-file")
+    if args.out_file is not None or args.out_dir is not None:
+        parser.error("--validate-manual-nav-input uses --input-file only")
+    result = validate_manual_nav_input(input_file=args.input_file)
+    for line in _format_manual_nav_validation_result(result):
+        print(line)
+    return 0 if result.valid else 1
+
+
+def _manual_nav_to_provider_bundle_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_manual_nav_cli_scope(args, parser, "--manual-nav-to-provider-bundle")
+    if args.overwrite:
+        parser.error("--manual-nav-to-provider-bundle cannot be combined with --overwrite")
+    if args.input_file is None:
+        parser.error("--manual-nav-to-provider-bundle requires --input-file")
+    if args.out_dir is None:
+        parser.error("--manual-nav-to-provider-bundle requires --out-dir")
+    if args.out_file is not None:
+        parser.error("--manual-nav-to-provider-bundle uses --out-dir, not --out-file")
+    local_env_result = load_local_env_file()
+    if local_env_result.exists:
+        print(f"Loaded local environment from {LOCAL_ENV_FILENAME}; values redacted")
+    result = manual_nav_to_provider_bundle(
+        input_file=args.input_file,
+        out_dir=args.out_dir,
+        env=dict(os.environ),
+    )
+    for line in _format_manual_nav_bundle_result(result):
+        print(line)
+    return 0 if result.generated else 1
+
+
+def _validate_manual_nav_cli_scope(
+    args: argparse.Namespace, parser: argparse.ArgumentParser, command_name: str
+) -> None:
+    manual_nav_commands = [
+        args.manual_nav_form,
+        args.init_manual_nav_input,
+        args.validate_manual_nav_input,
+        args.manual_nav_to_provider_bundle,
+    ]
+    if sum(1 for enabled in manual_nav_commands if enabled) > 1:
+        parser.error("manual NAV commands cannot be combined")
+    if args.allow_live_read:
+        parser.error(f"{command_name} cannot be combined with --allow-live-read")
+    if args.readiness_check or args.connection_diagnostics:
+        parser.error(f"{command_name} cannot be combined with readiness or diagnostics")
+    if args.account_discovery or args.read_context_probe:
+        parser.error(f"{command_name} cannot be combined with Moomoo discovery probes")
+    if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
+        parser.error(f"{command_name} cannot be combined with data diagnostics")
+    if (
+        args.merge_provider_bundles
+        or args.dashboard_v2
+        or args.dashboard_v3
+        or args.dashboard
+        or args.record_snapshot
+        or args.property_mortgage_snapshot
+        or args.sg_manual_snapshot
+        or args.init_private_input_kit
+        or args.validate_private_inputs
+        or args.run_manual_snapshot_chain
+    ):
+        parser.error(f"{command_name} cannot be combined with other offline workflows")
+    if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
+        parser.error(f"{command_name} cannot be combined with manual snapshot utilities")
+    if args.input_dir is not None:
+        parser.error(f"{command_name} uses --input-file/--out-file rather than --input-dir")
+    if any(
+        value is not None
+        for value in (
+            args.property_input,
+            args.mortgage_input,
+            args.cpf_input,
+            args.srs_input,
+            args.tax_input,
+            args.hdb_loan_input,
+        )
+    ):
+        parser.error(f"{command_name} does not use individual manual snapshot input files")
 
 
 def _validate_private_input_cli_scope(
@@ -1091,6 +1258,66 @@ def _format_private_input_kit_init_result(
     if file_names:
         lines.append("Template files: " + ", ".join(file_names))
     return lines
+
+
+def _format_manual_nav_form_result(result: ManualNavFormResult) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    return [
+        "Manual NAV input form v0.5.7 (offline)",
+        "External connections used: no",
+        f"Output directory: {result.output_dir}",
+        f"Form file: {result.output_path.name}",
+        f"Warning codes: {warnings}",
+    ]
+
+
+def _format_manual_nav_init_result(result: ManualNavInitResult) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    return [
+        "Manual NAV input JSON initialization v0.5.7 (offline)",
+        "External connections used: no",
+        f"Output file: {result.output_file}",
+        f"Created: {_yes_no(result.created)}",
+        f"Skipped existing file: {_yes_no(result.skipped)}",
+        f"Overwritten: {_yes_no(result.overwritten)}",
+        f"Warning codes: {warnings}",
+    ]
+
+
+def _format_manual_nav_validation_result(
+    result: ManualNavValidationResult,
+) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    providers = ", ".join(result.provider_labels) or "None"
+    currencies = ", ".join(result.base_currencies) or "None"
+    return [
+        "Manual NAV input validation v0.5.7 (offline)",
+        "External connections used: no",
+        f"Input file: {result.input_file}",
+        f"Valid: {_yes_no(result.valid)}",
+        f"Account count: {result.account_count}",
+        f"Provider labels: {providers}",
+        f"Base currencies: {currencies}",
+        f"Warning codes: {warnings}",
+    ]
+
+
+def _format_manual_nav_bundle_result(result: ManualNavBundleResult) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    providers = ", ".join(result.provider_labels) or "None"
+    files = ", ".join(path.name for path in sorted(result.output_paths.values())) or "None"
+    return [
+        "Manual NAV provider bundle v0.5.7 (offline)",
+        "External connections used: no",
+        "Broker live reads used: no",
+        f"Input file: {result.input_file}",
+        f"Output directory: {result.output_dir}",
+        f"Bundle generated: {_yes_no(result.generated)}",
+        f"Account count: {result.account_count}",
+        f"Provider labels: {providers}",
+        f"Output files: {files}",
+        f"Warning codes: {warnings}",
+    ]
 
 
 def _format_private_input_validation_result(

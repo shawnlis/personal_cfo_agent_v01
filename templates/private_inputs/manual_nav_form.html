@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Personal CFO Manual NAV Input</title>
+  <style>
+    :root { color-scheme: light; font-family: Arial, sans-serif; }
+    body { margin: 0; background: #f7f7f4; color: #1f2933; }
+    main { max-width: 1040px; margin: 0 auto; padding: 32px 20px 48px; }
+    h1 { font-size: 28px; margin: 0 0 8px; }
+    h2 { font-size: 20px; margin: 28px 0 12px; }
+    p, li { line-height: 1.5; }
+    .panel { background: #ffffff; border: 1px solid #d7d7d2; border-radius: 8px; padding: 18px; margin-top: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    label { display: block; font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+    input, select, textarea { box-sizing: border-box; width: 100%; border: 1px solid #b8b8b0; border-radius: 6px; padding: 9px; font: inherit; background: #fff; }
+    textarea { min-height: 74px; resize: vertical; }
+    code, pre { background: #efefe9; border-radius: 6px; }
+    code { padding: 2px 4px; }
+    pre { padding: 14px; overflow: auto; }
+    .full { grid-column: 1 / -1; }
+    .note { color: #52606d; }
+    .danger { color: #8a3a00; font-weight: 700; }
+    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Manual Account NAV Input</h1>
+  <p class="note">Local-only worksheet for preparing <code>private_inputs/manual_nav_input.local.json</code>. This page has no network calls, network submission, external scripts, or external styles.</p>
+
+  <section class="panel">
+    <h2>Safety Rules</h2>
+    <ul>
+      <li>Do not enter account numbers, NRIC, passwords, API keys, tokens, or raw broker identifiers.</li>
+      <li>Use a stable account label, such as <code>Syfe Trade main</code>, so the CLI can derive a hash locally.</li>
+      <li>Save real values only in ignored local files under <code>private_inputs/</code>.</li>
+    </ul>
+  </section>
+
+  <section class="panel">
+    <h2>Top-Level Fields</h2>
+    <div class="grid">
+      <div><label>schema_version</label><input value="v0.5.7"></div>
+      <div><label>snapshot_date</label><input placeholder="YYYY-MM-DD"></div>
+      <div><label>base_currency</label><input placeholder="SGD"></div>
+      <div><label>source_type</label><input placeholder="app_manual"></div>
+      <div><label>review_required</label><select><option>true</option><option>false</option></select></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Account Row</h2>
+    <div class="grid">
+      <div><label>provider_label</label><select><option>syfe_trade</option><option>webull</option><option>usmart</option><option>other</option></select></div>
+      <div><label>account_label</label><input placeholder="Label only, no account number"></div>
+      <div><label>account_type</label><select><option>brokerage</option><option>robo</option><option>cash</option><option>retirement</option><option>other</option></select></div>
+      <div><label>base_currency</label><input placeholder="SGD"></div>
+      <div><label>account_nav</label><input placeholder="Required"></div>
+      <div><label>as_of_date</label><input placeholder="YYYY-MM-DD"></div>
+      <div><label>cash_total</label><input placeholder="Optional"></div>
+      <div><label>securities_market_value</label><input placeholder="Optional"></div>
+      <div><label>margin_or_debt</label><input placeholder="Optional"></div>
+      <div><label>source_type</label><select><option>app_manual</option><option>statement_manual</option><option>screenshot_manual</option><option>other</option></select></div>
+      <div><label>source_confidence</label><input placeholder="manual_review"></div>
+      <div><label>review_required</label><select><option>true</option><option>false</option></select></div>
+      <div class="full"><label>notes</label><textarea placeholder="Optional local note. Do not enter secrets or raw identifiers."></textarea></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Commands</h2>
+    <pre>python .\scripts\personal_cfo_agent.py --init-manual-nav-input --out-file .\private_inputs\manual_nav_input.local.json
+python .\scripts\personal_cfo_agent.py --validate-manual-nav-input --input-file .\private_inputs\manual_nav_input.local.json
+python .\scripts\personal_cfo_agent.py --manual-nav-to-provider-bundle --input-file .\private_inputs\manual_nav_input.local.json --out-dir .\reports\personal_cfo_agent\manual_nav_v057_local</pre>
+  </section>
+</main>
+</body>
+</html>

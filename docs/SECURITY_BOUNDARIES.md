@@ -60,3 +60,7 @@ v0.5.0 Dashboard v3 is offline reporting only. It reads existing v0.3.3 merged a
 ## Local Private Input Kit Rule
 
 v0.5.3 local private input kit is template, validation, and offline manual snapshot-chain tooling only. It writes placeholder input files to ignored local directories such as `private_inputs/`, `local_private_inputs/`, or `reports/personal_cfo_agent/private_inputs/`; validates file presence, schema shape, required fields, labels/hashes, and warning codes without printing private values; and can run the existing offline property/mortgage and Singapore manual snapshot generators. It must not overwrite existing local files unless `--overwrite` is explicitly supplied, and it must not connect to brokers, banks, CPF, IRAS, HDB, SingPass, browsers, or external accounts. Real local input values, generated reports, raw addresses, NRIC/FIN, raw government identifiers, account numbers, secrets, and exact private values must not be committed.
+
+## Manual NAV Input Rule
+
+v0.5.7 unified manual NAV input is local-only. It generates a static HTML worksheet, initializes an ignored local JSON file, validates schema/warnings without printing private values, and converts account NAV rows into a provider-bundle-compatible output for the offline merge pipeline. It must not connect to brokers, banks, CPF, IRAS, HDB, SingPass, browsers, or external accounts. Raw account IDs, raw account numbers, NRIC/FIN, login details, secrets, exact local values in docs, and generated reports must not be committed. The provider bundle must emit `account_id_hash` only.
