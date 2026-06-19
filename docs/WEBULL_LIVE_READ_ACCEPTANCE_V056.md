@@ -86,6 +86,8 @@ The SDK and client initialized successfully, but the supervised read-only proof 
 
 Token/account-permission preflight was added after the account-query failure and run without printing credentials, tokens, raw account IDs, balances, positions, or raw responses.
 
+After the user completed Webull App/SMS verification manually, readiness, offline diagnostics, and token preflight were rerun. The token preflight still reported `PENDING`, so the account list, asset/NAV, and position live read retry was not run. A second token preflight retry returned the same redacted `PENDING` status and remained blocked.
+
 - SDK import result: OK
 - SDK module detected: `webull`
 - Client constructed: yes
