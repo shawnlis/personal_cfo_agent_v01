@@ -55,6 +55,20 @@ def test_private_input_center_form_generation_is_static_local(tmp_path: Path) ->
     assert "save json file" in html
     assert "global snapshot" in html
     assert "snapshot_date" in html
+    assert "income tax payable" in html
+    assert 'id="income_tax_payable"' in html
+    assert "value of unvested shares" in html
+    assert 'id="unvested_shares_nav"' in html
+    assert "webull nav" in html
+    assert "usmart nav" in html
+    assert "other nav" in html
+    assert "webull manual nav" not in html
+    assert "usmart manual nav" not in html
+    assert "other manual nav" not in html
+    assert "hdb loan balance" not in html
+    assert 'id="hdb_loan_balance"' not in html
+    assert "tax_payable_available: boolavailable(\"income_tax_payable\")" in html
+    assert "outstanding_balance_available: false" in html
     assert 'for="property_id_hash"' not in html
     assert 'id="property_id_hash"' not in html
     assert 'for="loan_id_hash"' not in html
@@ -92,6 +106,69 @@ def test_private_input_center_validation_accepts_synthetic_input(tmp_path: Path)
     assert WarningCode.MANUAL_NAV_OPTIONAL_SPLIT_MISSING in result.warning_codes
     assert WarningCode.MANUAL_NAV_MIXED_CURRENCIES in result.warning_codes
     assert WarningCode.PRIVATE_INPUT_CENTER_VALIDATION_WITH_WARNINGS in result.warning_codes
+
+
+def test_private_input_center_maps_simplified_form_enums_for_manual_nav(
+    tmp_path: Path,
+) -> None:
+    input_file = _write_input(tmp_path)
+    payload = json.loads(input_file.read_text(encoding="utf-8"))
+    payload["source_type"] = "local_private_input_center"
+    other_account = dict(payload["manual_nav_accounts"][0])
+    other_account["provider_label"] = "manual_other"
+    other_account["account_label"] = "Synthetic other manual account"
+    other_account["account_nav"] = "4000.00"
+    payload["manual_nav_accounts"].append(other_account)
+    for account in payload["manual_nav_accounts"]:
+        account["account_type"] = "manual_nav"
+        account["source_type"] = "local_private_input_center"
+    input_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    validation = validate_private_input_center(input_file=input_file)
+    out_dir = tmp_path / "reports" / "private_input_center_simplified_enums"
+    generated = private_input_center_to_snapshots(
+        input_file=input_file,
+        out_dir=out_dir,
+        env={"CFO_ACCOUNT_HASH_SALT": "SYNTHETIC_TEST_SALT"},
+    )
+
+    rows = _read_csv(out_dir / "manual_nav" / "normalized_asset_ledger.csv")
+    providers = sorted({row["provider"] for row in rows})
+
+    assert validation.valid is True
+    assert validation.provider_labels == ["other", "syfe_trade", "usmart", "webull"]
+    assert generated.generated is True
+    assert providers == ["other", "syfe_trade", "usmart", "webull"]
+    assert WarningCode.PRIVATE_INPUT_CENTER_REQUIRED_FIELD_MISSING not in validation.warning_codes
+
+
+def test_private_input_center_maps_form_percent_ownership_for_property_snapshot(
+    tmp_path: Path,
+) -> None:
+    input_file = _write_input(tmp_path)
+    payload = json.loads(input_file.read_text(encoding="utf-8"))
+    payload["properties"][0]["valuation_amount"] = "1000.00"
+    payload["properties"][0]["ownership_pct"] = "100.00"
+    payload["mortgages"][0]["outstanding_balance"] = "250.00"
+    input_file.write_text(json.dumps(payload), encoding="utf-8")
+    out_dir = tmp_path / "reports" / "private_input_center_percent_ownership"
+
+    result = private_input_center_to_snapshots(
+        input_file=input_file,
+        out_dir=out_dir,
+        env={"CFO_ACCOUNT_HASH_SALT": "SYNTHETIC_TEST_SALT"},
+    )
+
+    summary = json.loads(
+        (out_dir / "property_mortgage" / "property_equity_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert result.generated is True
+    assert summary["property_equity_rows"][0]["owned_property_value"] == "1000.00"
+    assert summary["property_equity_rows"][0]["equity"] == "750.00"
+    assert summary["total_equity_by_currency"]["SGD"] == "750.00"
 
 
 def test_private_input_center_validation_fails_missing_required_dates(

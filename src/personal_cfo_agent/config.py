@@ -129,6 +129,7 @@ def load_ibkr_config(env: Mapping[str, str]) -> ProviderConfig:
                 "CFO_IBKR_ENABLED",
                 *required,
                 "CFO_IBKR_ACCOUNT",
+                "CFO_IBKR_SESSION_TYPE",
                 "CFO_ACCOUNT_HASH_SALT",
             )
         },

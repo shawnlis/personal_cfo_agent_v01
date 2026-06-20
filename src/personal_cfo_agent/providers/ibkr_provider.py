@@ -172,6 +172,7 @@ class IBKRProvider(ProviderBase):
             client_id=int(settings["CFO_IBKR_CLIENT_ID"]),
             account_filter=str(settings.get("CFO_IBKR_ACCOUNT") or "") or None,
             account_hash_salt=str(settings.get("CFO_ACCOUNT_HASH_SALT") or "") or None,
+            session_type=str(settings.get("CFO_IBKR_SESSION_TYPE") or "") or None,
         )
 
     def _numeric_config_is_valid(self) -> bool:

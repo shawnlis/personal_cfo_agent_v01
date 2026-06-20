@@ -218,6 +218,26 @@ def test_handshake_timeout_returns_explicit_diagnostic_warning_codes() -> None:
     assert snapshot.status.diagnostics["api_handshake_seen"] is False
 
 
+def test_gateway_handshake_timeout_returns_gateway_review_warning_codes() -> None:
+    provider = IBKRProvider(
+        _valid_config({"CFO_IBKR_SESSION_TYPE": "gateway"}),
+        allow_live_read=True,
+        live_adapter=_FailingAdapter("gateway_handshake"),
+    )
+    snapshot = provider._sync()
+
+    assert not snapshot.has_data()
+    assert WarningCode.IBKR_API_HANDSHAKE_NOT_COMPLETED in snapshot.status.warning_codes
+    assert WarningCode.IBKR_GATEWAY_CALLBACK_TIMEOUT in snapshot.status.warning_codes
+    assert (
+        WarningCode.IBKR_GATEWAY_API_SETTINGS_REVIEW_REQUIRED
+        in snapshot.status.warning_codes
+    )
+    assert snapshot.status.diagnostics["session_type_redacted"] == "gateway"
+    assert snapshot.status.diagnostics["connected_to_socket"] is True
+    assert snapshot.status.diagnostics["api_handshake_seen"] is False
+
+
 def test_unexpected_adapter_failure_returns_fetch_warning_without_crashing() -> None:
     provider = IBKRProvider(
         _valid_config(),
@@ -408,6 +428,7 @@ def test_cli_connection_diagnostics_redacts_values_and_does_not_live_read(tmp_pa
                 "CFO_IBKR_HOST=192.0.2.44",
                 "CFO_IBKR_PORT=not-a-port",
                 "CFO_IBKR_CLIENT_ID=7331",
+                "CFO_IBKR_SESSION_TYPE=gateway",
                 "CFO_IBKR_ACCOUNT" + "=" + "REDACTED_ACCOUNT_PLACEHOLDER",
                 "CFO_ACCOUNT_HASH_SALT" + "=" + "REDACTED_SALT_PLACEHOLDER",
             ]
@@ -437,6 +458,10 @@ def test_cli_connection_diagnostics_redacts_values_and_does_not_live_read(tmp_pa
     assert "CFO_IBKR_ENABLED present and true: yes" in result.stdout
     assert "CFO_IBKR_ACCOUNT present: yes, redacted" in result.stdout
     assert "CFO_ACCOUNT_HASH_SALT present: yes, redacted" in result.stdout
+    assert "CFO_IBKR_SESSION_TYPE present: yes, redacted" in result.stdout
+    assert "IBKR session type category: gateway" in result.stdout
+    assert "IBKR port class: invalid_or_missing_port" in result.stdout
+    assert "IBKR port matches session type: no" in result.stdout
     assert "TCP socket reachable host/port:" in result.stdout
     assert "Read-only IBKR sync only" not in result.stdout
     assert "No provider produced data" not in result.stdout
@@ -444,10 +469,27 @@ def test_cli_connection_diagnostics_redacts_values_and_does_not_live_read(tmp_pa
         "192.0.2.44",
         "not-a-port",
         "7331",
+        "gateway unavailable",
         "REDACTED_ACCOUNT_PLACEHOLDER",
         "REDACTED_SALT_PLACEHOLDER",
     ):
         assert raw_value not in combined
+
+
+def test_connection_diagnostics_flags_gateway_tws_port_mismatch() -> None:
+    diagnostics = run_ibkr_connection_diagnostics(
+        {
+            **_valid_env(),
+            "CFO_IBKR_SESSION_TYPE": "gateway",
+            "CFO_IBKR_PORT": "7497",
+        },
+        timeout_seconds=0.01,
+    )
+
+    assert diagnostics.session_type_redacted == "gateway"
+    assert diagnostics.port_classification == "tws_paper_port"
+    assert diagnostics.port_matches_session_type is False
+    assert WarningCode.IBKR_PORT_SESSION_TYPE_MISMATCH in diagnostics.warning_codes
 
 
 def test_cli_data_diagnostics_requires_explicit_live_flag(tmp_path) -> None:
@@ -474,6 +516,7 @@ def test_cli_data_diagnostics_requires_explicit_live_flag(tmp_path) -> None:
 def test_ibkr_data_diagnostics_formatter_redacts_raw_values() -> None:
     raw_account_id = "DU1234567"
     diagnostics = IBKRReadDiagnostics(
+        session_type_redacted="gateway",
         connected_to_socket=True,
         api_handshake_seen=True,
         managed_accounts_seen=True,
@@ -490,6 +533,7 @@ def test_ibkr_data_diagnostics_formatter_redacts_raw_values() -> None:
     text = "\n".join(_format_ibkr_data_diagnostics(diagnostics))
 
     assert "acct_abc123" in text
+    assert "IBKR session type category: gateway" in text
     assert raw_account_id not in text
     assert "IBKR_POSITIONS_EMPTY" in text
 
@@ -543,6 +587,77 @@ def test_provider_mode_required_for_ibkr_live_gate() -> None:
     )
     ibkr_status = next(snapshot.status for snapshot in snapshots if snapshot.provider_name == "ibkr")
     assert WarningCode.LIVE_READ_NOT_ALLOWED in ibkr_status.warning_codes
+
+
+def test_ibkr_live_read_subprocess_timeout_fails_closed(monkeypatch) -> None:
+    import personal_cfo_agent.runner as runner_module
+
+    class _EmptyQueue:
+        def get(self, timeout=None):
+            raise runner_module.queue.Empty
+
+    class _TimedOutProcess:
+        instances = []
+
+        def __init__(self, target, args):
+            self.target = target
+            self.args = args
+            self.daemon = False
+            self.exitcode = None
+            self.started = False
+            self.terminated = False
+            self.join_timeouts = []
+            self._alive = True
+            self.instances.append(self)
+
+        def start(self):
+            self.started = True
+
+        def join(self, timeout=None):
+            self.join_timeouts.append(timeout)
+
+        def is_alive(self):
+            return self._alive
+
+        def terminate(self):
+            self.terminated = True
+            self._alive = False
+
+    monkeypatch.setattr(runner_module.multiprocessing, "Queue", lambda: _EmptyQueue())
+    monkeypatch.setattr(runner_module.multiprocessing, "Process", _TimedOutProcess)
+    monkeypatch.setattr(runner_module, "IBKR_LIVE_SUBPROCESS_TIMEOUT_SECONDS", 0.01)
+
+    snapshots = runner_module.collect_provider_snapshots(
+        RuntimeConfig(
+            env={
+                **_valid_env(),
+                "CFO_IBKR_PORT": "4001",
+                "CFO_IBKR_SESSION_TYPE": "gateway",
+            },
+            allow_live_read=True,
+            provider="ibkr",
+        )
+    )
+
+    assert len(snapshots) == 1
+    snapshot = snapshots[0]
+    assert not snapshot.has_data()
+    assert _TimedOutProcess.instances[0].started is True
+    assert _TimedOutProcess.instances[0].terminated is True
+    assert WarningCode.PROVIDER_FETCH_FAILED in snapshot.status.warning_codes
+    assert WarningCode.IBKR_CALLBACK_TIMEOUT in snapshot.status.warning_codes
+    assert WarningCode.IBKR_HANDSHAKE_TIMEOUT in snapshot.status.warning_codes
+    assert WarningCode.IBKR_GATEWAY_CALLBACK_TIMEOUT in snapshot.status.warning_codes
+    assert (
+        WarningCode.IBKR_GATEWAY_API_SETTINGS_REVIEW_REQUIRED
+        in snapshot.status.warning_codes
+    )
+    assert snapshot.status.diagnostics["live_subprocess_isolation"] == "enabled"
+    assert snapshot.status.diagnostics["live_subprocess_timed_out"] is True
+    assert snapshot.status.diagnostics["session_type_redacted"] == "gateway"
+    assert snapshot.status.diagnostics["port_classification"] == "gateway_live_port"
+    assert "127.0.0.1" not in json.dumps(snapshot.status.to_dict())
+    assert "991" not in json.dumps(snapshot.status.to_dict())
 
 
 def test_cli_readiness_check_works_without_tws_running() -> None:
@@ -634,6 +749,23 @@ class _FailingAdapter:
                     warning_codes=[
                         WarningCode.IBKR_HANDSHAKE_TIMEOUT,
                         WarningCode.IBKR_CALLBACK_TIMEOUT,
+                    ],
+                ),
+            )
+        if self.mode == "gateway_handshake":
+            raise IBKRConnectionError(
+                "handshake timed out",
+                IBKRReadDiagnostics(
+                    session_type_redacted="gateway",
+                    connected_to_socket=True,
+                    api_handshake_seen=False,
+                    timeout_seconds=1.0,
+                    warning_codes=[
+                        WarningCode.IBKR_CALLBACK_TIMEOUT,
+                        WarningCode.IBKR_HANDSHAKE_TIMEOUT,
+                        WarningCode.IBKR_API_HANDSHAKE_NOT_COMPLETED,
+                        WarningCode.IBKR_GATEWAY_CALLBACK_TIMEOUT,
+                        WarningCode.IBKR_GATEWAY_API_SETTINGS_REVIEW_REQUIRED,
                     ],
                 ),
             )

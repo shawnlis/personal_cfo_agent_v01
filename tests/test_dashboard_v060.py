@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import json
@@ -62,7 +62,7 @@ def test_dashboard_v4_generates_asset_buckets_and_outputs(tmp_path: Path) -> Non
         "withdrawal_cashflow_chart",
         "net_worth_bucket_history_chart",
     }
-    assert result.bucket_count == 4
+    assert result.bucket_count == 5
     assert result.history_count == 1
     assert result.withdrawal_row_count == 9
     assert WarningCode.DASHBOARD_V4_WITHDRAWAL_CASHFLOW_GENERATED in result.warning_codes
@@ -73,19 +73,81 @@ def test_dashboard_v4_generates_asset_buckets_and_outputs(tmp_path: Path) -> Non
     assert list(bucket_rows[0]) == ASSET_BUCKET_FIELDNAMES
     assert by_bucket["fixed_assets"]["amount"] == "200000.00"
     assert by_bucket["retirement_accounts"]["amount"] == "8000.00"
-    assert by_bucket["liquid_investment_assets"]["amount"] == "3180.00"
+    assert by_bucket["non_liquid_unvested_equity"]["amount"] == "480.00"
+    assert by_bucket["liquid_investment_assets"]["amount"] == "2700.00"
     assert by_bucket["fixed_assets"]["currency"] == "SGD"
     assert by_bucket["retirement_accounts"]["currency"] == "SGD"
+    assert by_bucket["non_liquid_unvested_equity"]["currency"] == "SGD"
     assert by_bucket["liquid_investment_assets"]["currency"] == "SGD"
     assert "Fixed assets" in by_bucket["fixed_assets"]["bucket_label"]
     assert "Retirement accounts" in by_bucket["retirement_accounts"]["bucket_label"]
+    assert "Non-liquid unvested equity" in by_bucket["non_liquid_unvested_equity"]["bucket_label"]
     assert "Liquid investment assets" in by_bucket["liquid_investment_assets"]["bucket_label"]
 
     history_rows = _read_rows(result.output_paths["net_worth_bucket_history"])
     assert list(history_rows[0]) == BUCKET_HISTORY_FIELDNAMES
     assert history_rows[0]["fixed_assets"] == "200000.00"
     assert history_rows[0]["retirement_accounts"] == "8000.00"
-    assert history_rows[0]["liquid_investment_assets"] == "3180.00"
+    assert history_rows[0]["non_liquid_unvested_equity"] == "480.00"
+    assert history_rows[0]["liquid_investment_assets"] == "2700.00"
+    markdown = result.output_paths["markdown_report"].read_text(encoding="utf-8")
+    html = result.output_paths["html_report"].read_text(encoding="utf-8")
+    summary = json.loads(result.output_paths["dashboard_summary"].read_text(encoding="utf-8"))
+    assert "Withdrawal ladder rows" not in markdown
+    assert "Withdrawal ladder rows" not in html
+    assert "Uses liquid investment assets only" not in markdown
+    assert "Uses liquid investment assets only" not in html
+    assert "Uses explicit local FX rates" not in markdown
+    assert "Uses explicit local FX rates" not in html
+    assert "Output Files" not in markdown
+    assert "Output Files" not in html
+    assert "asset_bucket_summary.csv" not in markdown
+    assert "asset_bucket_summary.csv" not in html
+    assert "Warning Codes" not in markdown
+    assert "Warning Codes" not in html
+    assert "DASHBOARD_V4_BUCKET_HISTORY_LIMITED" not in markdown
+    assert "DASHBOARD_V4_BUCKET_HISTORY_LIMITED" not in html
+    assert "Static SVG output" not in markdown
+    assert "Static SVG output" not in html
+    assert "Review Queue" not in markdown
+    assert "Review Queue" not in html
+    assert "Unclassified or missing-currency assets are retained for review" not in markdown
+    assert "Unclassified or missing-currency assets are retained for review" not in html
+    assert "Missing FX rates skip conversion" not in markdown
+    assert "Missing FX rates skip conversion" not in html
+    assert "Fixed assets: 200,000.00 SGD" in markdown
+    assert "Fixed assets: 200,000.00 SGD" in html
+    assert "Non-liquid unvested equity: 480.00 SGD" in markdown
+    assert "Non-liquid unvested equity: 480.00 SGD" in html
+    assert "Liquid investment assets: 2,700.00 SGD" in markdown
+    assert "Liquid investment assets: 2,700.00 SGD" in html
+    assert "Total assets: 211,180.00 SGD (100.00%)" in markdown
+    assert "Total assets: 211,180.00 SGD (100.00%)" in html
+    assert "| Rate | Annual | Monthly | Daily |" in markdown
+    assert "| 3.0% | US$62.31<br>S$81.00<br>¥450.00 | US$5.19<br>S$6.75<br>¥37.50 | US$0.17<br>S$0.22<br>¥1.23 |" in markdown
+    assert "<table>" in html
+    assert "<th>Annual</th>" in html
+    assert "<td>US$62.31<br>S$81.00<br>¥450.00</td>" in html
+    assert "<th>Currency</th>" not in html
+    assert "Target Annual Withdrawal" in html
+    assert "target-annual-withdrawal" in html
+    assert "Current liquid assets" in html
+    assert "2,700.00 SGD" in html
+    assert "4% annual capacity" in html
+    assert "108.00 SGD" in html
+    assert "Required liquid assets" in html
+    assert "Progress" in html
+    assert 'data-liquid-amount="2700.00"' in html
+    assert "chart-stack" in html
+    assert "width=\"1120\"" in html
+    assert "class=\"grid\"" not in html
+    assert "3.0% / USD: annual" not in markdown
+    assert "3.0% / USD: annual" not in html
+    assert "Asset buckets: 4" in markdown
+    assert summary["asset_bucket_count"] == 5
+    assert summary["display_asset_bucket_count"] == 4
+    assert "Needs review / unclassified" not in markdown
+    assert "Needs review / unclassified" not in html
 
 
 def test_dashboard_v4_withdrawal_cashflow_uses_explicit_fx(tmp_path: Path) -> None:
@@ -99,11 +161,11 @@ def test_dashboard_v4_withdrawal_cashflow_uses_explicit_fx(tmp_path: Path) -> No
     rows = _read_rows(result.output_paths["liquid_withdrawal_cashflow"])
     assert list(rows[0]) == LIQUID_WITHDRAWAL_FIELDNAMES
     by_rate_currency = {(row["withdrawal_rate"], row["currency"]): row for row in rows}
-    assert by_rate_currency[("0.030", "SGD")]["annual"] == "95.40"
-    assert by_rate_currency[("0.030", "SGD")]["monthly"] == "7.95"
-    assert by_rate_currency[("0.030", "SGD")]["daily"] == "0.26"
-    assert by_rate_currency[("0.030", "USD")]["annual"] == "73.38"
-    assert by_rate_currency[("0.030", "CNY")]["annual"] == "530.00"
+    assert by_rate_currency[("0.030", "SGD")]["annual"] == "81.00"
+    assert by_rate_currency[("0.030", "SGD")]["monthly"] == "6.75"
+    assert by_rate_currency[("0.030", "SGD")]["daily"] == "0.22"
+    assert by_rate_currency[("0.030", "USD")]["annual"] == "62.31"
+    assert by_rate_currency[("0.030", "CNY")]["annual"] == "450.00"
 
 
 def test_dashboard_v4_fx_file_with_bom_still_generates_all_display_currencies(
@@ -143,7 +205,9 @@ def test_dashboard_v4_missing_fx_warns_and_skips_conversion(tmp_path: Path) -> N
     assert liquid["amount"] == ""
     assert liquid["currency"] == "MIXED"
     assert "USD:2000.00" in liquid["native_totals"]
-    assert "HKD:3000.00" in liquid["native_totals"]
+    assert "HKD:3000.00" not in liquid["native_totals"]
+    unvested = {row["bucket"]: row for row in bucket_rows}["non_liquid_unvested_equity"]
+    assert "HKD:3000.00" in unvested["native_totals"]
 
 
 def test_dashboard_v4_unclassified_assets_are_review_required(tmp_path: Path) -> None:
@@ -162,7 +226,12 @@ def test_dashboard_v4_unclassified_assets_are_review_required(tmp_path: Path) ->
 
     bucket_rows = _read_rows(result.output_paths["asset_bucket_summary"])
     unclassified = {row["bucket"]: row for row in bucket_rows}["unclassified"]
+    markdown = result.output_paths["markdown_report"].read_text(encoding="utf-8")
+    html = result.output_paths["html_report"].read_text(encoding="utf-8")
+
     assert unclassified["review_required"] == "yes"
+    assert "Needs review / unclassified" in markdown
+    assert "Needs review / unclassified" in html
     assert WarningCode.DASHBOARD_V4_UNCLASSIFIED_ASSETS in result.warning_codes
     assert WarningCode.DASHBOARD_V4_BUCKET_CLASSIFICATION_WARNING in result.warning_codes
 
@@ -190,7 +259,7 @@ def test_dashboard_v4_cli_generates_redacted_offline_summary(tmp_path: Path, cap
     assert "Personal CFO Dashboard v4 v0.6.0 (offline)" in output
     assert "External connections used: no" in output
     assert "Broker connections used: no" in output
-    assert "Asset bucket rows: 4" in output
+    assert "Asset bucket rows: 5" in output
     assert "Warning codes:" in output
     assert (out_dir / "PERSONAL_CFO_DASHBOARD_V060.md").exists()
 
@@ -239,11 +308,13 @@ def test_dashboard_v4_outputs_are_static_local_and_redacted(tmp_path: Path) -> N
         for path in result.output_paths.values()
         if path.suffix.lower() in {".html", ".md", ".json", ".csv", ".svg"}
     ).lower()
+    assert "<script>" in combined
     for marker in (
-        "<script",
         "fetch(",
         "xmlhttprequest",
         "sendbeacon",
+        "localstorage",
+        "sessionstorage",
         "cdn",
         "upload",
         "raw_account",
@@ -306,6 +377,7 @@ def _generate_fixture_chain(tmp_path: Path) -> dict[str, Path]:
     account_rows[1]["base_currency"] = "USD"
     account_rows[2]["account_nav"] = "3000.00"
     account_rows[2]["base_currency"] = "HKD"
+    account_rows[2]["account_nav_bucket"] = "non_liquid_unvested_equity"
     _write_rows(account_path, account_rows)
     assert main(["--dashboard-v2", "--input-dir", str(merged), "--out-dir", str(dashboard_v2)]) == 0
     assert (

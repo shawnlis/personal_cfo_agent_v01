@@ -26,6 +26,7 @@ LEDGER_FIELDNAMES = [
     "source_bundle_id",
     "source_snapshot_id",
     "asset_type",
+    "account_nav_bucket",
     "symbol",
     "name",
     "quantity",
@@ -326,6 +327,7 @@ def _account_to_ledger_row(
         "source_bundle_id": source_bundle_id,
         "source_snapshot_id": source_snapshot_id,
         "asset_type": "account_nav",
+        "account_nav_bucket": _manual_nav_bucket(account),
         "symbol": "NAV",
         "name": "Manual account NAV",
         "quantity": "1",
@@ -352,6 +354,13 @@ def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=LEDGER_FIELDNAMES)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _manual_nav_bucket(account: dict[str, Any]) -> str:
+    label = _clean(account.get("account_label")).lower()
+    if "unvested" in label:
+        return "non_liquid_unvested_equity"
+    return "liquid_investment_assets"
 
 
 def _write_summary(
