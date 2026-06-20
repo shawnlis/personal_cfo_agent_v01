@@ -73,6 +73,7 @@ def test_dashboard_v3_generates_from_all_fixture_layers(tmp_path: Path) -> None:
         "html_report",
         "dashboard_summary",
         "net_worth_progress",
+        "net_worth_history_chart",
         "balance_sheet_summary",
         "asset_liability_breakdown",
         "dashboard_warnings",
@@ -426,6 +427,12 @@ def test_dashboard_v3_markdown_and_html_show_readable_sections(tmp_path: Path) -
     assert "Latest snapshot date:" in markdown
     assert "Warning count:" in markdown
     assert "dashboard_v050_warnings.md" in markdown
+    assert "net_worth_history_chart.svg" in markdown
+    assert "Net Worth History Chart" in html
+    assert result.output_paths["net_worth_history_chart"].exists()
+    assert "<svg" in result.output_paths["net_worth_history_chart"].read_text(
+        encoding="utf-8"
+    )
     assert "<style>" in html
     assert "<main>" in html
 

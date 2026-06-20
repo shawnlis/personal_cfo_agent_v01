@@ -37,6 +37,9 @@ python .\scripts\personal_cfo_agent.py `
 ```
 
 The generated form is static and local. It has no external scripts, styles, network calls, browser beacon calls, or data transmission.
+It includes only local inline JavaScript for building the JSON preview, downloading the JSON file, or saving it through a user-initiated local file picker when the browser supports that API.
+
+The form intentionally keeps the visible inputs short: one global snapshot date, one base currency, manual NAV rows, property value, mortgage balance, CPF/SRS totals, tax year, and HDB loan availability. Internal hashes required by the JSON schema are generated automatically from local labels/dates; raw account IDs, raw addresses, NRIC/FIN, and government identifiers are not requested.
 
 ## Initialize One Local Input File
 
@@ -106,12 +109,11 @@ The v0.5.3 and v0.5.7 split workflows remain supported:
 - `--init-private-input-kit`
 - `--validate-private-inputs`
 - `--run-manual-snapshot-chain`
-- `--manual-nav-form`
 - `--init-manual-nav-input`
 - `--validate-manual-nav-input`
 - `--manual-nav-to-provider-bundle`
 
-Use the unified input center when you want one human-friendly file. Use split commands when you intentionally want separate files or are debugging one layer.
+Use the unified input center when you want one human-friendly file and one HTML form. Use split commands only when you intentionally want separate JSON files or are debugging one layer. The old dedicated manual NAV HTML form is no longer a user-facing entrypoint.
 
 ## Warning Codes
 

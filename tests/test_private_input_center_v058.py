@@ -32,6 +32,8 @@ def test_private_input_center_cli_options_exist() -> None:
     assert "--init-private-input-center" in option_strings
     assert "--validate-private-input-center" in option_strings
     assert "--private-input-center-to-snapshots" in option_strings
+    assert "--run-net-worth-refresh" in option_strings
+    assert "--refresh-brokers" in option_strings
 
 
 def test_private_input_center_form_generation_is_static_local(tmp_path: Path) -> None:
@@ -43,11 +45,20 @@ def test_private_input_center_form_generation_is_static_local(tmp_path: Path) ->
     assert "personal cfo private input center" in html
     assert "http://" not in html
     assert "https://" not in html
-    assert "<script" not in html
+    assert "<script" in html
     assert "fetch(" not in html
     assert "xmlhttprequest" not in html
     assert "sendbeacon" not in html
     assert "upload" not in html
+    assert "preview json" in html
+    assert "download json" in html
+    assert "save json file" in html
+    assert "global snapshot" in html
+    assert "snapshot_date" in html
+    assert 'for="property_id_hash"' not in html
+    assert 'id="property_id_hash"' not in html
+    assert 'for="loan_id_hash"' not in html
+    assert 'id="loan_id_hash"' not in html
     assert WarningCode.PRIVATE_INPUT_CENTER_FORM_GENERATED in result.warning_codes
 
 
@@ -187,6 +198,71 @@ def test_private_input_center_cli_redacts_values_and_generates(tmp_path: Path) -
     assert "Synthetic Syfe Trade account" not in combined
 
 
+def test_net_worth_refresh_requires_live_gate_for_broker_refresh(tmp_path: Path) -> None:
+    input_file = _write_sgd_input(tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/personal_cfo_agent.py",
+            "--run-net-worth-refresh",
+            "--input-file",
+            str(input_file),
+            "--out-dir",
+            str(tmp_path / "reports" / "net_worth_refresh"),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "--allow-live-read" in result.stderr
+
+
+def test_net_worth_refresh_manual_only_chain_generates_dashboard_and_chart(
+    tmp_path: Path,
+) -> None:
+    input_file = _write_sgd_input(tmp_path)
+    out_dir = tmp_path / "reports" / "net_worth_refresh"
+    payload = json.loads(input_file.read_text(encoding="utf-8"))
+    payload["manual_nav_accounts"][0]["account_nav"] = PRIVATE_VALUE_MARKER
+    input_file.write_text(json.dumps(payload), encoding="utf-8")
+    env = {**os.environ, "CFO_ACCOUNT_HASH_SALT": "SYNTHETIC_TEST_SALT"}
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/personal_cfo_agent.py",
+            "--run-net-worth-refresh",
+            "--refresh-brokers",
+            "none",
+            "--input-file",
+            str(input_file),
+            "--out-dir",
+            str(out_dir),
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0
+    assert "Dashboard generated: yes" in result.stdout
+    assert "External provider reads attempted: no" in result.stdout
+    assert PRIVATE_VALUE_MARKER not in combined
+    assert (out_dir / "manual_layers" / "manual_nav" / "normalized_asset_ledger.csv").exists()
+    assert (out_dir / "provider_inputs" / "manual_nav" / "normalized_asset_ledger.csv").exists()
+    assert (out_dir / "merged" / "merged_account_nav_ledger.csv").exists()
+    assert (out_dir / "snapshots" / "net_worth_history.csv").exists()
+    assert (out_dir / "dashboard" / "PERSONAL_CFO_DASHBOARD_V050.md").exists()
+    assert (out_dir / "dashboard" / "net_worth_history_chart.svg").exists()
+    assert "NET_WORTH_REFRESH_LIVE_READ_SKIPPED" in result.stdout
+
+
 def test_private_input_center_cli_validation_is_value_redacted(
     tmp_path: Path, capsys
 ) -> None:
@@ -258,6 +334,16 @@ def test_private_input_center_source_has_no_live_or_browser_markers() -> None:
 def _write_input(tmp_path: Path) -> Path:
     target = tmp_path / "personal_cfo_input.local.json"
     target.write_text(TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8")
+    return target
+
+
+def _write_sgd_input(tmp_path: Path) -> Path:
+    target = _write_input(tmp_path)
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    payload["base_currency"] = "SGD"
+    for account in payload["manual_nav_accounts"]:
+        account["base_currency"] = "SGD"
+    target.write_text(json.dumps(payload), encoding="utf-8")
     return target
 
 

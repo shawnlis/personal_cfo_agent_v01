@@ -5,118 +5,383 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Personal CFO Private Input Center</title>
   <style>
-    :root { color-scheme: light; font-family: Arial, sans-serif; }
-    body { margin: 0; background: #f6f7f2; color: #1f2933; }
-    main { max-width: 1120px; margin: 0 auto; padding: 32px 20px 48px; }
-    h1 { font-size: 30px; margin: 0 0 8px; }
-    h2 { font-size: 20px; margin: 28px 0 12px; }
-    h3 { font-size: 16px; margin: 20px 0 10px; }
-    p, li { line-height: 1.5; }
-    .panel { background: #ffffff; border: 1px solid #d8d8d0; border-radius: 8px; padding: 18px; margin-top: 18px; }
-    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-    label { display: block; font-size: 13px; font-weight: 700; margin-bottom: 4px; }
-    input, select, textarea { box-sizing: border-box; width: 100%; border: 1px solid #b9b9b0; border-radius: 6px; padding: 9px; font: inherit; background: #fff; }
-    textarea { min-height: 84px; resize: vertical; }
-    code, pre { background: #eeeeE7; border-radius: 6px; }
-    code { padding: 2px 4px; }
-    pre { padding: 14px; overflow: auto; }
-    .full { grid-column: 1 / -1; }
-    .note { color: #52606d; }
-    .warn { color: #864000; font-weight: 700; }
-    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+    :root {
+      color-scheme: light;
+      --ink: #17202a;
+      --muted: #5c6670;
+      --line: #d7dce0;
+      --panel: #ffffff;
+      --page: #f4f6f7;
+      --accent: #0f766e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: Segoe UI, Arial, sans-serif;
+      line-height: 1.45;
+    }
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 28px 20px 56px;
+    }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    h2 {
+      margin: 28px 0 12px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+      font-size: 20px;
+    }
+    p { color: var(--muted); margin: 0 0 16px; }
+    label { display: block; font-weight: 600; margin-bottom: 5px; }
+    input, select, textarea, button {
+      font: inherit;
+      border-radius: 6px;
+    }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: 9px 10px;
+    }
+    textarea {
+      min-height: 280px;
+      font-family: Consolas, monospace;
+      font-size: 13px;
+    }
+    button {
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    button.secondary {
+      background: #334155;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      margin-top: 16px;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 18px 0;
+    }
+    .status {
+      color: var(--muted);
+      min-height: 24px;
+    }
+    .compact {
+      max-width: 860px;
+    }
   </style>
 </head>
 <body>
 <main>
   <h1>Personal CFO Private Input Center</h1>
-  <p class="note">Local-only worksheet for preparing <code>private_inputs/personal_cfo_input.local.json</code>. This page has no network calls, external scripts, external styles, browser beacon calls, or data transmission.</p>
+  <p class="compact">
+    Local-only helper for building the unified private input JSON. Enter current
+    manual net asset values and optional manual layers, then save the JSON to an
+    ignored local file such as private_inputs/personal_cfo_input.local.json.
+  </p>
 
   <section class="panel">
-    <h2>Safety Rules</h2>
-    <ul>
-      <li>Do not enter account numbers, raw account IDs, NRIC, FIN, passwords, API keys, tokens, tax reference numbers, or raw addresses.</li>
-      <li>Use labels and stable local hashes such as <code>property_id_hash</code>, <code>loan_id_hash</code>, and manual account labels.</li>
-      <li>Save real values only in ignored local files under <code>private_inputs/</code>.</li>
-    </ul>
-  </section>
-
-  <section class="panel">
-    <h2>Top-Level Snapshot</h2>
+    <h2>Global Snapshot</h2>
     <div class="grid">
-      <div><label>schema_version</label><input value="v0.5.8"></div>
-      <div><label>snapshot_date</label><input placeholder="YYYY-MM-DD"></div>
-      <div><label>base_currency</label><input placeholder="SGD"></div>
-      <div><label>source_type</label><input placeholder="app_manual"></div>
-      <div><label>review_required</label><select><option>true</option><option>false</option></select></div>
+      <div>
+        <label for="snapshot_date">Snapshot date</label>
+        <input id="snapshot_date" type="date">
+      </div>
+      <div>
+        <label for="base_currency">Base currency</label>
+        <select id="base_currency">
+          <option value="SGD" selected>SGD</option>
+          <option value="USD">USD</option>
+          <option value="HKD">HKD</option>
+          <option value="CNH">CNH</option>
+        </select>
+      </div>
     </div>
   </section>
 
   <section class="panel">
-    <h2>Manual Account NAVs</h2>
+    <h2>Manual NAV Accounts</h2>
     <div class="grid">
-      <div><label>provider_label</label><select><option>syfe_trade</option><option>webull</option><option>usmart</option><option>other</option></select></div>
-      <div><label>account_label</label><input placeholder="Label only, no account number"></div>
-      <div><label>account_type</label><select><option>brokerage</option><option>robo</option><option>cash</option><option>retirement</option><option>other</option></select></div>
-      <div><label>base_currency</label><input placeholder="SGD"></div>
-      <div><label>account_nav</label><input placeholder="Required"></div>
-      <div><label>as_of_date</label><input placeholder="YYYY-MM-DD"></div>
-      <div><label>cash_total</label><input placeholder="Optional"></div>
-      <div><label>securities_market_value</label><input placeholder="Optional"></div>
-      <div><label>margin_or_debt</label><input placeholder="Optional"></div>
-      <div><label>source_type</label><input placeholder="app_manual"></div>
-      <div><label>source_confidence</label><input placeholder="manual_review"></div>
-      <div><label>review_required</label><select><option>true</option><option>false</option></select></div>
+      <div>
+        <label for="syfe_nav">Syfe Trade NAV</label>
+        <input id="syfe_nav" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div>
+        <label for="webull_nav">Webull manual NAV</label>
+        <input id="webull_nav" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div>
+        <label for="usmart_nav">uSMART manual NAV</label>
+        <input id="usmart_nav" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div>
+        <label for="other_nav">Other manual NAV</label>
+        <input id="other_nav" inputmode="decimal" placeholder="0.00">
+      </div>
     </div>
   </section>
 
   <section class="panel">
-    <h2>Property and Mortgage</h2>
-    <h3>Property</h3>
+    <h2>Property And Liabilities</h2>
     <div class="grid">
-      <div><label>property_id_hash</label><input placeholder="prop_local_hash"></div>
-      <div><label>label</label><input placeholder="Label only"></div>
-      <div><label>type</label><input placeholder="residential_property"></div>
-      <div><label>country</label><input placeholder="SG"></div>
-      <div><label>ownership_pct</label><input placeholder="0.50 or 50%"></div>
-      <div><label>valuation_amount</label><input placeholder="Required"></div>
-      <div><label>currency</label><input placeholder="SGD"></div>
-      <div><label>valuation_date</label><input placeholder="YYYY-MM-DD"></div>
-      <div><label>source</label><input placeholder="app_manual"></div>
-    </div>
-    <h3>Mortgage</h3>
-    <div class="grid">
-      <div><label>loan_id_hash</label><input placeholder="loan_local_hash"></div>
-      <div><label>linked_property_id_hash</label><input placeholder="prop_local_hash"></div>
-      <div><label>lender_label</label><input placeholder="Label only"></div>
-      <div><label>outstanding_balance</label><input placeholder="Required"></div>
-      <div><label>currency</label><input placeholder="SGD"></div>
-      <div><label>snapshot_date</label><input placeholder="YYYY-MM-DD"></div>
+      <div>
+        <label for="property_value">Property value</label>
+        <input id="property_value" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div>
+        <label for="property_ownership">Ownership percent</label>
+        <input id="property_ownership" inputmode="decimal" placeholder="100.00">
+      </div>
+      <div>
+        <label for="mortgage_balance">Mortgage balance</label>
+        <input id="mortgage_balance" inputmode="decimal" placeholder="0.00">
+      </div>
     </div>
   </section>
 
   <section class="panel">
-    <h2>CPF / SRS / Tax / HDB Loan</h2>
+    <h2>Singapore Manual Layers</h2>
     <div class="grid">
-      <div><label>CPF snapshot_date</label><input placeholder="YYYY-MM-DD"></div>
-      <div><label>CPF total</label><input placeholder="Optional"></div>
-      <div><label>CPF currency</label><input placeholder="SGD"></div>
-      <div><label>SRS provider_label</label><input placeholder="Label only"></div>
-      <div><label>SRS total</label><input placeholder="Optional"></div>
-      <div><label>SRS snapshot_date</label><input placeholder="YYYY-MM-DD"></div>
-      <div><label>Tax YA</label><input placeholder="2026"></div>
-      <div><label>Tax source_date</label><input placeholder="YYYY-MM-DD"></div>
-      <div><label>HDB loan_id_hash</label><input placeholder="hdb_loan_local_hash"></div>
-      <div><label>HDB snapshot_date</label><input placeholder="YYYY-MM-DD"></div>
-      <div><label>HDB currency</label><input placeholder="SGD"></div>
+      <div>
+        <label for="cpf_total">CPF retirement assets</label>
+        <input id="cpf_total" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div>
+        <label for="srs_total">SRS retirement assets</label>
+        <input id="srs_total" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div>
+        <label for="tax_ya">Tax year of assessment</label>
+        <input id="tax_ya" inputmode="numeric" placeholder="2026">
+      </div>
+      <div>
+        <label for="hdb_loan_balance">HDB loan balance</label>
+        <input id="hdb_loan_balance" inputmode="decimal" placeholder="0.00">
+      </div>
     </div>
   </section>
 
   <section class="panel">
-    <h2>Commands</h2>
-    <pre>python .\scripts\personal_cfo_agent.py --init-private-input-center --out-file .\private_inputs\personal_cfo_input.local.json
-python .\scripts\personal_cfo_agent.py --validate-private-input-center --input-file .\private_inputs\personal_cfo_input.local.json
-python .\scripts\personal_cfo_agent.py --private-input-center-to-snapshots --input-file .\private_inputs\personal_cfo_input.local.json --out-dir .\reports\personal_cfo_agent\private_input_center_v058_local</pre>
+    <h2>Export JSON</h2>
+    <div class="actions">
+      <button type="button" id="preview_json">Preview JSON</button>
+      <button type="button" id="download_json" class="secondary">Download JSON</button>
+      <button type="button" id="save_json" class="secondary">Save JSON File</button>
+    </div>
+    <p id="status" class="status"></p>
+    <textarea id="json_preview" spellcheck="false" aria-label="JSON preview"></textarea>
   </section>
 </main>
+
+<script>
+(function () {
+  "use strict";
+
+  const $ = (name) => document.getElementById(name);
+  const today = new Date().toISOString().slice(0, 10);
+  $("snapshot_date").value = today;
+  $("tax_ya").value = String(new Date().getFullYear());
+  $("property_ownership").value = "100.00";
+
+  function value(id) {
+    return ($(id).value || "").trim();
+  }
+
+  function amount(id) {
+    return value(id) || "0.00";
+  }
+
+  function boolAvailable(id) {
+    const raw = value(id);
+    return raw !== "" && raw !== "0" && raw !== "0.00";
+  }
+
+  function localHash(seed) {
+    let hash = 2166136261;
+    for (let index = 0; index < seed.length; index += 1) {
+      hash ^= seed.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return "local_" + (hash >>> 0).toString(16).padStart(8, "0");
+  }
+
+  function manualAccount(providerLabel, navId, accountLabel) {
+    return {
+      provider_label: providerLabel,
+      account_label: accountLabel,
+      account_type: "manual_nav",
+      base_currency: value("base_currency") || "SGD",
+      account_nav: amount(navId),
+      cash_total: "",
+      securities_market_value: "",
+      margin_or_debt: "",
+      as_of_date: value("snapshot_date") || today,
+      source_type: "local_private_input_center",
+      source_confidence: "manual_review",
+      review_required: true,
+      notes: "Local manual NAV entry."
+    };
+  }
+
+  function payload() {
+    const snapshotDate = value("snapshot_date") || today;
+    const baseCurrency = value("base_currency") || "SGD";
+    const propertyHash = localHash("property|" + snapshotDate);
+    const mortgageHash = localHash("mortgage|" + snapshotDate);
+    const hdbLoanHash = localHash("hdb|" + snapshotDate);
+    return {
+      schema_version: "v0.5.8",
+      snapshot_date: snapshotDate,
+      base_currency: baseCurrency,
+      source_type: "local_private_input_center",
+      review_required: true,
+      manual_nav_accounts: [
+        manualAccount("syfe_trade", "syfe_nav", "Syfe Trade manual NAV"),
+        manualAccount("webull", "webull_nav", "Webull manual NAV"),
+        manualAccount("usmart", "usmart_nav", "uSMART manual NAV"),
+        manualAccount("manual_other", "other_nav", "Other manual NAV")
+      ],
+      properties: [
+        {
+          property_id_hash: propertyHash,
+          label: "Manual property layer",
+          type: "residential_property",
+          country: "SG",
+          area: "",
+          ownership_pct: amount("property_ownership"),
+          valuation_amount: amount("property_value"),
+          currency: baseCurrency,
+          valuation_date: snapshotDate,
+          source: "local_private_input_center",
+          confidence: "manual_review",
+          review_required: true
+        }
+      ],
+      mortgages: [
+        {
+          loan_id_hash: mortgageHash,
+          linked_property_id_hash: propertyHash,
+          lender_label: "Manual mortgage layer",
+          outstanding_balance: amount("mortgage_balance"),
+          currency: baseCurrency,
+          interest_rate: "",
+          rate_type: "",
+          monthly_payment: "",
+          repricing_date: snapshotDate,
+          maturity_date: snapshotDate,
+          snapshot_date: snapshotDate,
+          review_required: true
+        }
+      ],
+      cpf: [
+        {
+          snapshot_date: snapshotDate,
+          oa: "",
+          sa: "",
+          ma: "",
+          ra: "",
+          total: amount("cpf_total"),
+          currency: baseCurrency,
+          source_type: "local_private_input_center",
+          source_date: snapshotDate,
+          review_required: true
+        }
+      ],
+      srs: [
+        {
+          snapshot_date: snapshotDate,
+          provider_label: "Manual SRS layer",
+          cash: "",
+          investments_value: "",
+          total: amount("srs_total"),
+          contribution_ytd: "",
+          currency: baseCurrency,
+          tax_wrapper: true,
+          source_type: "local_private_input_center",
+          source_date: snapshotDate,
+          review_required: true
+        }
+      ],
+      tax: [
+        {
+          year_of_assessment: value("tax_ya") || String(new Date().getFullYear()),
+          assessable_income_available: false,
+          tax_payable_available: false,
+          tax_paid_available: false,
+          reliefs_available: false,
+          source_type: "local_private_input_center",
+          source_date: snapshotDate,
+          review_required: true
+        }
+      ],
+      hdb_loans: [
+        {
+          snapshot_date: snapshotDate,
+          loan_id_hash: hdbLoanHash,
+          linked_property_id_hash: propertyHash,
+          monthly_installment_available: false,
+          outstanding_balance_available: boolAvailable("hdb_loan_balance"),
+          currency: baseCurrency,
+          source_type: "local_private_input_center",
+          source_date: snapshotDate,
+          review_required: true
+        }
+      ]
+    };
+  }
+
+  function renderJson() {
+    const text = JSON.stringify(payload(), null, 2);
+    $("json_preview").value = text;
+    $("status").textContent = "JSON prepared locally.";
+    return text;
+  }
+
+  $("preview_json").addEventListener("click", renderJson);
+  $("download_json").addEventListener("click", function () {
+    const blob = new Blob([renderJson()], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "personal_cfo_input.local.json";
+    link.click();
+    URL.revokeObjectURL(link.href);
+    $("status").textContent = "JSON download prepared locally.";
+  });
+  $("save_json").addEventListener("click", async function () {
+    const text = renderJson();
+    if (!window.showSaveFilePicker) {
+      $("status").textContent = "Use Download JSON, then place the file in private_inputs.";
+      return;
+    }
+    const handle = await window.showSaveFilePicker({
+      suggestedName: "personal_cfo_input.local.json",
+      types: [{ description: "JSON", accept: { "application/json": [".json"] } }]
+    });
+    const writable = await handle.createWritable();
+    await writable.write(text);
+    await writable.close();
+    $("status").textContent = "JSON saved locally.";
+  });
+})();
+</script>
 </body>
 </html>

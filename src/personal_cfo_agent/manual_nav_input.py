@@ -19,7 +19,6 @@ SCHEMA_VERSION = "v0.5.7"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = REPO_ROOT / "templates" / "private_inputs"
 MANUAL_NAV_EXAMPLE = TEMPLATE_DIR / "manual_nav_input.example.json"
-MANUAL_NAV_FORM_TEMPLATE = TEMPLATE_DIR / "manual_nav_form.html"
 
 LEDGER_FIELDNAMES = [
     "provider",
@@ -58,13 +57,6 @@ _NRIC_PATTERN = re.compile(r"\b[STFGM]\d{7}[A-Z]\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
-class ManualNavFormResult:
-    output_dir: Path
-    output_path: Path
-    warning_codes: list[WarningCode] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
 class ManualNavInitResult:
     output_file: Path
     created: bool
@@ -92,18 +84,6 @@ class ManualNavBundleResult:
     account_count: int
     provider_labels: list[str]
     warning_codes: list[WarningCode] = field(default_factory=list)
-
-
-def generate_manual_nav_form(*, out_dir: Path) -> ManualNavFormResult:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    output_path = out_dir / "manual_nav_form.html"
-    shutil.copyfile(MANUAL_NAV_FORM_TEMPLATE, output_path)
-    return ManualNavFormResult(
-        output_dir=out_dir,
-        output_path=output_path,
-        warning_codes=[WarningCode.MANUAL_NAV_FORM_GENERATED],
-    )
-
 
 def init_manual_nav_input(*, out_file: Path, overwrite: bool = False) -> ManualNavInitResult:
     out_file.parent.mkdir(parents=True, exist_ok=True)

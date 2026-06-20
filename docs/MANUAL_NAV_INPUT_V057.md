@@ -14,17 +14,9 @@ python .\scripts\personal_cfo_agent.py `
   --out-file .\private_inputs\personal_cfo_input.local.json
 ```
 
-Use the unified private input center when you want one local input surface. The v0.5.7 split commands below still work and remain useful when you only want to update manual NAV.
+Use the unified private input center when you want one local input surface. The dedicated v0.5.7 manual NAV HTML worksheet has been retired to avoid multiple competing private input forms. The JSON commands below remain as low-level compatibility and debugging tools for the unified workflow.
 
 ## Workflow
-
-Generate a local static worksheet:
-
-```powershell
-python .\scripts\personal_cfo_agent.py `
-  --manual-nav-form `
-  --out-dir .\reports\personal_cfo_agent\manual_nav_form_v057
-```
 
 Initialize a local ignored JSON input file:
 
@@ -95,7 +87,6 @@ The provider bundle emits only hashed account IDs. It does not emit account labe
 
 ## Warning Codes
 
-- `MANUAL_NAV_FORM_GENERATED`
 - `MANUAL_NAV_INPUT_INITIALIZED`
 - `MANUAL_NAV_INPUT_EXISTS_SKIPPED`
 - `MANUAL_NAV_OVERWRITE_USED`
