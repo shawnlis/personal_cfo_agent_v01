@@ -22,6 +22,7 @@ from personal_cfo_agent.config import (
 from personal_cfo_agent.dashboard import write_dashboard
 from personal_cfo_agent.dashboard_v2 import DashboardV2Result, write_dashboard_v2
 from personal_cfo_agent.dashboard_v3 import DashboardV3Result, write_dashboard_v3
+from personal_cfo_agent.dashboard_v4 import DashboardV4Result, write_dashboard_v4
 from personal_cfo_agent.manual_snapshot import (
     ManualSnapshotReadError,
     ManualSnapshotValidationError,
@@ -472,6 +473,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Write the v0.5.0 integrated net worth dashboard from offline local bundles.",
     )
     parser.add_argument(
+        "--dashboard-v4",
+        action="store_true",
+        help="Write the v0.6.0 visual asset bucket dashboard from a local net worth refresh bundle.",
+    )
+    parser.add_argument(
         "--record-snapshot",
         action="store_true",
         help="Record an offline v0.4.2 net worth history snapshot from merged account NAV outputs.",
@@ -629,6 +635,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Snapshot history input directory for --dashboard-v3.",
     )
     parser.add_argument(
+        "--refresh-dir",
+        type=Path,
+        default=None,
+        help="Local net worth refresh input directory for --dashboard-v4.",
+    )
+    parser.add_argument(
         "--property-mortgage-dir",
         type=Path,
         default=None,
@@ -645,6 +657,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional local FX rates JSON for --dashboard-v3 mixed-currency normalization.",
+    )
+    parser.add_argument(
+        "--fx-rates-file",
+        type=Path,
+        default=None,
+        help="Optional local FX rates JSON for --dashboard-v4 bucket display.",
     )
     parser.add_argument(
         "--dashboard-assumptions",
@@ -695,6 +713,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _validate_private_input_center_cli(args, parser)
     if args.private_input_center_to_snapshots:
         return _private_input_center_to_snapshots_cli(args, parser)
+    if args.dashboard_v4:
+        return _dashboard_v4_cli(args, parser)
     if args.run_net_worth_refresh:
         return _run_net_worth_refresh_cli(args, parser)
     if args.dashboard_v3:
@@ -1266,6 +1286,7 @@ def _validate_net_worth_refresh_cli_scope(
         args.merge_provider_bundles
         or args.dashboard_v2
         or args.dashboard_v3
+        or args.dashboard_v4
         or args.dashboard
         or args.record_snapshot
         or args.property_mortgage_snapshot
@@ -1324,6 +1345,7 @@ def _validate_private_input_center_cli_scope(
         args.merge_provider_bundles
         or args.dashboard_v2
         or args.dashboard_v3
+        or args.dashboard_v4
         or args.dashboard
         or args.record_snapshot
         or args.property_mortgage_snapshot
@@ -1378,6 +1400,7 @@ def _validate_manual_nav_cli_scope(
         args.merge_provider_bundles
         or args.dashboard_v2
         or args.dashboard_v3
+        or args.dashboard_v4
         or args.dashboard
         or args.record_snapshot
         or args.property_mortgage_snapshot
@@ -1425,6 +1448,7 @@ def _validate_private_input_cli_scope(
         args.merge_provider_bundles
         or args.dashboard_v2
         or args.dashboard_v3
+        or args.dashboard_v4
         or args.dashboard
         or args.record_snapshot
         or args.property_mortgage_snapshot
@@ -1467,7 +1491,7 @@ def _dashboard_v2_cli(args: argparse.Namespace, parser: argparse.ArgumentParser)
         parser.error("--dashboard-v2 cannot be combined with --merge-provider-bundles")
     if args.record_snapshot:
         parser.error("--dashboard-v2 cannot be combined with --record-snapshot")
-    if args.dashboard:
+    if args.dashboard_v4 or args.dashboard:
         parser.error("--dashboard-v2 cannot be combined with --dashboard")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
         parser.error("--dashboard-v2 cannot be combined with manual snapshot utilities")
@@ -1496,6 +1520,7 @@ def _dashboard_v3_cli(args: argparse.Namespace, parser: argparse.ArgumentParser)
     if (
         args.merge_provider_bundles
         or args.dashboard_v2
+        or args.dashboard_v4
         or args.dashboard
         or args.record_snapshot
         or args.property_mortgage_snapshot
@@ -1525,6 +1550,58 @@ def _dashboard_v3_cli(args: argparse.Namespace, parser: argparse.ArgumentParser)
     return 0 if result.generated else 1
 
 
+def _dashboard_v4_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.allow_live_read:
+        parser.error("--dashboard-v4 cannot be combined with --allow-live-read")
+    if args.readiness_check or args.connection_diagnostics:
+        parser.error(
+            "--dashboard-v4 cannot be combined with readiness or connection diagnostics"
+        )
+    if args.account_discovery or args.read_context_probe:
+        parser.error("--dashboard-v4 cannot be combined with Moomoo discovery probes")
+    if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
+        parser.error("--dashboard-v4 cannot be combined with data diagnostics")
+    if (
+        args.merge_provider_bundles
+        or args.dashboard_v2
+        or args.dashboard_v3
+        or args.dashboard
+        or args.record_snapshot
+        or args.property_mortgage_snapshot
+        or args.sg_manual_snapshot
+        or args.run_net_worth_refresh
+    ):
+        parser.error("--dashboard-v4 cannot be combined with other report generators")
+    if (
+        args.init_private_input_kit
+        or args.validate_private_inputs
+        or args.run_manual_snapshot_chain
+        or args.init_manual_nav_input
+        or args.validate_manual_nav_input
+        or args.manual_nav_to_provider_bundle
+        or args.private_input_center_form
+        or args.init_private_input_center
+        or args.validate_private_input_center
+        or args.private_input_center_to_snapshots
+    ):
+        parser.error("--dashboard-v4 cannot be combined with local input utilities")
+    if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
+        parser.error("--dashboard-v4 cannot be combined with manual snapshot utilities")
+    if args.refresh_dir is None:
+        parser.error("--dashboard-v4 requires --refresh-dir")
+    if args.out_dir is None:
+        parser.error("--dashboard-v4 requires --out-dir")
+
+    result = write_dashboard_v4(
+        refresh_dir=args.refresh_dir,
+        fx_rates_file=args.fx_rates_file,
+        out_dir=args.out_dir,
+    )
+    for line in _format_dashboard_v4_result(result):
+        print(line)
+    return 0 if result.generated else 1
+
+
 def _record_snapshot_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.allow_live_read:
         parser.error("--record-snapshot cannot be combined with --allow-live-read")
@@ -1538,7 +1615,7 @@ def _record_snapshot_cli(args: argparse.Namespace, parser: argparse.ArgumentPars
         parser.error("--record-snapshot cannot be combined with data diagnostics")
     if args.merge_provider_bundles:
         parser.error("--record-snapshot cannot be combined with --merge-provider-bundles")
-    if args.dashboard_v2 or args.dashboard:
+    if args.dashboard_v2 or args.dashboard_v3 or args.dashboard_v4 or args.dashboard:
         parser.error("--record-snapshot cannot be combined with dashboard generation")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
         parser.error("--record-snapshot cannot be combined with manual snapshot utilities")
@@ -1577,6 +1654,7 @@ def _property_mortgage_snapshot_cli(
         args.merge_provider_bundles
         or args.dashboard_v2
         or args.dashboard_v3
+        or args.dashboard_v4
         or args.dashboard
         or args.record_snapshot
     ):
@@ -1621,6 +1699,7 @@ def _sg_manual_snapshot_cli(
         args.merge_provider_bundles
         or args.dashboard_v2
         or args.dashboard_v3
+        or args.dashboard_v4
         or args.dashboard
         or args.record_snapshot
         or args.property_mortgage_snapshot
@@ -1948,6 +2027,29 @@ def _format_dashboard_v3_result(result: DashboardV3Result) -> list[str]:
         f"SRS rows: {result.srs_count}",
         f"Tax rows: {result.tax_count}",
         f"HDB loan rows: {result.hdb_loan_count}",
+        f"Warning codes: {warnings}",
+    ]
+    if result.output_paths:
+        lines.append(
+            "Output files: "
+            + ", ".join(path.name for path in sorted(result.output_paths.values()))
+        )
+    return lines
+
+
+def _format_dashboard_v4_result(result: DashboardV4Result) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    lines = [
+        "Personal CFO Dashboard v4 v0.6.0 (offline)",
+        "External connections used: no",
+        "Broker connections used: no",
+        f"Refresh input directory: {result.refresh_dir}",
+        f"FX rates file: {result.fx_rates_file or ''}",
+        f"Output directory: {result.output_dir or ''}",
+        f"Dashboard generated: {'yes' if result.generated else 'no'}",
+        f"Asset bucket rows: {result.bucket_count}",
+        f"Bucket history rows: {result.history_count}",
+        f"Withdrawal rows: {result.withdrawal_row_count}",
         f"Warning codes: {warnings}",
     ]
     if result.output_paths:

@@ -79,6 +79,7 @@ def test_security_boundary_docs_cover_browser_identity_and_advice_limits() -> No
     assert "No recommendation output." in text
     assert "No buy/sell/hold advice." in text
     assert "No AI PM Agent import path." in text
+    assert "Dashboard v4 Rule" in text
 
 
 def test_secret_looking_values_are_not_committed() -> None:

@@ -1,0 +1,13 @@
+{
+  "schema_version": "v0.6.0",
+  "base_currency": "SGD",
+  "rates_to_base": {
+    "SGD": "1.00",
+    "USD": "1.35",
+    "HKD": "0.17",
+    "CNY": "0.19"
+  },
+  "source_type": "local_manual_placeholder",
+  "source_date": "2026-01-01",
+  "review_required": true
+}
