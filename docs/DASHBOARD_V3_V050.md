@@ -96,3 +96,7 @@ v0.5.3 adds a local private input kit for preparing real manual property/mortgag
 ## Boundaries
 
 Dashboard v3 is reporting only. It must not include raw account IDs, NRIC, FIN, raw government identifiers, raw property addresses, secrets, or generated real reports in Git. `account_id_hash`, property hashes, loan hashes, availability flags, counts, and synthetic fixture values are allowed. The dashboard must not create action instructions or tax filing output.
+
+## Dashboard v4 Follow-On
+
+v0.6.0 Dashboard v4 consumes the v0.5.9 refresh directory that includes Dashboard v3 outputs. It adds asset bucket visualization, explicit local FX handling, withdrawal cashflow calculations, and bucketed net worth history charts. See `docs/DASHBOARD_V4_V060.md`.

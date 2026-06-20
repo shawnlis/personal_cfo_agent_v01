@@ -34,6 +34,10 @@ v0.4.4 adds an offline manual Singapore CPF, SRS, tax, and HDB loan snapshot fou
 
 v0.5.0 adds an integrated offline net worth dashboard over v0.3.3 account NAV merge outputs, v0.4.2 snapshot history, v0.4.3 property/mortgage snapshots, and v0.4.4 Singapore manual snapshots. Account NAV and snapshot history remain primary. Property, CPF, SRS, tax, and HDB loan data are offline manual review layers. It does not add broker, bank, CPF, IRAS, HDB, SingPass, browser, trading, tax filing, cash movement, scheduler, or recommendation workflows.
 
+## Dashboard v4
+
+v0.6.0 adds an offline visual dashboard over an existing v0.5.9 refresh directory. It groups local account NAV, property equity, CPF/SRS, and review items into asset buckets; writes static local SVG charts; and requires explicit local FX rates for mixed-currency display. It does not add connector coverage, broker reads, bank access, browser automation, external chart services, cash movement, scheduler automation, or recommendation workflows.
+
 ## Webull Readiness Feasibility
 
 v0.5.4 adds Webull OpenAPI readiness/config diagnostics only. Webull API documentation includes execution-capable surfaces, so this foundation is deliberately not a live reader. It does not connect to Webull, read account data, move cash, or enable execution workflows. Future Webull live-read work requires separate approval.
