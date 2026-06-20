@@ -106,6 +106,27 @@ def test_dashboard_v4_withdrawal_cashflow_uses_explicit_fx(tmp_path: Path) -> No
     assert by_rate_currency[("0.030", "CNY")]["annual"] == "530.00"
 
 
+def test_dashboard_v4_fx_file_with_bom_still_generates_all_display_currencies(
+    tmp_path: Path,
+) -> None:
+    refresh_dir = _generate_refresh_dir(tmp_path)
+    fx_rates = _write_fx_rates(tmp_path)
+    fx_rates.write_text(f"\ufeff{fx_rates.read_text(encoding='utf-8')}", encoding="utf-8")
+
+    result = write_dashboard_v4(
+        refresh_dir=refresh_dir,
+        fx_rates_file=fx_rates,
+        out_dir=tmp_path / "dashboard_v4_bom_fx",
+    )
+
+    rows = _read_rows(result.output_paths["liquid_withdrawal_cashflow"])
+    assert len(rows) == 9
+    assert {row["withdrawal_rate"] for row in rows} == {"0.030", "0.035", "0.040"}
+    assert {row["currency"] for row in rows} == {"USD", "SGD", "CNY"}
+    assert WarningCode.DASHBOARD_V4_FX_RATES_MISSING not in result.warning_codes
+    assert WarningCode.DASHBOARD_V4_FX_CONVERSION_SKIPPED not in result.warning_codes
+
+
 def test_dashboard_v4_missing_fx_warns_and_skips_conversion(tmp_path: Path) -> None:
     refresh_dir = _generate_refresh_dir(tmp_path)
 
