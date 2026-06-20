@@ -343,6 +343,7 @@ def write_dashboard_v3(
         "html_report": out_dir / "PERSONAL_CFO_DASHBOARD_V050.html",
         "dashboard_summary": out_dir / "dashboard_v050_summary.json",
         "net_worth_progress": out_dir / "net_worth_progress.csv",
+        "net_worth_history_chart": out_dir / "net_worth_history_chart.svg",
         "balance_sheet_summary": out_dir / "balance_sheet_summary.csv",
         "asset_liability_breakdown": out_dir / "asset_liability_breakdown.csv",
         "dashboard_warnings": out_dir / "dashboard_v050_warnings.md",
@@ -356,8 +357,10 @@ def write_dashboard_v3(
     )
     paths["dashboard_summary"].write_text(json.dumps(summary, indent=2), encoding="utf-8")
     markdown = _markdown(summary=summary, warnings=warnings, breakdown_rows=breakdown_rows)
+    chart_svg = _net_worth_history_chart_svg(net_worth_progress_rows)
+    paths["net_worth_history_chart"].write_text(chart_svg, encoding="utf-8")
     paths["markdown_report"].write_text(markdown, encoding="utf-8")
-    paths["html_report"].write_text(_html(markdown), encoding="utf-8")
+    paths["html_report"].write_text(_html(markdown, chart_svg=chart_svg), encoding="utf-8")
     _write_warnings(paths["dashboard_warnings"], warnings)
 
     return DashboardV3Result(
@@ -736,6 +739,7 @@ def _markdown(
         "## Net Worth Progress",
         f"- History-first output rows: {summary['net_worth_history_count']}",
         "- The CSV output keeps the numeric progression in `net_worth_progress.csv`.",
+        "- The static chart output is written to `net_worth_history_chart.svg`.",
         "- Latest integrated row combines account NAV with available manual layers.",
         "- Mixed-currency totals require explicit local FX rates before this section reports a numeric net worth.",
         "",
@@ -785,7 +789,91 @@ def _markdown(
     return "\n".join(lines) + "\n"
 
 
-def _html(markdown: str) -> str:
+def _net_worth_history_chart_svg(rows: list[dict[str, str]]) -> str:
+    points: list[tuple[str, float]] = []
+    for row in rows:
+        value = _parse_number(row.get("integrated_net_worth"))
+        if value is None:
+            value = _parse_number(row.get("total_account_nav"))
+        if value is None:
+            continue
+        label = _clean(row.get("snapshot_date")) or _clean(row.get("snapshot_id")) or "snapshot"
+        points.append((label, value))
+    width = 860
+    height = 320
+    left = 68
+    right = 28
+    top = 28
+    bottom = 54
+    plot_width = width - left - right
+    plot_height = height - top - bottom
+    if not points:
+        return (
+            f"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" "
+            f"viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Net worth history chart\">"
+            "<rect width=\"100%\" height=\"100%\" fill=\"#ffffff\"/>"
+            "<text x=\"32\" y=\"48\" font-family=\"Segoe UI, Arial\" font-size=\"18\" fill=\"#17202a\">"
+            "Net worth history unavailable</text></svg>\n"
+        )
+    values = [value for _, value in points]
+    low = min(values)
+    high = max(values)
+    if low == high:
+        low -= 1.0
+        high += 1.0
+    span = high - low
+
+    def x_at(index: int) -> float:
+        if len(points) == 1:
+            return left + plot_width / 2
+        return left + (plot_width * index / (len(points) - 1))
+
+    def y_at(value: float) -> float:
+        return top + plot_height - ((value - low) / span * plot_height)
+
+    polyline = " ".join(
+        f"{x_at(index):.1f},{y_at(value):.1f}" for index, (_, value) in enumerate(points)
+    )
+    circles = "\n".join(
+        f"<circle cx=\"{x_at(index):.1f}\" cy=\"{y_at(value):.1f}\" r=\"4\" fill=\"#0f766e\"/>"
+        for index, (_, value) in enumerate(points)
+    )
+    labels = _chart_labels(points, x_at, height)
+    return (
+        f"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" "
+        f"viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"Net worth history chart\">"
+        "<rect width=\"100%\" height=\"100%\" fill=\"#ffffff\"/>"
+        "<text x=\"32\" y=\"30\" font-family=\"Segoe UI, Arial\" font-size=\"18\" "
+        "font-weight=\"700\" fill=\"#17202a\">Net Worth History</text>"
+        f"<line x1=\"{left}\" y1=\"{top}\" x2=\"{left}\" y2=\"{height - bottom}\" stroke=\"#d7dce0\"/>"
+        f"<line x1=\"{left}\" y1=\"{height - bottom}\" x2=\"{width - right}\" "
+        f"y2=\"{height - bottom}\" stroke=\"#d7dce0\"/>"
+        f"<polyline points=\"{polyline}\" fill=\"none\" stroke=\"#0f766e\" stroke-width=\"3\"/>"
+        f"{circles}{labels}"
+        "</svg>\n"
+    )
+
+
+def _chart_labels(
+    points: list[tuple[str, float]], x_at, height: int
+) -> str:
+    if not points:
+        return ""
+    selected_indexes = {0, len(points) - 1}
+    if len(points) > 2:
+        selected_indexes.add(len(points) // 2)
+    labels: list[str] = []
+    for index in sorted(selected_indexes):
+        label = html.escape(points[index][0])
+        labels.append(
+            f"<text x=\"{x_at(index):.1f}\" y=\"{height - 18}\" text-anchor=\"middle\" "
+            "font-family=\"Segoe UI, Arial\" font-size=\"12\" fill=\"#5c6670\">"
+            f"{label}</text>"
+        )
+    return "".join(labels)
+
+
+def _html(markdown: str, *, chart_svg: str = "") -> str:
     lines = markdown.splitlines()
     body: list[str] = []
     for line in lines:
@@ -798,6 +886,10 @@ def _html(markdown: str) -> str:
             body.append(f"<p>{escaped}</p>")
         elif line:
             body.append(f"<p>{escaped}</p>")
+    if chart_svg:
+        body.append("<section class=\"chart\"><h2>Net Worth History Chart</h2>")
+        body.append(chart_svg)
+        body.append("</section>")
     return (
         "<!doctype html>\n<html><head><meta charset=\"utf-8\">"
         "<title>Personal CFO Dashboard v0.5.0</title>"
@@ -806,6 +898,7 @@ def _html(markdown: str) -> str:
         "main{max-width:1040px;margin:0 auto;padding:32px 24px 56px;}"
         "h1{font-size:32px;margin:0 0 16px;}h2{font-size:21px;margin:28px 0 10px;border-top:1px solid #d9ded8;padding-top:18px;}"
         "p{margin:7px 0;}p:nth-child(n+2){max-width:920px;}"
+        ".chart svg{max-width:100%;height:auto;border:1px solid #d9ded8;background:#fff;}"
         "</style></head><body><main>\n"
         + "\n".join(body)
         + "\n</main></body></html>\n"

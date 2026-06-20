@@ -8,31 +8,25 @@ import sys
 from pathlib import Path
 
 from personal_cfo_agent.manual_nav_input import (
-    generate_manual_nav_form,
     init_manual_nav_input,
     manual_nav_to_provider_bundle,
     validate_manual_nav_input,
 )
 from personal_cfo_agent.models import WarningCode
 from personal_cfo_agent.provider_bundle_merge import merge_provider_bundles
+from personal_cfo_agent.runner import build_arg_parser
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_manual_nav_form_generation_creates_static_local_html(tmp_path: Path) -> None:
-    result = generate_manual_nav_form(out_dir=tmp_path)
+def test_manual_nav_dedicated_form_is_not_a_user_cli_entrypoint() -> None:
+    parser = build_arg_parser()
+    option_strings = {option for action in parser._actions for option in action.option_strings}
 
-    html = result.output_path.read_text(encoding="utf-8").lower()
-    assert result.output_path.name == "manual_nav_form.html"
-    assert "<html" in html
-    assert "manual account nav input" in html
-    assert "http://" not in html
-    assert "https://" not in html
-    assert "<script" not in html
-    assert "fetch(" not in html
-    assert "upload" not in html
-    assert WarningCode.MANUAL_NAV_FORM_GENERATED in result.warning_codes
+    assert "--manual-nav-form" not in option_strings
+    assert "--private-input-center-form" in option_strings
+    assert not (ROOT / "templates" / "private_inputs" / "manual_nav_form.html").exists()
 
 
 def test_manual_nav_init_creates_local_placeholder_and_does_not_overwrite(
@@ -182,7 +176,6 @@ def test_manual_nav_cli_redacts_values_and_generates_bundle(tmp_path: Path) -> N
 def test_manual_nav_templates_have_no_real_private_or_live_markers() -> None:
     paths = [
         ROOT / "templates" / "private_inputs" / "manual_nav_input.example.json",
-        ROOT / "templates" / "private_inputs" / "manual_nav_form.html",
     ]
     text = "\n".join(path.read_text(encoding="utf-8").lower() for path in paths)
 

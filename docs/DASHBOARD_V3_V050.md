@@ -53,6 +53,7 @@ Dashboard v3 writes these files under the requested ignored `reports/` output pa
 - `PERSONAL_CFO_DASHBOARD_V050.html`
 - `dashboard_v050_summary.json`
 - `net_worth_progress.csv`
+- `net_worth_history_chart.svg`
 - `balance_sheet_summary.csv`
 - `asset_liability_breakdown.csv`
 - `dashboard_v050_warnings.md`
@@ -60,6 +61,8 @@ Dashboard v3 writes these files under the requested ignored `reports/` output pa
 ## Sections
 
 The dashboard includes a CFO cockpit, data source layer status, freshness panel, net worth progress, provider/account NAV summary, balance sheet breakdown, property/mortgage review, Singapore manual snapshot review, warning summary, and position/property/CPF/SRS drilldown counts.
+
+Dashboard v3 also writes a static local SVG chart, `net_worth_history_chart.svg`, and embeds it in the static HTML report. The chart uses the integrated net worth value when available, otherwise it falls back to account NAV history. It does not load external JavaScript, CSS, fonts, or data.
 
 The v0.5.2 readability pass keeps the existing output filenames and core data semantics. It improves the Markdown and static HTML reports so a local review can quickly distinguish:
 
