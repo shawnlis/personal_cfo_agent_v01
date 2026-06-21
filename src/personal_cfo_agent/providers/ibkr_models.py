@@ -43,6 +43,7 @@ class IBKRPositionRow:
 
 @dataclass(frozen=True)
 class IBKRReadDiagnostics:
+    session_type_redacted: str = "not_configured"
     connected_to_socket: bool = False
     api_handshake_seen: bool = False
     managed_accounts_seen: bool = False
@@ -58,6 +59,7 @@ class IBKRReadDiagnostics:
 
     def to_redacted_dict(self) -> dict[str, object]:
         return {
+            "session_type_redacted": self.session_type_redacted,
             "connected_to_socket": self.connected_to_socket,
             "api_handshake_seen": self.api_handshake_seen,
             "managed_accounts_seen": self.managed_accounts_seen,

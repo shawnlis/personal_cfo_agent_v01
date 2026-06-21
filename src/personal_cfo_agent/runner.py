@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
 import os
+import queue
 import shutil
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -47,7 +49,9 @@ from personal_cfo_agent.manual_nav_input import (
     validate_manual_nav_input,
 )
 from personal_cfo_agent.models import (
+    ConnectionMode,
     NormalizedAsset,
+    ProviderLevel,
     ProviderStatus,
     RawProviderSnapshot,
     WarningCode,
@@ -108,6 +112,9 @@ from personal_cfo_agent.sg_manual_snapshot import (
     record_sg_manual_snapshot,
 )
 from personal_cfo_agent.snapshot_store import SnapshotStoreResult, record_snapshot
+
+
+IBKR_LIVE_SUBPROCESS_TIMEOUT_SECONDS = 45.0
 
 
 @dataclass(frozen=True)
@@ -328,12 +335,15 @@ def run_readiness_check(config: RuntimeConfig) -> RunnerResult:
 def collect_provider_snapshots(config: RuntimeConfig) -> list[RawProviderSnapshot]:
     providers = []
     if config.provider in {"all", "ibkr"}:
-        providers.append(
-            IBKRProvider(
-                load_ibkr_config(config.env),
-                allow_live_read=config.allow_live_read and config.provider == "ibkr",
+        if config.provider == "ibkr" and config.allow_live_read:
+            providers.append(_collect_ibkr_live_snapshot_with_timeout(config))
+        else:
+            providers.append(
+                IBKRProvider(
+                    load_ibkr_config(config.env),
+                    allow_live_read=False,
+                )
             )
-        )
     if config.provider in {"all", "moomoo"}:
         providers.append(
             MoomooProvider(
@@ -362,7 +372,188 @@ def collect_provider_snapshots(config: RuntimeConfig) -> list[RawProviderSnapsho
                 allow_live_read=False,
             )
         )
-    return [provider._sync() for provider in providers]
+    snapshots: list[RawProviderSnapshot] = []
+    for provider in providers:
+        if isinstance(provider, RawProviderSnapshot):
+            snapshots.append(provider)
+        else:
+            snapshots.append(provider._sync())
+    return snapshots
+
+
+def _collect_ibkr_live_snapshot_with_timeout(config: RuntimeConfig) -> RawProviderSnapshot:
+    timeout_seconds = _ibkr_live_subprocess_timeout_seconds(config.env)
+    result_queue: multiprocessing.Queue[object] = multiprocessing.Queue()
+    process = multiprocessing.Process(
+        target=_ibkr_live_snapshot_worker,
+        args=(dict(config.env), result_queue),
+    )
+    process.daemon = True
+    process.start()
+    try:
+        result = result_queue.get(timeout=timeout_seconds)
+    except queue.Empty:
+        process.terminate()
+        process.join(5)
+        if process.is_alive() and hasattr(process, "kill"):
+            process.kill()
+            process.join(1)
+        return _build_ibkr_live_subprocess_failure_snapshot(
+            config.env,
+            timeout_seconds=timeout_seconds,
+            timed_out=True,
+            exitcode=process.exitcode,
+            worker_exception_category=None,
+        )
+    process.join(5)
+    if process.is_alive():
+        process.terminate()
+        process.join(1)
+    if isinstance(result, RawProviderSnapshot):
+        return result
+    if isinstance(result, dict):
+        worker_exception_category = str(
+            result.get("worker_exception_category", "exception_sanitized")
+        )
+    else:
+        worker_exception_category = "unexpected_worker_result"
+    return _build_ibkr_live_subprocess_failure_snapshot(
+        config.env,
+        timeout_seconds=timeout_seconds,
+        timed_out=False,
+        exitcode=process.exitcode,
+        worker_exception_category=worker_exception_category,
+    )
+
+
+def _ibkr_live_snapshot_worker(
+    env: dict[str, str],
+    result_queue: multiprocessing.Queue[object],
+) -> None:
+    try:
+        provider = IBKRProvider(load_ibkr_config(env), allow_live_read=True)
+        result_queue.put(provider._sync())
+    except BaseException as exc:
+        result_queue.put(
+            {"worker_exception_category": _sanitized_exception_category(exc)}
+        )
+
+
+def _build_ibkr_live_subprocess_failure_snapshot(
+    env: os._Environ[str] | dict[str, str] | object,
+    *,
+    timeout_seconds: float,
+    timed_out: bool,
+    exitcode: int | None,
+    worker_exception_category: str | None,
+) -> RawProviderSnapshot:
+    session_type = _ibkr_session_type_redacted(env)
+    port_classification = _ibkr_port_classification(env)
+    warning_codes = [
+        WarningCode.PROVIDER_FETCH_FAILED,
+        WarningCode.IBKR_CALLBACK_TIMEOUT,
+    ]
+    if timed_out:
+        warning_codes.extend(
+            [
+                WarningCode.IBKR_HANDSHAKE_TIMEOUT,
+                WarningCode.IBKR_API_HANDSHAKE_NOT_COMPLETED,
+            ]
+        )
+    if _ibkr_env_looks_like_gateway(env):
+        warning_codes.extend(
+            [
+                WarningCode.IBKR_GATEWAY_CALLBACK_TIMEOUT,
+                WarningCode.IBKR_GATEWAY_API_SETTINGS_REVIEW_REQUIRED,
+            ]
+        )
+    warning_codes = _dedupe_warning_codes(warning_codes)
+    diagnostics = {
+        "session_type_redacted": session_type,
+        "port_classification": port_classification,
+        "live_subprocess_isolation": "enabled",
+        "live_subprocess_timed_out": timed_out,
+        "live_subprocess_exitcode": exitcode,
+        "worker_exception_category_sanitized": worker_exception_category,
+        "connected_to_socket": False,
+        "api_handshake_seen": False,
+        "managed_accounts_seen": False,
+        "managed_account_count_redacted": 0,
+        "requested_account_seen": None,
+        "positions_callback_seen": False,
+        "position_count": 0,
+        "account_summary_callback_seen": False,
+        "cash_currency_count": 0,
+        "timeout_seconds": timeout_seconds,
+        "warning_codes": [code.value for code in warning_codes],
+    }
+    status = ProviderStatus(
+        provider_name="ibkr",
+        provider_level=ProviderLevel.LEVEL_2,
+        connection_mode=ConnectionMode.LIVE_READ,
+        read_only=True,
+        trading_enabled=False,
+        order_placement_enabled=False,
+        warning_codes=warning_codes,
+        diagnostics=diagnostics,
+    )
+    return RawProviderSnapshot(provider_name="ibkr", status=status)
+
+
+def _ibkr_live_subprocess_timeout_seconds(env: object) -> float:
+    raw_value = _env_value(env, "CFO_IBKR_LIVE_SUBPROCESS_TIMEOUT_SECONDS")
+    if not raw_value:
+        return IBKR_LIVE_SUBPROCESS_TIMEOUT_SECONDS
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError):
+        return IBKR_LIVE_SUBPROCESS_TIMEOUT_SECONDS
+    if parsed <= 0:
+        return IBKR_LIVE_SUBPROCESS_TIMEOUT_SECONDS
+    return parsed
+
+
+def _ibkr_session_type_redacted(env: object) -> str:
+    session_type = (_env_value(env, "CFO_IBKR_SESSION_TYPE") or "").strip().lower()
+    if session_type in {"gateway", "tws"}:
+        return session_type
+    if session_type:
+        return "configured_unknown"
+    return "not_configured"
+
+
+def _ibkr_port_classification(env: object) -> str:
+    port = (_env_value(env, "CFO_IBKR_PORT") or "").strip()
+    return {
+        "4001": "gateway_live_port",
+        "4002": "gateway_paper_port",
+        "7496": "tws_live_port",
+        "7497": "tws_paper_port",
+    }.get(port, "unknown")
+
+
+def _ibkr_env_looks_like_gateway(env: object) -> bool:
+    return _ibkr_session_type_redacted(env) == "gateway" or _ibkr_port_classification(
+        env
+    ).startswith("gateway_")
+
+
+def _env_value(env: object, key: str) -> str:
+    if isinstance(env, dict):
+        return str(env.get(key, ""))
+    getter = getattr(env, "get", None)
+    if callable(getter):
+        return str(getter(key, ""))
+    return ""
+
+
+def _sanitized_exception_category(exc: BaseException) -> str:
+    name = type(exc).__name__.lower()
+    if "timeout" in name:
+        return "timeout"
+    if "connection" in name:
+        return "connection_error"
+    return "exception_sanitized"
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -2210,6 +2401,10 @@ def _format_ibkr_connection_diagnostics(
         f"CFO_IBKR_CLIENT_ID present: {_yes_no(diagnostics.client_id_present)}",
         f"CFO_IBKR_ACCOUNT present: {_yes_no(diagnostics.account_present)}, redacted",
         f"CFO_ACCOUNT_HASH_SALT present: {_yes_no(diagnostics.hash_salt_present)}, redacted",
+        f"CFO_IBKR_SESSION_TYPE present: {_yes_no(diagnostics.session_type_present)}, redacted",
+        f"IBKR session type category: {diagnostics.session_type_redacted}",
+        f"IBKR port class: {diagnostics.port_classification}",
+        f"IBKR port matches session type: {_tri_state_yes_no(diagnostics.port_matches_session_type)}",
         f"Python executable: {diagnostics.python_executable}",
         f"ibapi import status: {'OK' if diagnostics.ibapi_import_ok else 'MISSING'}",
         f"TCP socket reachable host/port: {_yes_no(diagnostics.tcp_socket_reachable)}",
@@ -2358,8 +2553,10 @@ def _format_ibkr_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
     requested_hash = diagnostics.get("requested_account_hash") or "not configured"
     requested_seen = diagnostics.get("requested_account_seen")
     requested_seen_text = "not configured" if requested_seen is None else _yes_no(bool(requested_seen))
-    return [
+    lines = [
         "IBKR data-path diagnostics (values redacted)",
+        f"IBKR session type category: {diagnostics.get('session_type_redacted', 'not_configured')}",
+        f"IBKR port class: {diagnostics.get('port_classification', 'unknown')}",
         f"Connected to socket: {_yes_no(bool(diagnostics.get('connected_to_socket')))}",
         f"API handshake observed: {_yes_no(bool(diagnostics.get('api_handshake_seen')))}",
         f"Managed accounts callback observed: {_yes_no(bool(diagnostics.get('managed_accounts_seen')))}",
@@ -2373,6 +2570,22 @@ def _format_ibkr_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:
         f"Timeout seconds: {diagnostics.get('timeout_seconds', 0)}",
         f"Data diagnostic warning codes: {warning_text}",
     ]
+    if diagnostics.get("live_subprocess_isolation"):
+        lines.insert(
+            3,
+            f"IBKR live subprocess isolation: {diagnostics.get('live_subprocess_isolation')}",
+        )
+        lines.insert(
+            4,
+            f"IBKR live subprocess timed out: {_yes_no(bool(diagnostics.get('live_subprocess_timed_out')))}",
+        )
+    return lines
+
+
+def _tri_state_yes_no(value: object) -> str:
+    if value is None:
+        return "unknown"
+    return _yes_no(bool(value))
 
 
 def _format_moomoo_data_diagnostics(diagnostics: dict[str, object]) -> list[str]:

@@ -43,6 +43,16 @@ SECTION_KEYS = (
     "hdb_loans",
 )
 
+_MANUAL_NAV_PROVIDER_MAP = {
+    "manual_other": "other",
+}
+_MANUAL_NAV_ACCOUNT_TYPE_MAP = {
+    "manual_nav": "other",
+}
+_MANUAL_NAV_SOURCE_TYPE_MAP = {
+    "local_private_input_center": "app_manual",
+}
+
 _NRIC_PATTERN = re.compile(r"\b[STFGM]\d{7}[A-Z]\b", re.IGNORECASE)
 _FORBIDDEN_KEYS = {
     "account_id",
@@ -164,6 +174,7 @@ def validate_private_input_center(*, input_file: Path) -> PrivateInputCenterVali
         temp_dir = Path(temp_name)
         split_paths = _write_split_inputs(payload, temp_dir)
         manual_result = validate_manual_nav_input(input_file=split_paths["manual_nav"])
+    manual_accounts = _manual_nav_accounts_for_split(payload)
 
     warnings = _dedupe(
         [
@@ -198,14 +209,14 @@ def validate_private_input_center(*, input_file: Path) -> PrivateInputCenterVali
         provider_labels=sorted(
             {
                 _clean(account.get("provider_label"))
-                for account in _rows(payload, "manual_nav_accounts")
+                for account in manual_accounts
                 if _clean(account.get("provider_label"))
             }
         ),
         base_currencies=sorted(
             {
                 _clean(account.get("base_currency"))
-                for account in _rows(payload, "manual_nav_accounts")
+                for account in manual_accounts
                 if _clean(account.get("base_currency"))
             }
         ),
@@ -423,18 +434,65 @@ def _write_split_inputs(payload: dict[str, Any], out_dir: Path) -> dict[str, Pat
             "schema_version": "v0.5.7",
             "snapshot_date": _clean(payload.get("snapshot_date")),
             "base_currency": _clean(payload.get("base_currency")),
-            "source_type": _clean(payload.get("source_type")),
+            "source_type": _manual_nav_source_type(_clean(payload.get("source_type"))),
             "review_required": payload.get("review_required", True),
-            "accounts": _rows(payload, "manual_nav_accounts"),
+            "accounts": _manual_nav_accounts_for_split(payload),
         },
     )
-    _write_json(paths["property"], {"properties": _rows(payload, "properties")})
+    _write_json(paths["property"], {"properties": _property_rows_for_split(payload)})
     _write_json(paths["mortgage"], {"mortgages": _rows(payload, "mortgages")})
     _write_json(paths["cpf"], {"cpf": _rows(payload, "cpf")})
     _write_json(paths["srs"], {"srs_accounts": _rows(payload, "srs")})
     _write_json(paths["tax"], {"tax_records": _rows(payload, "tax")})
     _write_json(paths["hdb_loan"], {"hdb_loans": _rows(payload, "hdb_loans")})
     return paths
+
+
+def _manual_nav_accounts_for_split(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    accounts: list[dict[str, Any]] = []
+    for account in _rows(payload, "manual_nav_accounts"):
+        mapped = dict(account)
+        provider_label = _manual_nav_provider_label(_clean(mapped.get("provider_label")))
+        mapped["provider_label"] = provider_label
+        mapped["account_type"] = _manual_nav_account_type(_clean(mapped.get("account_type")))
+        mapped["source_type"] = _manual_nav_source_type(_clean(mapped.get("source_type")))
+        accounts.append(mapped)
+    return accounts
+
+
+def _manual_nav_provider_label(value: str) -> str:
+    return _MANUAL_NAV_PROVIDER_MAP.get(value, value)
+
+
+def _manual_nav_account_type(value: str) -> str:
+    return _MANUAL_NAV_ACCOUNT_TYPE_MAP.get(value, value)
+
+
+def _manual_nav_source_type(value: str) -> str:
+    return _MANUAL_NAV_SOURCE_TYPE_MAP.get(value, value)
+
+
+def _property_rows_for_split(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in _rows(payload, "properties"):
+        mapped = dict(row)
+        mapped["ownership_pct"] = _property_ownership_for_split(mapped.get("ownership_pct"))
+        rows.append(mapped)
+    return rows
+
+
+def _property_ownership_for_split(value: object) -> str:
+    text = _clean(value).replace(",", "")
+    if not text or text.endswith("%"):
+        return _clean(value)
+    try:
+        parsed = float(text)
+    except ValueError:
+        return _clean(value)
+    if 1.0 < parsed <= 100.0:
+        normalized = parsed / 100.0
+        return f"{normalized:.6f}".rstrip("0").rstrip(".")
+    return _clean(value)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:

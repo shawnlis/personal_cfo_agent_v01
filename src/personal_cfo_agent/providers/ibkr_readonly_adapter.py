@@ -47,6 +47,7 @@ class IBKRReadOnlyAdapter:
         client_id: int,
         account_filter: str | None = None,
         account_hash_salt: str | None = None,
+        session_type: str | None = None,
         timeout_seconds: float = 10.0,
     ) -> None:
         self.host = host
@@ -54,6 +55,7 @@ class IBKRReadOnlyAdapter:
         self.client_id = client_id
         self.account_filter = account_filter
         self.account_hash_salt = account_hash_salt
+        self.session_type = _session_type(session_type)
         self.timeout_seconds = timeout_seconds
 
     def collect(self) -> IBKRReadOnlySnapshot:
@@ -218,6 +220,7 @@ class IBKRReadOnlyAdapter:
             diagnostics = _build_diagnostics(
                 app,
                 requested_account_hash,
+                self.session_type,
                 self.timeout_seconds,
                 [WarningCode.PROVIDER_CONNECTION_FAILED],
             )
@@ -226,13 +229,17 @@ class IBKRReadOnlyAdapter:
         worker = threading.Thread(target=app.run, daemon=True)
         worker.start()
         if not app.ready_event.wait(self.timeout_seconds):
+            _disconnect_and_join(app, worker)
             diagnostics = _build_diagnostics(
                 app,
                 requested_account_hash,
+                self.session_type,
                 self.timeout_seconds,
-                [WarningCode.IBKR_HANDSHAKE_TIMEOUT, WarningCode.IBKR_CALLBACK_TIMEOUT],
+                _timeout_warning_codes(
+                    session_type=self.session_type,
+                    handshake_seen=False,
+                ),
             )
-            app.disconnect()
             raise IBKRConnectionError("IBKR client did not become ready", diagnostics)
 
         app.reqManagedAccts()
@@ -248,10 +255,11 @@ class IBKRReadOnlyAdapter:
             diagnostics = _build_diagnostics(
                 app,
                 requested_account_hash,
+                self.session_type,
                 self.timeout_seconds,
                 warnings,
             )
-            app.disconnect()
+            _disconnect_and_join(app, worker)
             return IBKRReadOnlySnapshot(diagnostics=diagnostics)
 
         if not callable(getattr(app, "reqAccountSummary", None)) or not callable(
@@ -266,10 +274,11 @@ class IBKRReadOnlyAdapter:
             diagnostics = _build_diagnostics(
                 app,
                 requested_account_hash,
+                self.session_type,
                 self.timeout_seconds,
                 warnings,
             )
-            app.disconnect()
+            _disconnect_and_join(app, worker)
             return IBKRReadOnlySnapshot(diagnostics=diagnostics)
 
         try:
@@ -284,10 +293,11 @@ class IBKRReadOnlyAdapter:
             diagnostics = _build_diagnostics(
                 app,
                 requested_account_hash,
+                self.session_type,
                 self.timeout_seconds,
                 warnings,
             )
-            app.disconnect()
+            _disconnect_and_join(app, worker)
             raise IBKRFetchError("IBKR read request setup failed", diagnostics) from exc
 
         account_done = app.account_summary_event.wait(self.timeout_seconds)
@@ -297,9 +307,15 @@ class IBKRReadOnlyAdapter:
         except Exception:
             pass
         finally:
-            app.disconnect()
+            _disconnect_and_join(app, worker)
 
-        warnings = _data_path_warnings(app, managed_done, account_done, positions_done)
+        warnings = _data_path_warnings(
+            app,
+            managed_done,
+            account_done,
+            positions_done,
+            session_type=self.session_type,
+        )
         if not app.cash and not app.positions:
             warnings.extend(
                 [
@@ -310,6 +326,7 @@ class IBKRReadOnlyAdapter:
         diagnostics = _build_diagnostics(
             app,
             requested_account_hash,
+            self.session_type,
             self.timeout_seconds,
             warnings,
         )
@@ -337,6 +354,23 @@ def _load_ibapi_modules() -> tuple[Any, Any]:
         raise IBKRSDKNotInstalledError("ibapi is not installed") from exc
 
 
+def _session_type(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in {"gateway", "ib_gateway", "ibgateway"}:
+        return "gateway"
+    if normalized == "tws":
+        return "tws"
+    return "not_configured"
+
+
+def _disconnect_and_join(app: Any, worker: threading.Thread) -> None:
+    try:
+        app.disconnect()
+    except Exception:
+        pass
+    worker.join(timeout=1.0)
+
+
 def _safe_float(value: str) -> float | None:
     try:
         return float(value)
@@ -353,6 +387,7 @@ def _cost_basis(quantity: float, average_cost: float) -> float | None:
 def _build_diagnostics(
     app: Any,
     requested_account_hash: str | None,
+    session_type: str,
     timeout_seconds: float,
     warning_codes: list[WarningCode],
 ) -> IBKRReadDiagnostics:
@@ -362,6 +397,7 @@ def _build_diagnostics(
             app.account_filter in app.managed_accounts if app.managed_accounts_seen else None
         )
     return IBKRReadDiagnostics(
+        session_type_redacted=session_type,
         connected_to_socket=bool(app.connected_to_socket),
         api_handshake_seen=bool(app.api_handshake_seen),
         managed_accounts_seen=bool(app.managed_accounts_seen),
@@ -382,6 +418,8 @@ def _data_path_warnings(
     managed_done: bool,
     account_done: bool,
     positions_done: bool,
+    *,
+    session_type: str,
 ) -> list[WarningCode]:
     warnings = _managed_account_warnings(app, managed_done)
     if account_done and not app.cash:
@@ -390,7 +428,33 @@ def _data_path_warnings(
         warnings.append(WarningCode.IBKR_POSITIONS_EMPTY)
     if not account_done or not positions_done:
         warnings.append(WarningCode.IBKR_CALLBACK_TIMEOUT)
+        if session_type == "gateway":
+            warnings.extend(
+                [
+                    WarningCode.IBKR_GATEWAY_CALLBACK_TIMEOUT,
+                    WarningCode.IBKR_GATEWAY_API_SETTINGS_REVIEW_REQUIRED,
+                ]
+            )
     return warnings
+
+
+def _timeout_warning_codes(*, session_type: str, handshake_seen: bool) -> list[WarningCode]:
+    codes = [WarningCode.IBKR_CALLBACK_TIMEOUT]
+    if not handshake_seen:
+        codes.extend(
+            [
+                WarningCode.IBKR_HANDSHAKE_TIMEOUT,
+                WarningCode.IBKR_API_HANDSHAKE_NOT_COMPLETED,
+            ]
+        )
+    if session_type == "gateway":
+        codes.extend(
+            [
+                WarningCode.IBKR_GATEWAY_CALLBACK_TIMEOUT,
+                WarningCode.IBKR_GATEWAY_API_SETTINGS_REVIEW_REQUIRED,
+            ]
+        )
+    return codes
 
 
 def _managed_account_warnings(app: Any, managed_done: bool) -> list[WarningCode]:

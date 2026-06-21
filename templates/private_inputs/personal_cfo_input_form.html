@@ -126,16 +126,20 @@
         <input id="syfe_nav" inputmode="decimal" placeholder="0.00">
       </div>
       <div>
-        <label for="webull_nav">Webull manual NAV</label>
+        <label for="webull_nav">Webull NAV</label>
         <input id="webull_nav" inputmode="decimal" placeholder="0.00">
       </div>
       <div>
-        <label for="usmart_nav">uSMART manual NAV</label>
+        <label for="usmart_nav">uSMART NAV</label>
         <input id="usmart_nav" inputmode="decimal" placeholder="0.00">
       </div>
       <div>
-        <label for="other_nav">Other manual NAV</label>
+        <label for="other_nav">Other NAV</label>
         <input id="other_nav" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div>
+        <label for="unvested_shares_nav">Value of unvested shares</label>
+        <input id="unvested_shares_nav" inputmode="decimal" placeholder="0.00">
       </div>
     </div>
   </section>
@@ -174,8 +178,8 @@
         <input id="tax_ya" inputmode="numeric" placeholder="2026">
       </div>
       <div>
-        <label for="hdb_loan_balance">HDB loan balance</label>
-        <input id="hdb_loan_balance" inputmode="decimal" placeholder="0.00">
+        <label for="income_tax_payable">Income tax payable</label>
+        <input id="income_tax_payable" inputmode="decimal" placeholder="0.00">
       </div>
     </div>
   </section>
@@ -256,9 +260,10 @@
       review_required: true,
       manual_nav_accounts: [
         manualAccount("syfe_trade", "syfe_nav", "Syfe Trade manual NAV"),
-        manualAccount("webull", "webull_nav", "Webull manual NAV"),
-        manualAccount("usmart", "usmart_nav", "uSMART manual NAV"),
-        manualAccount("manual_other", "other_nav", "Other manual NAV")
+        manualAccount("webull", "webull_nav", "Webull NAV"),
+        manualAccount("usmart", "usmart_nav", "uSMART NAV"),
+        manualAccount("manual_other", "other_nav", "Other NAV"),
+        manualAccount("manual_other", "unvested_shares_nav", "Value of unvested shares")
       ],
       properties: [
         {
@@ -325,7 +330,7 @@
         {
           year_of_assessment: value("tax_ya") || String(new Date().getFullYear()),
           assessable_income_available: false,
-          tax_payable_available: false,
+          tax_payable_available: boolAvailable("income_tax_payable"),
           tax_paid_available: false,
           reliefs_available: false,
           source_type: "local_private_input_center",
@@ -339,7 +344,7 @@
           loan_id_hash: hdbLoanHash,
           linked_property_id_hash: propertyHash,
           monthly_installment_available: false,
-          outstanding_balance_available: boolAvailable("hdb_loan_balance"),
+          outstanding_balance_available: false,
           currency: baseCurrency,
           source_type: "local_private_input_center",
           source_date: snapshotDate,

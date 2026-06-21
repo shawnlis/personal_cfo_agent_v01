@@ -23,9 +23,33 @@ Required for readiness or live sync:
 Optional:
 
 - `CFO_IBKR_ACCOUNT`
+- `CFO_IBKR_SESSION_TYPE=gateway` or `CFO_IBKR_SESSION_TYPE=tws`
 - `CFO_ACCOUNT_HASH_SALT`
 
 Secrets must stay in environment variables only. Do not commit local config, account exports, logs with account data, or generated reports.
+
+## TWS vs IB Gateway
+
+The adapter uses the official IB API socket client and is compatible with either
+TWS or IB Gateway when the local host, port, and client ID match the manually
+started session. `CFO_IBKR_SESSION_TYPE` is optional, but setting it helps the
+redacted diagnostics identify likely port/session mismatches without printing the
+actual port value.
+
+Typical local port classes:
+
+- IB Gateway paper: `4002`
+- IB Gateway live: `4001`
+- TWS paper: `7497`
+- TWS live: `7496`
+
+If connection diagnostics show the TCP socket is reachable but data-path
+diagnostics later report `IBKR_API_HANDSHAKE_NOT_COMPLETED`,
+`IBKR_GATEWAY_CALLBACK_TIMEOUT`, or
+`IBKR_GATEWAY_API_SETTINGS_REVIEW_REQUIRED`, review the local TWS or Gateway API
+settings: socket clients enabled, read-only API access enabled, trusted local IP
+allowed, no modal login/API prompt pending, and no client-ID collision with
+another API session.
 
 ## Readiness Check
 
@@ -57,6 +81,11 @@ python .\scripts\personal_cfo_agent.py --provider ibkr --connection-diagnostics
 
 Diagnostics report only redacted presence, Python executable, `ibapi` import status, TCP socket reachability, and warning codes. They do not print host, port, client ID, account ID, salts, or `.env.local` values. The TCP probe opens a socket only and sends no IBKR API messages.
 
+Diagnostics also report a redacted session type category and port class, such as
+`gateway_paper_port` or `tws_live_port`, plus
+`IBKR_PORT_SESSION_TYPE_MISMATCH` when `CFO_IBKR_SESSION_TYPE` conflicts with the
+known port class. The exact port value is not printed.
+
 ## Supervised Live Proof
 
 After manually starting TWS or IB Gateway:
@@ -73,6 +102,14 @@ Read-only IBKR sync only. No order methods are exposed.
 
 If `ibapi` is not installed, the provider fails closed with `SDK_NOT_INSTALLED`. If TWS or IB Gateway is not reachable, it fails closed with `PROVIDER_CONNECTION_FAILED`. If read requests fail or time out, it reports `PROVIDER_FETCH_FAILED`.
 
+IBKR supervised live reads are isolated in a short-lived local subprocess. This
+prevents a stuck TWS or IB Gateway callback loop from hanging the main CLI. If
+the child process does not return before the hard timeout, the parent process
+terminates it and returns an empty, redacted provider snapshot with
+`PROVIDER_FETCH_FAILED`, `IBKR_CALLBACK_TIMEOUT`, and handshake or Gateway review
+warnings where applicable. No order, transfer, or account-write APIs are called
+by this watchdog path.
+
 ## Redacted Data-Path Diagnostics
 
 When TWS or IB Gateway is reachable but no rows are returned, run one supervised diagnostic read:
@@ -88,6 +125,7 @@ python .\scripts\personal_cfo_agent.py `
 This mode still requires all live-read gates and still prints the read-only warning. It reports only redacted data-path state:
 
 - socket connection observed
+- session type category
 - API handshake observed
 - managed-accounts callback observed and redacted count
 - requested account hash and whether that account was observed

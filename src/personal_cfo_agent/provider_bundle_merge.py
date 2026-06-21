@@ -15,6 +15,7 @@ from personal_cfo_agent.models import WarningCode
 ACCOUNT_NAV_FIELDNAMES = [
     "provider",
     "account_id_hash",
+    "account_nav_bucket",
     "source_bundle_id",
     "source_snapshot_id",
     "as_of_date",
@@ -380,6 +381,7 @@ def _to_account_nav_row(
     row = {
         "provider": provider,
         "account_id_hash": account_hash,
+        "account_nav_bucket": _account_nav_bucket(first),
         "source_bundle_id": source_bundle_id,
         "source_snapshot_id": source_snapshot_id,
         "as_of_date": as_of_date,
@@ -402,6 +404,23 @@ def _to_account_nav_row(
     for code in warnings:
         _append_warning_text(row, "warning_codes", code)
     return row, _dedupe_warning_codes(warnings)
+
+
+def _account_nav_bucket(row: dict[str, str]) -> str:
+    bucket = _clean(row.get("account_nav_bucket"))
+    if bucket:
+        return bucket
+    label = " ".join(
+        [
+            _clean(row.get("account_label")),
+            _clean(row.get("name")),
+            _clean(row.get("source_bundle_id")),
+            _clean(row.get("source_snapshot_id")),
+        ]
+    ).lower()
+    if "unvested" in label:
+        return "non_liquid_unvested_equity"
+    return ""
 
 
 def _to_position_row(
