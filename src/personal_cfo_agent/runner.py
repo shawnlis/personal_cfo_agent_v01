@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import multiprocessing
 import os
@@ -20,6 +21,10 @@ from personal_cfo_agent.config import (
     load_moomoo_config,
     load_tiger_config,
     load_webull_config,
+)
+from personal_cfo_agent.data_quality_summary import (
+    DataQualitySummaryResult,
+    write_data_quality_summary,
 )
 from personal_cfo_agent.dashboard import write_dashboard
 from personal_cfo_agent.dashboard_v2 import DashboardV2Result, write_dashboard_v2
@@ -139,6 +144,7 @@ class NetWorthRefreshResult:
     merge_result: MergeResult | None
     snapshot_result: SnapshotStoreResult | None
     dashboard_result: DashboardV3Result | None
+    data_quality_result: DataQualitySummaryResult | None = None
     warning_codes: list[WarningCode] = field(default_factory=list)
 
     @property
@@ -1357,6 +1363,18 @@ def _run_net_worth_refresh(
     warnings.extend(manual_result.warning_codes)
     if not manual_result.generated:
         warnings.append(WarningCode.NET_WORTH_REFRESH_FAILED)
+        refresh_warnings = _dedupe_warning_codes(warnings)
+        data_quality_result = _write_refresh_data_quality(
+            output_dir=out_dir,
+            brokers=brokers,
+            broker_results=broker_results,
+            manual_result=manual_result,
+            merge_result=None,
+            snapshot_result=None,
+            dashboard_result=None,
+            fx_rates_input=fx_rates_input,
+            upstream_warning_codes=refresh_warnings,
+        )
         return NetWorthRefreshResult(
             input_file=input_file,
             output_dir=out_dir,
@@ -1365,7 +1383,10 @@ def _run_net_worth_refresh(
             merge_result=None,
             snapshot_result=None,
             dashboard_result=None,
-            warning_codes=_dedupe_warning_codes(warnings),
+            data_quality_result=data_quality_result,
+            warning_codes=_dedupe_warning_codes(
+                [*refresh_warnings, *data_quality_result.warning_codes]
+            ),
         )
 
     provider_input_root.mkdir(parents=True, exist_ok=True)
@@ -1399,6 +1420,18 @@ def _run_net_worth_refresh(
     warnings.extend(snapshot_result.warning_codes)
     if not snapshot_result.generated:
         warnings.append(WarningCode.NET_WORTH_REFRESH_FAILED)
+        refresh_warnings = _dedupe_warning_codes(warnings)
+        data_quality_result = _write_refresh_data_quality(
+            output_dir=out_dir,
+            brokers=brokers,
+            broker_results=broker_results,
+            manual_result=manual_result,
+            merge_result=merge_result,
+            snapshot_result=snapshot_result,
+            dashboard_result=None,
+            fx_rates_input=fx_rates_input,
+            upstream_warning_codes=refresh_warnings,
+        )
         return NetWorthRefreshResult(
             input_file=input_file,
             output_dir=out_dir,
@@ -1407,7 +1440,10 @@ def _run_net_worth_refresh(
             merge_result=merge_result,
             snapshot_result=snapshot_result,
             dashboard_result=None,
-            warning_codes=_dedupe_warning_codes(warnings),
+            data_quality_result=data_quality_result,
+            warning_codes=_dedupe_warning_codes(
+                [*refresh_warnings, *data_quality_result.warning_codes]
+            ),
         )
 
     dashboard_result = write_dashboard_v3(
@@ -1425,6 +1461,18 @@ def _run_net_worth_refresh(
         if warnings
         else WarningCode.NET_WORTH_REFRESH_GENERATED_OK
     )
+    refresh_warnings = _dedupe_warning_codes([*warnings, completion])
+    data_quality_result = _write_refresh_data_quality(
+        output_dir=out_dir,
+        brokers=brokers,
+        broker_results=broker_results,
+        manual_result=manual_result,
+        merge_result=merge_result,
+        snapshot_result=snapshot_result,
+        dashboard_result=dashboard_result,
+        fx_rates_input=fx_rates_input,
+        upstream_warning_codes=refresh_warnings,
+    )
     return NetWorthRefreshResult(
         input_file=input_file,
         output_dir=out_dir,
@@ -1433,8 +1481,109 @@ def _run_net_worth_refresh(
         merge_result=merge_result,
         snapshot_result=snapshot_result,
         dashboard_result=dashboard_result,
-        warning_codes=_dedupe_warning_codes([*warnings, completion]),
+        data_quality_result=data_quality_result,
+        warning_codes=_dedupe_warning_codes(
+            [*refresh_warnings, *data_quality_result.warning_codes]
+        ),
     )
+
+
+def _write_refresh_data_quality(
+    *,
+    output_dir: Path,
+    brokers: list[str],
+    broker_results: dict[str, RunnerResult],
+    manual_result: PrivateInputCenterSnapshotResult | None,
+    merge_result: MergeResult | None,
+    snapshot_result: SnapshotStoreResult | None,
+    dashboard_result: DashboardV3Result | None,
+    fx_rates_input: Path | None,
+    upstream_warning_codes: list[WarningCode],
+) -> DataQualitySummaryResult:
+    providers_succeeded = [
+        provider
+        for provider, result in sorted(broker_results.items())
+        if result.output_dir is not None and bool(result.normalized_assets)
+    ]
+    providers_failed = [
+        provider for provider in sorted(brokers) if provider not in providers_succeeded
+    ]
+    fx_file_present = bool(fx_rates_input is not None and fx_rates_input.exists())
+    fx_complete = _refresh_fx_complete(
+        fx_rates_input=fx_rates_input,
+        merge_result=merge_result,
+    )
+    stale_or_mixed_date_warning_codes = [
+        code.value
+        for code in upstream_warning_codes
+        if "STALE" in code.value or "MIXED_DATE" in code.value
+    ]
+    manual_layer_status = {
+        "manual_input_converted": bool(manual_result and manual_result.generated),
+        "manual_nav": bool(
+            manual_result and manual_result.manual_nav_result and manual_result.manual_nav_result.generated
+        ),
+        "property_mortgage": bool(
+            manual_result and manual_result.property_result and manual_result.property_result.generated
+        ),
+        "sg_retirement_tax": bool(
+            manual_result and manual_result.sg_result and manual_result.sg_result.generated
+        ),
+    }
+    return write_data_quality_summary(
+        out_dir=output_dir,
+        providers_requested=brokers,
+        providers_succeeded=providers_succeeded,
+        providers_failed=providers_failed,
+        manual_layer_status=manual_layer_status,
+        account_nav_row_count=merge_result.account_nav_row_count if merge_result else 0,
+        position_row_count=merge_result.position_row_count if merge_result else 0,
+        snapshot_generated=bool(snapshot_result and snapshot_result.generated),
+        fx_file_present=fx_file_present,
+        fx_complete=fx_complete,
+        stale_or_mixed_date_warning_codes=stale_or_mixed_date_warning_codes,
+        dashboard_generated=bool(dashboard_result and dashboard_result.generated),
+        upstream_warning_codes=upstream_warning_codes,
+    )
+
+
+def _refresh_fx_complete(
+    *, fx_rates_input: Path | None, merge_result: MergeResult | None
+) -> bool:
+    if fx_rates_input is None or not fx_rates_input.exists() or merge_result is None:
+        return False
+    try:
+        payload = json.loads(fx_rates_input.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict) or not str(payload.get("base_currency", "")).strip():
+        return False
+    rates = payload.get("rates_to_base")
+    if not isinstance(rates, dict):
+        return False
+    covered = {
+        str(currency).strip().upper()
+        for currency, value in rates.items()
+        if str(currency).strip() and str(value).strip()
+    }
+    required = _refresh_account_nav_currencies(merge_result.output_dir)
+    return bool(required) and required <= covered
+
+
+def _refresh_account_nav_currencies(merge_dir: Path) -> set[str]:
+    path = merge_dir / "merged_account_nav_ledger.csv"
+    if not path.exists():
+        return set()
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return set()
+    return {
+        str(row.get("base_currency", "")).strip().upper()
+        for row in rows
+        if str(row.get("base_currency", "")).strip()
+    }
 
 
 def _run_live_provider_refresh(
@@ -2226,6 +2375,14 @@ def _format_net_worth_refresh_result(result: NetWorthRefreshResult) -> list[str]
         lines.append(
             "Dashboard files: "
             + ", ".join(path.name for path in sorted(result.dashboard_result.output_paths.values()))
+        )
+    if result.data_quality_result and result.data_quality_result.output_paths:
+        lines.append(
+            "Data quality files: "
+            + ", ".join(
+                path.name
+                for path in sorted(result.data_quality_result.output_paths.values())
+            )
         )
     return lines
 

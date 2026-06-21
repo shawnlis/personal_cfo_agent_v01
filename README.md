@@ -60,6 +60,12 @@ python .\scripts\personal_cfo_agent.py `
 
 Manual-only mode does not run broker reads.
 
+The refresh also writes a redacted data quality summary:
+
+- `data_quality_summary.json`
+- `data_quality_warnings.md`
+- `DATA_QUALITY_SUMMARY_V064.md`
+
 ## Supervised Read-Only Broker Refresh
 
 Broker refresh is opt-in and must be explicitly approved for the run:
@@ -127,6 +133,7 @@ Useful summary files:
 - `snapshots/snapshot_manifest.json`
 - `dashboard/dashboard_v050_summary.json`
 - `dashboard/dashboard_v060_summary.json`
+- `data_quality_summary.json`
 - `net_worth_doctor_summary.json`
 
 ## Validation

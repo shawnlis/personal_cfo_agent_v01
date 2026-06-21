@@ -51,6 +51,9 @@ This writes:
 - `merged/`
 - `snapshots/`
 - `dashboard/`
+- `data_quality_summary.json`
+- `data_quality_warnings.md`
+- `DATA_QUALITY_SUMMARY_V064.md`
 
 ## Read-Only Broker Refresh
 
@@ -85,6 +88,15 @@ The SVG is static/local and is embedded in `PERSONAL_CFO_DASHBOARD_V050.html`. I
 - `NET_WORTH_REFRESH_BROKER_READ_FAILED`
 
 Underlying modules may also surface provider, merge, snapshot, dashboard, private input, property/mortgage, Singapore snapshot, and manual NAV warning codes.
+
+## Data Quality Summary
+
+v0.6.4 adds a redacted data-quality summary to every net worth refresh. It
+records provider success/failure status, manual layer availability, row counts,
+snapshot generation status, FX completeness, and dashboard generation status.
+
+It does not include exact NAV, balances, positions, raw account IDs, private
+input values, `.env.local` values, API keys, tokens, or secrets.
 
 ## Boundaries
 
