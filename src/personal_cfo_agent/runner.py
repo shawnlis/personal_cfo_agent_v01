@@ -56,6 +56,10 @@ from personal_cfo_agent.models import (
     RawProviderSnapshot,
     WarningCode,
 )
+from personal_cfo_agent.net_worth_doctor import (
+    NetWorthDoctorResult,
+    run_net_worth_doctor,
+)
 from personal_cfo_agent.normalizer import normalize_snapshots
 from personal_cfo_agent.private_input_center import (
     PrivateInputCenterFormResult,
@@ -739,6 +743,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run the local net worth refresh chain: private input center, optional broker live reads, merge, snapshot, and Dashboard v3.",
     )
     parser.add_argument(
+        "--net-worth-doctor",
+        action="store_true",
+        help="Run a local-only health check for private input, refresh, FX, and broker config presence.",
+    )
+    parser.add_argument(
         "--refresh-brokers",
         default="ibkr,moomoo,tiger",
         help="Comma-separated broker live reads for --run-net-worth-refresh, or 'none' for manual-only refresh.",
@@ -904,6 +913,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _validate_private_input_center_cli(args, parser)
     if args.private_input_center_to_snapshots:
         return _private_input_center_to_snapshots_cli(args, parser)
+    if args.net_worth_doctor:
+        return _net_worth_doctor_cli(args, parser)
     if args.dashboard_v4:
         return _dashboard_v4_cli(args, parser)
     if args.run_net_worth_refresh:
@@ -1296,6 +1307,29 @@ def _run_net_worth_refresh_cli(
     return 0 if result.generated and not broker_failed else 1
 
 
+def _net_worth_doctor_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_net_worth_doctor_cli_scope(args, parser)
+    local_env_result = load_local_env_file()
+    if local_env_result.exists:
+        print(f"Loaded local environment from {LOCAL_ENV_FILENAME}; values redacted")
+    result = run_net_worth_doctor(
+        input_file=args.input_file,
+        refresh_dir=args.refresh_dir,
+        fx_rates_file=args.fx_rates_file,
+        out_dir=args.out_dir,
+        env=dict(os.environ),
+    )
+    for line in _format_net_worth_doctor_result(result):
+        print(line)
+    blocking = {
+        WarningCode.NET_WORTH_DOCTOR_INPUT_MISSING,
+        WarningCode.NET_WORTH_DOCTOR_INPUT_INVALID,
+    }
+    return 1 if any(code in result.warning_codes for code in blocking) else 0
+
+
 def _run_net_worth_refresh(
     *,
     input_file: Path,
@@ -1512,6 +1546,72 @@ def _validate_net_worth_refresh_cli_scope(
         parser.error("--run-net-worth-refresh derives intermediate directories automatically")
 
 
+def _validate_net_worth_doctor_cli_scope(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> None:
+    if args.input_file is None:
+        parser.error("--net-worth-doctor requires --input-file")
+    if args.refresh_dir is None:
+        parser.error("--net-worth-doctor requires --refresh-dir")
+    if args.out_dir is None:
+        parser.error("--net-worth-doctor requires --out-dir")
+    if args.allow_live_read:
+        parser.error("--net-worth-doctor cannot be combined with --allow-live-read")
+    if args.provider != "all":
+        parser.error("--net-worth-doctor uses --provider all")
+    if args.readiness_check or args.connection_diagnostics:
+        parser.error("--net-worth-doctor cannot be combined with readiness or diagnostics")
+    if args.account_discovery or args.read_context_probe:
+        parser.error("--net-worth-doctor cannot be combined with Moomoo discovery probes")
+    if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
+        parser.error("--net-worth-doctor cannot be combined with data diagnostics")
+    if (
+        args.merge_provider_bundles
+        or args.dashboard_v2
+        or args.dashboard_v3
+        or args.dashboard_v4
+        or args.dashboard
+        or args.record_snapshot
+        or args.property_mortgage_snapshot
+        or args.sg_manual_snapshot
+        or args.init_private_input_kit
+        or args.validate_private_inputs
+        or args.run_manual_snapshot_chain
+        or args.init_manual_nav_input
+        or args.validate_manual_nav_input
+        or args.manual_nav_to_provider_bundle
+        or args.private_input_center_form
+        or args.init_private_input_center
+        or args.validate_private_input_center
+        or args.private_input_center_to_snapshots
+        or args.run_net_worth_refresh
+    ):
+        parser.error("--net-worth-doctor cannot be combined with other workflows")
+    if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
+        parser.error("--net-worth-doctor cannot be combined with manual snapshot utilities")
+    if args.input_dir is not None or args.out_file is not None:
+        parser.error("--net-worth-doctor uses --input-file, --refresh-dir, and --out-dir")
+    if args.fx_rates_input is not None:
+        parser.error("--net-worth-doctor uses --fx-rates-file, not --fx-rates-input")
+    if any(
+        value is not None
+        for value in (
+            args.property_input,
+            args.mortgage_input,
+            args.cpf_input,
+            args.srs_input,
+            args.tax_input,
+            args.hdb_loan_input,
+            args.merge_dir,
+            args.dashboard_dir,
+            args.snapshot_dir,
+            args.property_mortgage_dir,
+            args.sg_snapshot_dir,
+        )
+    ):
+        parser.error("--net-worth-doctor inspects existing unified inputs and refresh dirs")
+
+
 def _validate_private_input_center_cli_scope(
     args: argparse.Namespace, parser: argparse.ArgumentParser, command_name: str
 ) -> None:
@@ -1521,6 +1621,7 @@ def _validate_private_input_center_cli_scope(
         args.validate_private_input_center,
         args.private_input_center_to_snapshots,
         args.run_net_worth_refresh,
+        args.net_worth_doctor,
     ]
     if sum(1 for enabled in commands if enabled) > 1:
         parser.error("private input center commands cannot be combined")
@@ -1548,6 +1649,7 @@ def _validate_private_input_center_cli_scope(
         or args.validate_manual_nav_input
         or args.manual_nav_to_provider_bundle
         or args.run_net_worth_refresh
+        or args.net_worth_doctor
     ):
         parser.error(f"{command_name} cannot be combined with other offline workflows")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
@@ -1576,6 +1678,7 @@ def _validate_manual_nav_cli_scope(
         args.validate_manual_nav_input,
         args.manual_nav_to_provider_bundle,
         args.run_net_worth_refresh,
+        args.net_worth_doctor,
     ]
     if sum(1 for enabled in manual_nav_commands if enabled) > 1:
         parser.error("manual NAV commands cannot be combined")
@@ -1604,6 +1707,7 @@ def _validate_manual_nav_cli_scope(
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
         or args.run_net_worth_refresh
+        or args.net_worth_doctor
     ):
         parser.error(f"{command_name} cannot be combined with other offline workflows")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
@@ -1649,6 +1753,7 @@ def _validate_private_input_cli_scope(
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
         or args.run_net_worth_refresh
+        or args.net_worth_doctor
     ):
         parser.error(f"{command_name} cannot be combined with report generators")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
@@ -2123,6 +2228,32 @@ def _format_net_worth_refresh_result(result: NetWorthRefreshResult) -> list[str]
             + ", ".join(path.name for path in sorted(result.dashboard_result.output_paths.values()))
         )
     return lines
+
+
+def _format_net_worth_doctor_result(result: NetWorthDoctorResult) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    brokers = ", ".join(
+        f"{name}:enabled={_yes_no(values['enabled'])},config={_yes_no(values['required_config_present'])}"
+        for name, values in sorted(result.broker_config_presence.items())
+    ) or "None"
+    files = ", ".join(path.name for path in sorted(result.output_paths.values())) or "None"
+    return [
+        "Personal CFO local net worth doctor v0.6.2 (offline)",
+        "External connections used: no",
+        "Broker live reads used: no",
+        f"Input file: {result.input_file}",
+        f"Refresh directory: {result.refresh_dir}",
+        f"FX rates file: {result.fx_rates_file or ''}",
+        f"Output directory: {result.output_dir}",
+        f"Input valid: {_yes_no(result.input_valid)}",
+        f"Refresh present: {_yes_no(result.refresh_present)}",
+        f"Refresh complete: {_yes_no(result.refresh_complete)}",
+        f"FX present: {_yes_no(result.fx_present)}",
+        f"FX complete: {_yes_no(result.fx_complete)}",
+        f"Broker config presence: {brokers}",
+        f"Output files: {files}",
+        f"Warning codes: {warnings}",
+    ]
 
 
 def _format_private_input_validation_result(
