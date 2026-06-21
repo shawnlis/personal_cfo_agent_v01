@@ -7,7 +7,7 @@ name = "personal-cfo-agent"
 version = "0.1.0"
 description = "API-first personal finance asset aggregation and risk dashboard foundation."
 requires-python = ">=3.11"
-readme = "docs/PERSONAL_CFO_AGENT_V01.md"
+readme = "README.md"
 license = { text = "Private" }
 authors = [{ name = "Personal CFO Agent" }]
 dependencies = []

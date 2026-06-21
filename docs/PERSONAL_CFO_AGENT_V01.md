@@ -1,55 +1,85 @@
-# Personal CFO Agent v0.1
+# Personal CFO Agent Project Note
 
-“This is a personal finance aggregation and risk dashboard, not investment, tax, estate, insurance, or trading advice.”
+This file is retained as a historical v0.1 project note. The active project is
+now a v0.6.x local-first Personal CFO workflow. Use the root `README.md` for the
+current operating guide.
 
-Personal CFO Agent v0.1 is a standalone, API-first asset aggregation foundation. It is not part of AI PM Agent and does not import or call any AI PM Agent path.
+## Current State
 
-## What v0.1 Does
+The current workflow supports:
 
-- Defines a read-only provider contract for asset, cash, position, and balance reads.
-- Implements IBKR, Moomoo, and Tiger as Level 1 API contract stubs with guarded Level 2 readiness skeletons.
-- Implements a Level 0 manual snapshot provider for fixtures, unsupported platforms, property values, and mortgage balances.
-- Provides a structured JSON manual snapshot workflow for unsupported assets and manually entered liabilities.
-- Normalizes provider data into a stable asset ledger with hashed account IDs.
-- Writes a dated report bundle under `reports/personal_cfo_agent/v01/<YYYYMMDD>/`.
+- unified private input center for manual NAV, property, mortgage, CPF, SRS, tax,
+  and HDB loan sections
+- local net worth refresh
+- account NAV merge
+- snapshot history
+- Dashboard v3 and Dashboard v4
+- local net worth doctor
+- supervised read-only broker refreshes only when explicitly approved
 
-## Provider Levels
+The project remains read-only-first and offline by default. Generated reports
+stay under ignored `reports/` paths. Real local input files stay under ignored
+private input folders.
 
-- Level 0: fixture/manual snapshot only, no network, no real credentials.
-- Level 1: API contract stub, no live connection, validates config and output schema.
-- Level 2: read-only live connector, network allowed only when an explicit CLI flag is passed, and no account-write surfaces are exposed.
+## Current Commands
 
-## CLI
+Initialize local private input:
 
 ```powershell
-python scripts/personal_cfo_agent.py
-python scripts/personal_cfo_agent.py --write-manual-template manual_snapshots/manual_snapshot_template.json
-python scripts/personal_cfo_agent.py --validate-manual-snapshot manual_snapshots/my_snapshot.json
-python scripts/personal_cfo_agent.py --manual-snapshot tests/fixtures/manual_snapshot_sample.json --as-of-date 20260614
-python scripts/personal_cfo_agent.py --manual-snapshot tests/fixtures/manual_snapshot/sample_manual_assets_v010.json --out-dir reports/personal_cfo_agent/v010_final_smoke
-python scripts/personal_cfo_agent.py --allow-live-read
+python .\scripts\personal_cfo_agent.py `
+  --init-private-input-center `
+  --out-file .\private_inputs\personal_cfo_input.local.json
 ```
 
-Default behavior is safe: all live providers are disabled, manual snapshots are not auto-enabled, no network call is made, and the runner exits with no generated reports when no provider is enabled.
+Generate the local input form:
 
-## Outputs
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --private-input-center-form `
+  --out-dir .\reports\personal_cfo_agent\private_input_center_local
+```
 
-Generated outputs are ignored by Git:
+Run manual-only refresh:
 
-- `PERSONAL_CFO_AGENT_V010.md`
-- `provider_sync_summary.json`
-- `normalized_asset_ledger.csv`
-- `net_worth_summary.csv`
-- `liquidity_summary.csv`
-- `currency_exposure.csv`
-- `provider_warning_summary.csv`
-- `personal_cfo_warnings.md`
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --run-net-worth-refresh `
+  --refresh-brokers none `
+  --input-file .\private_inputs\personal_cfo_input.local.json `
+  --out-dir .\reports\personal_cfo_agent\net_worth_refresh_local
+```
 
-## v0.1 Connector Roadmap
+Generate Dashboard v4:
 
-- v0.1.1: IBKR read-only live proof.
-- v0.1.2: Moomoo read-only live proof.
-- v0.1.3: Tiger read-only live proof.
-- v0.1.4: Structured manual snapshot workflow.
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --dashboard-v4 `
+  --refresh-dir .\reports\personal_cfo_agent\net_worth_refresh_local `
+  --fx-rates-file .\private_inputs\fx_rates.local.json `
+  --out-dir .\reports\personal_cfo_agent\dashboard_v4_local
+```
 
-Each proof should be added independently, guarded by `--allow-live-read`, and covered by tests that confirm account-write methods are not exposed.
+Run the local doctor:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --net-worth-doctor `
+  --input-file .\private_inputs\personal_cfo_input.local.json `
+  --refresh-dir .\reports\personal_cfo_agent\net_worth_refresh_local `
+  --fx-rates-file .\private_inputs\fx_rates.local.json `
+  --out-dir .\reports\personal_cfo_agent\net_worth_doctor_v062_local
+```
+
+## Historical v0.1 Scope
+
+The original v0.1 scope established the provider contract, manual snapshot
+workflow, normalized asset ledger, and initial read-only boundaries. That scope
+has been superseded by the v0.6.x local workflow described above.
+
+## Boundaries
+
+Do not commit generated reports, private inputs, credentials, exact private
+values, raw account IDs, raw government identifiers, or `.env.local`.
+
+Live broker reads require explicit approval and `--allow-live-read`. The default
+workflow is offline and local-only.
