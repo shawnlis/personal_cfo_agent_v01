@@ -30,11 +30,23 @@ _WARNING_DESCRIPTIONS: dict[str, str] = {
     WarningCode.DATA_QUALITY_STALE_OR_MIXED_DATES.value: (
         "Some source dates are stale or not aligned and should be reviewed before confirmation."
     ),
+    WarningCode.DATA_QUALITY_EXPECTED_SOURCE_MISSING.value: (
+        "A source marked required by the local expected-source contract is missing."
+    ),
+    WarningCode.EXPECTED_SOURCE_CONTRACT_INVALID.value: (
+        "The expected-source contract has an invalid shape and was ignored."
+    ),
+    WarningCode.EXPECTED_SOURCE_REQUIRED_MISSING.value: (
+        "A required expected source is unavailable in the refresh output."
+    ),
     WarningCode.INTEGRITY_GUARD_OK.value: (
         "The integrity guard found no blocking issue for confirmed history write."
     ),
     WarningCode.INTEGRITY_GUARD_BLOCKED.value: (
         "The integrity guard blocked confirmed history write."
+    ),
+    WarningCode.INTEGRITY_EXPECTED_SOURCE_MISSING.value: (
+        "A required expected source is missing, so confirmed history write is blocked."
     ),
     WarningCode.INTEGRITY_BROKER_REQUESTED_MISSING.value: (
         "A requested broker has no account NAV rows in the refresh output."

@@ -71,6 +71,66 @@ def test_integrity_guard_blocks_missing_requested_broker(tmp_path: Path) -> None
     assert WarningCode.INTEGRITY_GUARD_BLOCKED in result.warning_codes
 
 
+def test_integrity_guard_blocks_missing_expected_required_provider(
+    tmp_path: Path,
+) -> None:
+    refresh_dir = _write_refresh(
+        tmp_path,
+        account_rows=[_account_row("manual_nav", "1000.00", "SGD")],
+        total="1000.00",
+    )
+
+    result = run_net_worth_integrity_guard(
+        refresh_dir=refresh_dir,
+        out_dir=tmp_path / "guard",
+        providers_requested=[],
+        expected_required_providers=["ibkr"],
+        merge_result=None,
+        snapshot_result=None,
+        dashboard_result=None,
+        fx_rates_file=None,
+        upstream_warning_codes=[],
+    )
+
+    summary = json.loads(result.output_paths["summary"].read_text(encoding="utf-8"))
+
+    assert result.ready_to_confirm is False
+    assert WarningCode.INTEGRITY_EXPECTED_SOURCE_MISSING in result.blocking_warning_codes
+    assert WarningCode.INTEGRITY_BROKER_REQUESTED_MISSING in result.blocking_warning_codes
+    assert summary["expected_sources"]["providers_required"] == ["ibkr"]
+    assert summary["provider_checks"]["ibkr"]["expected_required"] is True
+    assert summary["provider_checks"]["ibkr"]["status"] == "missing"
+
+
+def test_integrity_guard_blocks_missing_expected_required_manual_layer(
+    tmp_path: Path,
+) -> None:
+    refresh_dir = _write_refresh(
+        tmp_path,
+        account_rows=[_account_row("manual_nav", "1000.00", "SGD")],
+        total="1000.00",
+    )
+
+    result = run_net_worth_integrity_guard(
+        refresh_dir=refresh_dir,
+        out_dir=tmp_path / "guard",
+        providers_requested=[],
+        expected_required_manual_layers=["sg_retirement_tax"],
+        manual_layer_status={"manual_nav": True, "sg_retirement_tax": False},
+        merge_result=None,
+        snapshot_result=None,
+        dashboard_result=None,
+        fx_rates_file=None,
+        upstream_warning_codes=[],
+    )
+
+    summary = json.loads(result.output_paths["summary"].read_text(encoding="utf-8"))
+
+    assert result.ready_to_confirm is False
+    assert WarningCode.INTEGRITY_EXPECTED_SOURCE_MISSING in result.blocking_warning_codes
+    assert summary["expected_sources"]["manual_layers_missing"] == ["sg_retirement_tax"]
+
+
 def test_integrity_guard_blocks_derived_provider_nav_for_requested_broker(
     tmp_path: Path,
 ) -> None:

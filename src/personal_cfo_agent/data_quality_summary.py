@@ -32,6 +32,10 @@ def write_data_quality_summary(
     providers_requested: list[str],
     providers_succeeded: list[str],
     providers_failed: list[str],
+    expected_required_providers: list[str] | None = None,
+    expected_optional_providers: list[str] | None = None,
+    expected_required_manual_layers: list[str] | None = None,
+    expected_optional_manual_layers: list[str] | None = None,
     manual_layer_status: dict[str, bool],
     account_nav_row_count: int,
     position_row_count: int,
@@ -47,6 +51,16 @@ def write_data_quality_summary(
 ) -> DataQualitySummaryResult:
     """Write refresh data-quality outputs without private values."""
 
+    required_providers = _clean_list(expected_required_providers or [])
+    optional_providers = _clean_list(expected_optional_providers or [])
+    required_manual_layers = _clean_list(expected_required_manual_layers or [])
+    optional_manual_layers = _clean_list(expected_optional_manual_layers or [])
+    expected_required_missing = _expected_required_missing(
+        required_providers=required_providers,
+        providers_succeeded=providers_succeeded,
+        required_manual_layers=required_manual_layers,
+        manual_layer_status=manual_layer_status,
+    )
     warnings = _data_quality_warning_codes(
         providers_failed=providers_failed,
         snapshot_generated=snapshot_generated,
@@ -54,6 +68,7 @@ def write_data_quality_summary(
         fx_file_present=fx_file_present,
         fx_complete=fx_complete,
         stale_or_mixed_date_warning_codes=stale_or_mixed_date_warning_codes,
+        expected_required_missing=expected_required_missing,
     )
     completion = (
         WarningCode.DATA_QUALITY_GENERATED_WITH_WARNINGS
@@ -76,10 +91,18 @@ def write_data_quality_summary(
             "succeeded": sorted(providers_succeeded),
             "failed": sorted(providers_failed),
         },
+        "expected_sources": {
+            "providers_required": required_providers,
+            "providers_optional": optional_providers,
+            "manual_layers_required": required_manual_layers,
+            "manual_layers_optional": optional_manual_layers,
+        },
         "provider_gate": _provider_gate_rows(
             providers_requested=providers_requested,
             providers_succeeded=providers_succeeded,
             providers_failed=providers_failed,
+            expected_required_providers=required_providers,
+            expected_optional_providers=optional_providers,
         ),
         "manual_layers": {
             key: bool(value) for key, value in sorted(manual_layer_status.items())
@@ -88,7 +111,11 @@ def write_data_quality_summary(
             providers_requested=providers_requested,
             providers_succeeded=providers_succeeded,
             providers_failed=providers_failed,
+            expected_required_providers=required_providers,
+            expected_optional_providers=optional_providers,
             manual_layer_status=manual_layer_status,
+            expected_required_manual_layers=required_manual_layers,
+            expected_optional_manual_layers=optional_manual_layers,
             snapshot_generated=snapshot_generated,
             fx_file_present=fx_file_present,
             fx_complete=fx_complete,
@@ -143,10 +170,13 @@ def _data_quality_warning_codes(
     fx_file_present: bool,
     fx_complete: bool,
     stale_or_mixed_date_warning_codes: list[str],
+    expected_required_missing: bool,
 ) -> list[WarningCode]:
     warnings: list[WarningCode] = []
     if providers_failed:
         warnings.append(WarningCode.DATA_QUALITY_BROKER_FAILURES)
+    if expected_required_missing:
+        warnings.append(WarningCode.DATA_QUALITY_EXPECTED_SOURCE_MISSING)
     if not snapshot_generated or not dashboard_generated:
         warnings.append(WarningCode.DATA_QUALITY_REFRESH_INCOMPLETE)
     if not fx_file_present or not fx_complete:
@@ -164,6 +194,7 @@ def _write_warnings(path: Path, warnings: list[WarningCode]) -> None:
 
 def _report(summary: dict[str, Any]) -> str:
     providers = summary["providers"]
+    expected_sources = summary.get("expected_sources", {})
     layers = summary["manual_layers"]
     counts = summary["counts"]
     warnings = summary["warning_codes"]
@@ -180,6 +211,25 @@ def _report(summary: dict[str, Any]) -> str:
         f"- Requested: {', '.join(providers['requested']) or 'None'}",
         f"- Succeeded: {', '.join(providers['succeeded']) or 'None'}",
         f"- Failed: {', '.join(providers['failed']) or 'None'}",
+        "",
+        "## Expected Sources",
+        "",
+        (
+            "- Required providers: "
+            + (
+                ", ".join(expected_sources.get("providers_required", []))
+                if expected_sources.get("providers_required")
+                else "None"
+            )
+        ),
+        (
+            "- Required manual layers: "
+            + (
+                ", ".join(expected_sources.get("manual_layers_required", []))
+                if expected_sources.get("manual_layers_required")
+                else "None"
+            )
+        ),
         "",
         "## Provider Gate",
         "",
@@ -233,32 +283,46 @@ def _provider_gate_rows(
     providers_requested: list[str],
     providers_succeeded: list[str],
     providers_failed: list[str],
+    expected_required_providers: list[str],
+    expected_optional_providers: list[str],
 ) -> list[dict[str, bool | str]]:
     providers = sorted(
         {
             *[provider for provider in providers_requested if provider],
             *[provider for provider in providers_succeeded if provider],
             *[provider for provider in providers_failed if provider],
+            *[provider for provider in expected_required_providers if provider],
+            *[provider for provider in expected_optional_providers if provider],
         }
     )
     requested = set(providers_requested)
     succeeded = set(providers_succeeded)
     failed = set(providers_failed)
+    expected_required = set(expected_required_providers)
+    expected_optional = set(expected_optional_providers)
     rows: list[dict[str, bool | str]] = []
     for provider in providers:
         status = "not_requested"
         if provider in succeeded:
             status = "ok"
+        elif provider in failed and provider in expected_required:
+            status = "failed_required"
         elif provider in failed:
             status = "failed"
+        elif provider in expected_required:
+            status = "missing_required"
         elif provider in requested:
             status = "missing"
+        elif provider in expected_optional:
+            status = "optional_missing"
         rows.append(
             {
                 "provider": provider,
                 "requested": provider in requested,
                 "succeeded": provider in succeeded,
                 "failed": provider in failed,
+                "expected_required": provider in expected_required,
+                "expected_optional": provider in expected_optional,
                 "status": status,
             }
         )
@@ -277,6 +341,7 @@ def _provider_gate_lines(provider_gate: object) -> list[str]:
             f"requested={_yes_no(bool(row.get('requested')))}; "
             f"succeeded={_yes_no(bool(row.get('succeeded')))}; "
             f"failed={_yes_no(bool(row.get('failed')))}; "
+            f"expected_required={_yes_no(bool(row.get('expected_required')))}; "
             f"status={row.get('status', 'unknown')}"
         )
     return lines or ["- None"]
@@ -287,7 +352,11 @@ def _source_provenance_rows(
     providers_requested: list[str],
     providers_succeeded: list[str],
     providers_failed: list[str],
+    expected_required_providers: list[str],
+    expected_optional_providers: list[str],
     manual_layer_status: dict[str, bool],
+    expected_required_manual_layers: list[str],
+    expected_optional_manual_layers: list[str],
     snapshot_generated: bool,
     fx_file_present: bool,
     fx_complete: bool,
@@ -295,31 +364,63 @@ def _source_provenance_rows(
     integrity_guard_generated: bool,
 ) -> list[dict[str, bool | str]]:
     rows: list[dict[str, bool | str]] = []
+    expected_manual = {
+        **{layer: "required" for layer in expected_required_manual_layers},
+        **{
+            layer: "optional"
+            for layer in expected_optional_manual_layers
+            if layer not in expected_required_manual_layers
+        },
+    }
     for layer_name, available in sorted(manual_layer_status.items()):
+        requirement = expected_manual.get(layer_name, "none")
+        status = "available" if available else "missing_required" if requirement == "required" else "missing"
         rows.append(
             {
                 "layer": layer_name,
                 "source_type": "local_manual_private_input",
                 "available": bool(available),
-                "status": "available" if available else "missing",
+                "status": status,
+                "expected_requirement": requirement,
                 "confirmed_history_source": False,
             }
         )
+    expected_providers = {
+        **{provider: "required" for provider in expected_required_providers},
+        **{
+            provider: "optional"
+            for provider in expected_optional_providers
+            if provider not in expected_required_providers
+        },
+    }
     for provider in sorted(
         {
             *[item for item in providers_requested if item],
             *[item for item in providers_succeeded if item],
             *[item for item in providers_failed if item],
+            *[item for item in expected_required_providers if item],
+            *[item for item in expected_optional_providers if item],
         }
     ):
         succeeded = provider in providers_succeeded
         failed = provider in providers_failed
+        requirement = expected_providers.get(provider, "none")
+        status = (
+            "available"
+            if succeeded
+            else "failed"
+            if failed
+            else "missing_required"
+            if requirement == "required"
+            else "missing"
+        )
         rows.append(
             {
                 "layer": f"broker_provider_{provider}",
                 "source_type": "supervised_read_only_provider_bundle",
                 "available": succeeded,
-                "status": "available" if succeeded else "failed" if failed else "missing",
+                "status": status,
+                "expected_requirement": requirement,
                 "confirmed_history_source": False,
             }
         )
@@ -376,6 +477,23 @@ def _source_provenance_lines(source_provenance: object) -> list[str]:
 
 def _yes_no(value: bool) -> str:
     return "yes" if value else "no"
+
+
+def _clean_list(values: list[str]) -> list[str]:
+    return sorted({str(value).strip().lower() for value in values if str(value).strip()})
+
+
+def _expected_required_missing(
+    *,
+    required_providers: list[str],
+    providers_succeeded: list[str],
+    required_manual_layers: list[str],
+    manual_layer_status: dict[str, bool],
+) -> bool:
+    succeeded = {provider.strip().lower() for provider in providers_succeeded if provider}
+    if any(provider not in succeeded for provider in required_providers):
+        return True
+    return any(not manual_layer_status.get(layer, False) for layer in required_manual_layers)
 
 
 def _dedupe_warning_codes(codes: list[WarningCode]) -> list[WarningCode]:

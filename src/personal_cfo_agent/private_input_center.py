@@ -45,6 +45,12 @@ SECTION_KEYS = (
     "hdb_loans",
 )
 
+EXPECTED_MANUAL_LAYER_KEYS = (
+    "manual_nav",
+    "property_mortgage",
+    "sg_retirement_tax",
+)
+
 _MANUAL_NAV_PROVIDER_MAP = {
     "manual_other": "other",
 }
@@ -132,6 +138,15 @@ class PrivateInputCenterSnapshotResult:
     sg_result: SGManualSnapshotResult | None = None
     warning_codes: list[WarningCode] = field(default_factory=list)
     generated: bool = False
+
+
+@dataclass(frozen=True)
+class ExpectedSourceContract:
+    providers_required: list[str] = field(default_factory=list)
+    providers_optional: list[str] = field(default_factory=list)
+    manual_layers_required: list[str] = field(default_factory=list)
+    manual_layers_optional: list[str] = field(default_factory=list)
+    warning_codes: list[WarningCode] = field(default_factory=list)
 
 
 def generate_private_input_center_form(*, out_dir: Path) -> PrivateInputCenterFormResult:
@@ -347,6 +362,7 @@ def validate_private_input_center(*, input_file: Path) -> PrivateInputCenterVali
         WarningCode.PRIVATE_INPUT_CENTER_SCHEMA_INVALID,
         WarningCode.PRIVATE_INPUT_CENTER_REQUIRED_FIELD_MISSING,
         WarningCode.PRIVATE_INPUT_CENTER_RAW_IDENTIFIER_DETECTED,
+        WarningCode.EXPECTED_SOURCE_CONTRACT_INVALID,
     }
     valid = not any(code in blocking for code in warnings)
     completion = (
@@ -514,6 +530,15 @@ def write_fx_rates_from_private_input_center(
     return out_file
 
 
+def read_expected_source_contract(*, input_file: Path) -> ExpectedSourceContract:
+    """Read redacted expected source requirements from unified private input."""
+
+    payload, read_warnings = _load_payload(input_file)
+    if payload is None:
+        return ExpectedSourceContract(warning_codes=read_warnings)
+    return _expected_source_contract_from_payload(payload)
+
+
 def _load_payload(path: Path) -> tuple[dict[str, Any] | None, list[WarningCode]]:
     if not path.exists():
         return None, [WarningCode.PRIVATE_INPUT_CENTER_INPUT_MISSING]
@@ -541,7 +566,111 @@ def _payload_warnings(payload: dict[str, Any]) -> list[WarningCode]:
     warnings.extend(_property_warnings(_rows(payload, "properties")))
     warnings.extend(_mortgage_warnings(_rows(payload, "mortgages")))
     warnings.extend(_sg_date_warnings(payload))
+    warnings.extend(_expected_source_contract_from_payload(payload).warning_codes)
     return _dedupe(warnings)
+
+
+def _expected_source_contract_from_payload(
+    payload: dict[str, Any]
+) -> ExpectedSourceContract:
+    contract = payload.get("expected_sources")
+    if contract is None:
+        return ExpectedSourceContract()
+    if not isinstance(contract, dict):
+        return ExpectedSourceContract(
+            warning_codes=[WarningCode.EXPECTED_SOURCE_CONTRACT_INVALID]
+        )
+
+    provider_result = _expected_provider_lists(contract.get("providers"))
+    manual_result = _expected_manual_layer_lists(contract.get("manual_layers"))
+    warnings = _dedupe([*provider_result[2], *manual_result[2]])
+    return ExpectedSourceContract(
+        providers_required=provider_result[0],
+        providers_optional=provider_result[1],
+        manual_layers_required=manual_result[0],
+        manual_layers_optional=manual_result[1],
+        warning_codes=warnings,
+    )
+
+
+def _expected_provider_lists(
+    value: object,
+) -> tuple[list[str], list[str], list[WarningCode]]:
+    required: set[str] = set()
+    optional: set[str] = set()
+    warnings: list[WarningCode] = []
+    if value is None:
+        return [], [], []
+    if isinstance(value, dict):
+        iterable = [
+            {"provider": provider, "required": requirement}
+            for provider, requirement in value.items()
+        ]
+    elif isinstance(value, list):
+        iterable = value
+    else:
+        return [], [], [WarningCode.EXPECTED_SOURCE_CONTRACT_INVALID]
+
+    for item in iterable:
+        if isinstance(item, str):
+            provider = _clean(item).lower()
+            if provider:
+                required.add(provider)
+            continue
+        if not isinstance(item, dict):
+            warnings.append(WarningCode.EXPECTED_SOURCE_CONTRACT_INVALID)
+            continue
+        provider = _clean(item.get("provider") or item.get("name")).lower()
+        requirement = _requirement_value(item.get("required", item.get("requirement", True)))
+        if not provider or requirement is None:
+            warnings.append(WarningCode.EXPECTED_SOURCE_CONTRACT_INVALID)
+            continue
+        if requirement:
+            required.add(provider)
+            optional.discard(provider)
+        elif provider not in required:
+            optional.add(provider)
+    return sorted(required), sorted(optional), warnings
+
+
+def _expected_manual_layer_lists(
+    value: object,
+) -> tuple[list[str], list[str], list[WarningCode]]:
+    required: set[str] = set()
+    optional: set[str] = set()
+    warnings: list[WarningCode] = []
+    if value is None:
+        return [], [], []
+    if isinstance(value, dict):
+        iterable = value.items()
+    elif isinstance(value, list):
+        iterable = [(item, True) for item in value]
+    else:
+        return [], [], [WarningCode.EXPECTED_SOURCE_CONTRACT_INVALID]
+
+    for layer_name, requirement_raw in iterable:
+        layer = _clean(layer_name).lower()
+        requirement = _requirement_value(requirement_raw)
+        if layer not in EXPECTED_MANUAL_LAYER_KEYS or requirement is None:
+            warnings.append(WarningCode.EXPECTED_SOURCE_CONTRACT_INVALID)
+            continue
+        if requirement:
+            required.add(layer)
+            optional.discard(layer)
+        elif layer not in required:
+            optional.add(layer)
+    return sorted(required), sorted(optional), warnings
+
+
+def _requirement_value(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    text = _clean(value).lower()
+    if text in {"required", "require", "yes", "true", "1"}:
+        return True
+    if text in {"optional", "no", "false", "0", "skip", "not_required"}:
+        return False
+    return None
 
 
 def _property_warnings(rows: list[dict[str, Any]]) -> list[WarningCode]:

@@ -81,6 +81,18 @@ v0.6.2 local net worth doctor is an offline health-check layer only. It inspects
 
 v0.6.4 data quality summary is an offline report produced by local net worth refresh. It records provider requested/succeeded/failed status, manual layer availability, account NAV row count, position row count, snapshot and dashboard generation status, FX completeness, and warning codes. It must not run broker reads, Webull token preflight, Moomoo discovery, account diagnostics, browser automation, external uploads, trading, cash movement, tax filing, or recommendation output. It must not include exact NAV, balances, positions, raw account IDs, private input contents, `.env.local` values, API keys, tokens, or secrets. Generated data quality outputs must stay under ignored `reports/` paths.
 
+## Expected Source Contract Rule
+
+v0.6.7 expected source contract is an offline safety contract embedded in the
+unified private input file. It may mark broker providers and manual layers as
+required or optional for a refresh. It must not trigger broker reads, Webull
+token preflight, Moomoo discovery, account diagnostics, browser automation,
+external uploads, trading, cash movement, tax filing, or recommendation output.
+Required source failures may appear in data-quality and integrity-guard outputs
+as redacted status/warning codes only, and must not include exact NAV, balances,
+positions, raw account IDs, account hashes, private input contents,
+`.env.local` values, API keys, tokens, or secrets.
+
 ## Net Worth Integrity Guard Rule
 
 v0.6.5 net worth integrity guard is an offline confirmation gate for local net worth refresh. It reads only already-generated local refresh artifacts, checks requested broker coverage, provider-reported NAV availability, FX completeness, mixed/stale date warnings, total availability, and large changes versus confirmed history, then reports whether `--confirm-snapshot-history-write` may proceed. It must not run broker reads, Webull token preflight, Moomoo discovery, account diagnostics, browser automation, external uploads, trading, cash movement, tax filing, or recommendation output. It must not include exact NAV, balances, positions, raw account IDs, account hashes, private input contents, `.env.local` values, API keys, tokens, or secrets. Generated guard outputs must stay under ignored `reports/` paths.
