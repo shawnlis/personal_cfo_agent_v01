@@ -133,6 +133,10 @@ from personal_cfo_agent.sg_manual_snapshot import (
     record_sg_manual_snapshot,
 )
 from personal_cfo_agent.snapshot_store import SnapshotStoreResult, record_snapshot
+from personal_cfo_agent.snapshot_history_manager import (
+    SnapshotHistoryManagerResult,
+    manage_snapshot_history,
+)
 from personal_cfo_agent.snapshot_review import (
     SnapshotReviewResult,
     write_snapshot_review,
@@ -783,6 +787,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Write a local-only redacted review page before confirmed history write.",
     )
     parser.add_argument(
+        "--snapshot-history-manager",
+        action="store_true",
+        help="Inspect or safely prune local snapshot history CSV files.",
+    )
+    parser.add_argument(
         "--local-workbench",
         action="store_true",
         help="Write a static local Personal CFO workbench launcher.",
@@ -893,10 +902,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Optional immutable snapshot id for --record-snapshot.",
     )
     parser.add_argument(
+        "--keep-snapshot-date",
+        action="append",
+        default=[],
+        help="Snapshot date to keep for --snapshot-history-manager. Repeatable.",
+    )
+    parser.add_argument(
+        "--keep-snapshot-id",
+        action="append",
+        default=[],
+        help="Snapshot id to keep for --snapshot-history-manager. Repeatable.",
+    )
+    parser.add_argument(
+        "--apply-snapshot-history-changes",
+        action="store_true",
+        help="Apply --snapshot-history-manager pruning after creating a backup.",
+    )
+    parser.add_argument(
         "--snapshot-dir",
         type=Path,
         default=None,
-        help="Snapshot history input directory for --dashboard-v3.",
+        help="Snapshot history input directory for dashboard or snapshot history manager workflows.",
     )
     parser.add_argument(
         "--refresh-dir",
@@ -983,6 +1009,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _net_worth_doctor_cli(args, parser)
     if args.snapshot_review:
         return _snapshot_review_cli(args, parser)
+    if args.snapshot_history_manager:
+        return _snapshot_history_manager_cli(args, parser)
     if args.local_workbench:
         return _local_workbench_cli(args, parser)
     if args.dashboard_v4:
@@ -1980,6 +2008,7 @@ def _validate_net_worth_refresh_cli_scope(
         or args.private_input_center_to_snapshots
         or args.net_worth_doctor
         or args.snapshot_review
+        or args.snapshot_history_manager
         or args.local_workbench
     ):
         parser.error("--run-net-worth-refresh cannot be combined with other workflows")
@@ -2042,6 +2071,7 @@ def _validate_net_worth_doctor_cli_scope(
         or args.private_input_center_to_snapshots
         or args.run_net_worth_refresh
         or args.snapshot_review
+        or args.snapshot_history_manager
         or args.local_workbench
     ):
         parser.error("--net-worth-doctor cannot be combined with other workflows")
@@ -2109,6 +2139,7 @@ def _validate_snapshot_review_cli_scope(
         or args.private_input_center_to_snapshots
         or args.run_net_worth_refresh
         or args.net_worth_doctor
+        or args.snapshot_history_manager
         or args.local_workbench
     ):
         parser.error("--snapshot-review cannot be combined with other workflows")
@@ -2116,6 +2147,105 @@ def _validate_snapshot_review_cli_scope(
         parser.error("--snapshot-review uses --refresh-dir and --out-dir")
     if args.fx_rates_file is not None or args.fx_rates_input is not None:
         parser.error("--snapshot-review does not use FX input files")
+
+
+def _snapshot_history_manager_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_snapshot_history_manager_cli_scope(args, parser)
+    result = manage_snapshot_history(
+        snapshot_dir=args.snapshot_dir,
+        out_dir=args.out_dir,
+        keep_snapshot_dates=args.keep_snapshot_date,
+        keep_snapshot_ids=args.keep_snapshot_id,
+        apply_changes=args.apply_snapshot_history_changes,
+    )
+    for line in _format_snapshot_history_manager_result(result):
+        print(line)
+    blocking_codes = {
+        WarningCode.SNAPSHOT_HISTORY_MANAGER_INPUT_MISSING,
+        WarningCode.SNAPSHOT_HISTORY_MANAGER_NO_HISTORY_ROWS,
+        WarningCode.SNAPSHOT_HISTORY_MANAGER_KEEP_SET_EMPTY,
+    }
+    return 0 if result.generated and not (set(result.warning_codes) & blocking_codes) else 1
+
+
+def _validate_snapshot_history_manager_cli_scope(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> None:
+    if args.snapshot_dir is None:
+        parser.error("--snapshot-history-manager requires --snapshot-dir")
+    if args.out_dir is None:
+        parser.error("--snapshot-history-manager requires --out-dir")
+    if args.apply_snapshot_history_changes and not (
+        args.keep_snapshot_date or args.keep_snapshot_id
+    ):
+        parser.error(
+            "--apply-snapshot-history-changes requires --keep-snapshot-date or --keep-snapshot-id"
+        )
+    if args.allow_live_read:
+        parser.error("--snapshot-history-manager cannot be combined with --allow-live-read")
+    if args.provider != "all":
+        parser.error("--snapshot-history-manager uses --provider all")
+    if args.readiness_check or args.connection_diagnostics:
+        parser.error("--snapshot-history-manager cannot be combined with readiness or diagnostics")
+    if args.account_discovery or args.read_context_probe:
+        parser.error("--snapshot-history-manager cannot be combined with Moomoo discovery probes")
+    if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
+        parser.error("--snapshot-history-manager cannot be combined with data diagnostics")
+    if (
+        args.merge_provider_bundles
+        or args.dashboard_v2
+        or args.dashboard_v3
+        or args.dashboard_v4
+        or args.dashboard
+        or args.record_snapshot
+        or args.property_mortgage_snapshot
+        or args.sg_manual_snapshot
+        or args.init_private_input_kit
+        or args.validate_private_inputs
+        or args.run_manual_snapshot_chain
+        or args.init_manual_nav_input
+        or args.validate_manual_nav_input
+        or args.manual_nav_to_provider_bundle
+        or args.private_input_center_form
+        or args.private_input_center_local_app
+        or args.init_private_input_center
+        or args.validate_private_input_center
+        or args.private_input_center_to_snapshots
+        or args.run_net_worth_refresh
+        or args.net_worth_doctor
+        or args.snapshot_review
+        or args.local_workbench
+    ):
+        parser.error("--snapshot-history-manager cannot be combined with other workflows")
+    if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
+        parser.error("--snapshot-history-manager cannot be combined with manual snapshot utilities")
+    if (
+        args.input_file is not None
+        or args.input_dir is not None
+        or args.out_file is not None
+        or args.fx_rates_file is not None
+        or args.fx_rates_input is not None
+    ):
+        parser.error("--snapshot-history-manager uses --snapshot-dir and --out-dir")
+    if any(
+        value is not None
+        for value in (
+            args.property_input,
+            args.mortgage_input,
+            args.cpf_input,
+            args.srs_input,
+            args.tax_input,
+            args.hdb_loan_input,
+            args.merge_dir,
+            args.dashboard_dir,
+            args.refresh_dir,
+            args.property_mortgage_dir,
+            args.sg_snapshot_dir,
+        )
+    ):
+        parser.error("--snapshot-history-manager inspects existing snapshot history only")
 
 
 def _validate_local_workbench_cli_scope(
@@ -2154,6 +2284,7 @@ def _validate_local_workbench_cli_scope(
         or args.run_net_worth_refresh
         or args.net_worth_doctor
         or args.snapshot_review
+        or args.snapshot_history_manager
     ):
         parser.error("--local-workbench cannot be combined with other workflows")
     if args.input_dir is not None or args.out_file is not None:
@@ -2174,6 +2305,7 @@ def _validate_private_input_center_cli_scope(
         args.run_net_worth_refresh,
         args.net_worth_doctor,
         args.snapshot_review,
+        args.snapshot_history_manager,
         args.local_workbench,
     ]
     if sum(1 for enabled in commands if enabled) > 1:
@@ -2204,6 +2336,7 @@ def _validate_private_input_center_cli_scope(
         or args.run_net_worth_refresh
         or args.net_worth_doctor
         or args.snapshot_review
+        or args.snapshot_history_manager
         or args.local_workbench
     ):
         parser.error(f"{command_name} cannot be combined with other offline workflows")
@@ -2235,6 +2368,7 @@ def _validate_manual_nav_cli_scope(
         args.run_net_worth_refresh,
         args.net_worth_doctor,
         args.snapshot_review,
+        args.snapshot_history_manager,
         args.local_workbench,
     ]
     if sum(1 for enabled in manual_nav_commands if enabled) > 1:
@@ -2267,6 +2401,7 @@ def _validate_manual_nav_cli_scope(
         or args.run_net_worth_refresh
         or args.net_worth_doctor
         or args.snapshot_review
+        or args.snapshot_history_manager
         or args.local_workbench
     ):
         parser.error(f"{command_name} cannot be combined with other offline workflows")
@@ -2316,6 +2451,7 @@ def _validate_private_input_cli_scope(
         or args.run_net_worth_refresh
         or args.net_worth_doctor
         or args.snapshot_review
+        or args.snapshot_history_manager
         or args.local_workbench
     ):
         parser.error(f"{command_name} cannot be combined with report generators")
@@ -2890,6 +3026,26 @@ def _format_snapshot_review_result(result: SnapshotReviewResult) -> list[str]:
         f"Output directory: {result.output_dir}",
         f"Review generated: {_yes_no(result.generated)}",
         f"Ready to confirm history: {_yes_no(result.ready_to_confirm)}",
+        f"Output files: {files}",
+        f"Warning codes: {warnings}",
+    ]
+
+
+def _format_snapshot_history_manager_result(
+    result: SnapshotHistoryManagerResult,
+) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    files = ", ".join(path.name for path in sorted(result.output_paths.values())) or "None"
+    return [
+        "Personal CFO snapshot history manager v0.6.8 (offline)",
+        "External connections used: no",
+        "Broker live reads used: no",
+        f"Snapshot history directory: {result.snapshot_dir}",
+        f"Output directory: {result.output_dir}",
+        f"Reports generated: {_yes_no(result.generated)}",
+        f"Changes applied: {_yes_no(result.applied)}",
+        f"Matched snapshot count: {result.matched_snapshot_count}",
+        f"Backup directory: {result.backup_dir or ''}",
         f"Output files: {files}",
         f"Warning codes: {warnings}",
     ]

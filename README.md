@@ -21,6 +21,7 @@ unified private input center
 -> integrity guard
 -> expected source contract gate
 -> confirmed snapshot history after explicit approval
+-> snapshot history manager for correcting reviewed history mistakes
 -> Dashboard v3 / Dashboard v4
 -> local net worth doctor
 ```
@@ -101,6 +102,34 @@ It also writes a redacted integrity guard report:
 - `integrity_guard/net_worth_integrity_summary.json`
 - `integrity_guard/net_worth_integrity_warnings.md`
 - `integrity_guard/NET_WORTH_INTEGRITY_GUARD_V065.md`
+
+## Snapshot History Manager
+
+If a bad refresh has already been written to confirmed history, inspect history
+offline before applying any cleanup:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --snapshot-history-manager `
+  --snapshot-dir .\reports\personal_cfo_agent\net_worth_refresh_local\snapshots_confirmed `
+  --out-dir .\reports\personal_cfo_agent\snapshot_history_manager_v068_local
+```
+
+To prune history, rerun with an explicit keep date or snapshot ID and an explicit
+apply flag. The manager creates a backup under the output folder before
+rewriting history CSVs:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --snapshot-history-manager `
+  --snapshot-dir .\reports\personal_cfo_agent\net_worth_refresh_local\snapshots_confirmed `
+  --keep-snapshot-date 2026-06-21 `
+  --apply-snapshot-history-changes `
+  --out-dir .\reports\personal_cfo_agent\snapshot_history_manager_v068_local
+```
+
+Snapshot history manager outputs are redacted and documented in
+`docs/SNAPSHOT_HISTORY_MANAGER_V068.md`.
 
 ## Supervised Read-Only Broker Refresh
 
@@ -220,6 +249,8 @@ The stabilization checklist for this local-first workflow is documented in
 `docs/LOCAL_WORKFLOW_STABILIZATION_V066.md`.
 Expected source contract behavior is documented in
 `docs/EXPECTED_SOURCE_CONTRACT_V067.md`.
+Snapshot history cleanup is documented in
+`docs/SNAPSHOT_HISTORY_MANAGER_V068.md`.
 
 ## Validation
 

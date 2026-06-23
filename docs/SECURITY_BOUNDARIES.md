@@ -108,6 +108,19 @@ cash movement, tax filing, or recommendation output. It must not include exact
 NAV, balances, positions, raw account IDs, account hashes, private input
 contents, `.env.local` values, API keys, tokens, or secrets.
 
+## Snapshot History Manager Rule
+
+v0.6.8 snapshot history manager is an offline local history maintenance utility.
+It inspects or prunes already-generated snapshot history CSV files only. Dry-run
+is the default; applying changes requires explicit keep dates or snapshot IDs and
+`--apply-snapshot-history-changes`. It must create a local backup before
+rewriting history CSVs and must not run broker reads, Webull token preflight,
+Moomoo discovery, account diagnostics, browser automation, external uploads,
+trading, cash movement, tax filing, or recommendation output. It must not include
+exact NAV, balances, positions, raw account IDs, account hashes, private input
+contents, `.env.local` values, API keys, tokens, or secrets in generated manager
+reports.
+
 ## Local Workbench Rule
 
 v0.6.6 local workbench is a static local launcher and path/status checklist. It

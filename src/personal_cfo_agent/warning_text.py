@@ -78,6 +78,30 @@ _WARNING_DESCRIPTIONS: dict[str, str] = {
     WarningCode.INTEGRITY_NAV_CHANGE_REVIEW_REQUIRED.value: (
         "The net worth change versus confirmed history is large enough to require review."
     ),
+    WarningCode.SNAPSHOT_HISTORY_MANAGER_INPUT_MISSING.value: (
+        "The snapshot history manager could not find the required history files."
+    ),
+    WarningCode.SNAPSHOT_HISTORY_MANAGER_NO_HISTORY_ROWS.value: (
+        "No snapshot history rows were available to manage."
+    ),
+    WarningCode.SNAPSHOT_HISTORY_MANAGER_KEEP_SET_EMPTY.value: (
+        "The selected keep criteria matched no snapshot history rows."
+    ),
+    WarningCode.SNAPSHOT_HISTORY_MANAGER_DRY_RUN.value: (
+        "Snapshot history manager ran in dry-run mode and did not rewrite history."
+    ),
+    WarningCode.SNAPSHOT_HISTORY_MANAGER_BACKUP_CREATED.value: (
+        "A local backup was created before snapshot history files were rewritten."
+    ),
+    WarningCode.SNAPSHOT_HISTORY_MANAGER_APPLIED.value: (
+        "Snapshot history manager rewrote local history files using the selected keep set."
+    ),
+    WarningCode.SNAPSHOT_HISTORY_MANAGER_GENERATED_OK.value: (
+        "Snapshot history manager completed without warnings."
+    ),
+    WarningCode.SNAPSHOT_HISTORY_MANAGER_GENERATED_WITH_WARNINGS.value: (
+        "Snapshot history manager completed with warnings that require review."
+    ),
     WarningCode.SNAPSHOT_REVIEW_READY_TO_CONFIRM.value: (
         "The redacted snapshot review says the refresh is ready for confirmed history write."
     ),
