@@ -13,10 +13,13 @@ from personal_cfo_agent.dashboard_v3 import write_dashboard_v3
 from personal_cfo_agent.dashboard_v4 import (
     ASSET_BUCKET_FIELDNAMES,
     BUCKET_HISTORY_FIELDNAMES,
+    FIRE_TARGET_FIELDNAMES,
     LIQUID_WITHDRAWAL_FIELDNAMES,
     write_dashboard_v4,
 )
+from personal_cfo_agent.data_quality_summary import write_data_quality_summary
 from personal_cfo_agent.models import WarningCode
+from personal_cfo_agent.net_worth_integrity_guard import run_net_worth_integrity_guard
 from personal_cfo_agent.provider_bundle_merge import merge_provider_bundles
 from personal_cfo_agent.runner import build_arg_parser, main
 
@@ -56,6 +59,7 @@ def test_dashboard_v4_generates_asset_buckets_and_outputs(tmp_path: Path) -> Non
         "dashboard_summary",
         "asset_bucket_summary",
         "liquid_withdrawal_cashflow",
+        "fire_target_projection",
         "net_worth_bucket_history",
         "dashboard_warnings",
         "asset_bucket_chart",
@@ -65,7 +69,9 @@ def test_dashboard_v4_generates_asset_buckets_and_outputs(tmp_path: Path) -> Non
     assert result.bucket_count == 5
     assert result.history_count == 1
     assert result.withdrawal_row_count == 9
+    assert result.fire_projection_row_count == 5
     assert WarningCode.DASHBOARD_V4_WITHDRAWAL_CASHFLOW_GENERATED in result.warning_codes
+    assert WarningCode.DASHBOARD_V4_FIRE_TARGET_GENERATED in result.warning_codes
     assert WarningCode.DASHBOARD_V4_GENERATED_WITH_WARNINGS in result.warning_codes
 
     bucket_rows = _read_rows(result.output_paths["asset_bucket_summary"])
@@ -93,6 +99,21 @@ def test_dashboard_v4_generates_asset_buckets_and_outputs(tmp_path: Path) -> Non
     markdown = result.output_paths["markdown_report"].read_text(encoding="utf-8")
     html = result.output_paths["html_report"].read_text(encoding="utf-8")
     summary = json.loads(result.output_paths["dashboard_summary"].read_text(encoding="utf-8"))
+    assert "## Data Source Coverage" in markdown
+    assert "## Data Quality" in markdown
+    assert "## Integrity Status" in markdown
+    assert "Integrity Status" in html
+    assert "Integrity guard generated: yes" in markdown
+    assert "Ready to confirm history: yes" in markdown
+    assert "Blocking warning codes: None" in markdown
+    assert "Broker data included: no" in markdown
+    assert "Broker provider inputs: None" in markdown
+    assert "Account NAV rows: 4" in markdown
+    assert "Source layers available:" in markdown
+    assert "Source layers needing review:" in markdown
+    assert "No broker provider input folders found; live broker assets are not confirmed in this refresh." in markdown
+    assert "Data Source Coverage" in html
+    assert "live broker assets are not confirmed" in html
     assert "Withdrawal ladder rows" not in markdown
     assert "Withdrawal ladder rows" not in html
     assert "Uses liquid investment assets only" not in markdown
@@ -111,10 +132,20 @@ def test_dashboard_v4_generates_asset_buckets_and_outputs(tmp_path: Path) -> Non
     assert "Static SVG output" not in html
     assert "Review Queue" not in markdown
     assert "Review Queue" not in html
+    assert "Rows: 1" not in markdown
+    assert "Rows: 1" not in html
+    assert "History rows" not in markdown
+    assert "History rows" not in html
     assert "Unclassified or missing-currency assets are retained for review" not in markdown
     assert "Unclassified or missing-currency assets are retained for review" not in html
     assert "Missing FX rates skip conversion" not in markdown
     assert "Missing FX rates skip conversion" not in html
+    assert "## Snapshot History Review" in markdown
+    assert "Snapshot History Review" in html
+    assert "Review snapshot generated: yes" in markdown
+    assert "Confirmed history write present: no" in markdown
+    assert "--confirm-snapshot-history-write" in markdown
+    assert "--confirm-snapshot-history-write" in html
     assert "Fixed assets: 200,000.00 SGD" in markdown
     assert "Fixed assets: 200,000.00 SGD" in html
     assert "Non-liquid unvested equity: 480.00 SGD" in markdown
@@ -125,9 +156,31 @@ def test_dashboard_v4_generates_asset_buckets_and_outputs(tmp_path: Path) -> Non
     assert "Total assets: 211,180.00 SGD (100.00%)" in html
     assert "| Rate | Annual | Monthly | Daily |" in markdown
     assert "| 3.0% | US$62.31<br>S$81.00<br>¥450.00 | US$5.19<br>S$6.75<br>¥37.50 | US$0.17<br>S$0.22<br>¥1.23 |" in markdown
+    assert "## FIRE Target Scenario" in markdown
+    assert "Target: US$20,000,000.00" in markdown
+    assert "Annual investment: US$400,000.00" in markdown
+    assert "Start liquid NAV: US$2,076.92" in markdown
+    assert "| Return | Years |" in markdown
+    assert "| 10% | 18.79 |" in markdown
+    assert "Full years" not in markdown
+    assert "Approx years" not in markdown
     assert "<table>" in html
     assert "<th>Annual</th>" in html
     assert "<td>US$62.31<br>S$81.00<br>¥450.00</td>" in html
+    assert "FIRE Target Scenario" in html
+    assert "fire-assumptions" in html
+    assert 'id="fire-target-usd"' in html
+    assert 'value="20000000.00"' in html
+    assert 'id="fire-annual-investment-usd"' in html
+    assert 'value="400000.00"' in html
+    assert 'data-start-usd="2076.92"' in html
+    assert "fire-target-table" in html
+    assert 'data-return-rate="0.100000"' in html
+    assert 'class="fire-years-cell"' in html
+    assert "yearsToTarget" in html
+    assert "Target: US$20,000,000.00" not in html
+    assert "Annual investment: US$400,000.00" not in html
+    assert "US$2,076.92" in html
     assert "<th>Currency</th>" not in html
     assert "Target Annual Withdrawal" in html
     assert "target-annual-withdrawal" in html
@@ -146,8 +199,34 @@ def test_dashboard_v4_generates_asset_buckets_and_outputs(tmp_path: Path) -> Non
     assert "Asset buckets: 4" in markdown
     assert summary["asset_bucket_count"] == 5
     assert summary["display_asset_bucket_count"] == 4
+    assert summary["source_coverage"]["account_nav_row_count"] == 4
+    assert summary["source_coverage"]["broker_data_included"] is False
+    assert summary["source_coverage"]["broker_provider_input_dirs"] == []
+    assert summary["integrity_guard"]["generated"] is True
+    assert summary["integrity_guard"]["ready_to_confirm"] is True
+    assert summary["integrity_guard"]["blocking_warning_codes"] == []
+    assert summary["fire_target_projection_row_count"] == 5
+    assert summary["fire_target_usd"] == "20000000.00"
+    assert summary["fire_annual_investment_usd"] == "400000.00"
     assert "Needs review / unclassified" not in markdown
     assert "Needs review / unclassified" not in html
+
+    fire_rows = _read_rows(result.output_paths["fire_target_projection"])
+    assert list(fire_rows[0]) == FIRE_TARGET_FIELDNAMES
+    assert [row["return_rate"] for row in fire_rows] == [
+        "0.100",
+        "0.150",
+        "0.200",
+        "0.250",
+        "0.300",
+    ]
+    assert {row["starting_liquid_nav_usd"] for row in fire_rows} == {"2076.92"}
+    assert {row["annual_investment_usd"] for row in fire_rows} == {"400000.00"}
+    assert {row["fire_target_usd"] for row in fire_rows} == {"20000000.00"}
+    assert fire_rows[0]["estimated_years_to_target"] == "18.79"
+    assert fire_rows[3]["estimated_years_to_target"] != fire_rows[4]["estimated_years_to_target"]
+    assert all(int(row["years_to_target"]) > 0 for row in fire_rows)
+    assert {row["fx_mode"] for row in fire_rows} == {"SGD_to_USD"}
 
 
 def test_dashboard_v4_withdrawal_cashflow_uses_explicit_fx(tmp_path: Path) -> None:
@@ -200,6 +279,8 @@ def test_dashboard_v4_missing_fx_warns_and_skips_conversion(tmp_path: Path) -> N
 
     assert WarningCode.DASHBOARD_V4_FX_RATES_MISSING in result.warning_codes
     assert WarningCode.DASHBOARD_V4_FX_CONVERSION_SKIPPED in result.warning_codes
+    assert WarningCode.DASHBOARD_V4_FIRE_TARGET_INPUT_MISSING in result.warning_codes
+    assert result.fire_projection_row_count == 0
     bucket_rows = _read_rows(result.output_paths["asset_bucket_summary"])
     liquid = {row["bucket"]: row for row in bucket_rows}["liquid_investment_assets"]
     assert liquid["amount"] == ""
@@ -236,9 +317,12 @@ def test_dashboard_v4_unclassified_assets_are_review_required(tmp_path: Path) ->
     assert WarningCode.DASHBOARD_V4_BUCKET_CLASSIFICATION_WARNING in result.warning_codes
 
 
-def test_dashboard_v4_cli_generates_redacted_offline_summary(tmp_path: Path, capsys) -> None:
+def test_dashboard_v4_cli_generates_redacted_offline_summary(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
     refresh_dir = _generate_refresh_dir(tmp_path)
     out_dir = tmp_path / "dashboard_v4_cli"
+    monkeypatch.chdir(tmp_path)
 
     assert (
         main(
@@ -260,8 +344,16 @@ def test_dashboard_v4_cli_generates_redacted_offline_summary(tmp_path: Path, cap
     assert "External connections used: no" in output
     assert "Broker connections used: no" in output
     assert "Asset bucket rows: 5" in output
+    assert "Current dashboard directory:" in output
     assert "Warning codes:" in output
     assert (out_dir / "PERSONAL_CFO_DASHBOARD_V060.md").exists()
+    assert (
+        tmp_path
+        / "reports"
+        / "personal_cfo_agent"
+        / "dashboard_current"
+        / "PERSONAL_CFO_DASHBOARD_V060.html"
+    ).exists()
 
 
 def test_dashboard_v4_cli_rejects_live_and_other_generators(tmp_path: Path) -> None:
@@ -355,6 +447,38 @@ def _generate_refresh_dir(tmp_path: Path) -> Path:
     shutil.copytree(dirs["dashboard_v3"], refresh_dir / "dashboard")
     shutil.copytree(dirs["property"], refresh_dir / "manual_layers" / "property_mortgage")
     shutil.copytree(dirs["sg"], refresh_dir / "manual_layers" / "sg_retirement_tax")
+    run_net_worth_integrity_guard(
+        refresh_dir=refresh_dir,
+        out_dir=refresh_dir / "integrity_guard",
+        providers_requested=[],
+        merge_result=None,
+        snapshot_result=None,
+        dashboard_result=None,
+        fx_rates_file=_write_fx_rates(tmp_path),
+        upstream_warning_codes=[],
+    )
+    write_data_quality_summary(
+        out_dir=refresh_dir,
+        providers_requested=[],
+        providers_succeeded=[],
+        providers_failed=[],
+        manual_layer_status={
+            "manual_nav": True,
+            "property_mortgage": True,
+            "sg_retirement_tax": True,
+        },
+        account_nav_row_count=len(_read_rows(refresh_dir / "merged" / "merged_account_nav_ledger.csv")),
+        position_row_count=len(_read_rows(refresh_dir / "merged" / "merged_position_ledger.csv")),
+        snapshot_generated=True,
+        fx_file_present=True,
+        fx_complete=True,
+        stale_or_mixed_date_warning_codes=[],
+        dashboard_generated=True,
+        upstream_warning_codes=[],
+        integrity_guard_generated=True,
+        integrity_ready_to_confirm=True,
+        integrity_blocking_warning_codes=[],
+    )
     return refresh_dir
 
 

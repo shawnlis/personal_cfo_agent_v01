@@ -1,8 +1,9 @@
-"""CLI runner and orchestration for Personal CFO Agent v0.1."""
+"""CLI runner and orchestration for the local-first Personal CFO Agent."""
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import multiprocessing
 import os
@@ -21,6 +22,10 @@ from personal_cfo_agent.config import (
     load_tiger_config,
     load_webull_config,
 )
+from personal_cfo_agent.data_quality_summary import (
+    DataQualitySummaryResult,
+    write_data_quality_summary,
+)
 from personal_cfo_agent.dashboard import write_dashboard
 from personal_cfo_agent.dashboard_v2 import DashboardV2Result, write_dashboard_v2
 from personal_cfo_agent.dashboard_v3 import DashboardV3Result, write_dashboard_v3
@@ -32,6 +37,10 @@ from personal_cfo_agent.manual_snapshot import (
     write_manual_snapshot_template,
 )
 from personal_cfo_agent.local_env import LOCAL_ENV_FILENAME, load_local_env_file
+from personal_cfo_agent.local_workbench import (
+    LocalWorkbenchResult,
+    write_local_workbench,
+)
 from personal_cfo_agent.local_private_input_kit import (
     ManualSnapshotChainResult,
     PrivateInputKitInitResult,
@@ -60,6 +69,10 @@ from personal_cfo_agent.net_worth_doctor import (
     NetWorthDoctorResult,
     run_net_worth_doctor,
 )
+from personal_cfo_agent.net_worth_integrity_guard import (
+    NetWorthIntegrityGuardResult,
+    run_net_worth_integrity_guard,
+)
 from personal_cfo_agent.normalizer import normalize_snapshots
 from personal_cfo_agent.private_input_center import (
     PrivateInputCenterFormResult,
@@ -69,7 +82,9 @@ from personal_cfo_agent.private_input_center import (
     generate_private_input_center_form,
     init_private_input_center,
     private_input_center_to_snapshots,
+    serve_private_input_center_local_app,
     validate_private_input_center,
+    write_fx_rates_from_private_input_center,
 )
 from personal_cfo_agent.providers import (
     IBKRProvider,
@@ -116,6 +131,10 @@ from personal_cfo_agent.sg_manual_snapshot import (
     record_sg_manual_snapshot,
 )
 from personal_cfo_agent.snapshot_store import SnapshotStoreResult, record_snapshot
+from personal_cfo_agent.snapshot_review import (
+    SnapshotReviewResult,
+    write_snapshot_review,
+)
 
 
 IBKR_LIVE_SUBPROCESS_TIMEOUT_SECONDS = 45.0
@@ -139,6 +158,10 @@ class NetWorthRefreshResult:
     merge_result: MergeResult | None
     snapshot_result: SnapshotStoreResult | None
     dashboard_result: DashboardV3Result | None
+    data_quality_result: DataQualitySummaryResult | None = None
+    integrity_guard_result: NetWorthIntegrityGuardResult | None = None
+    snapshot_review_result: SnapshotReviewResult | None = None
+    snapshot_history_confirmed: bool = False
     warning_codes: list[WarningCode] = field(default_factory=list)
 
     @property
@@ -561,7 +584,7 @@ def _sanitized_exception_category(exc: BaseException) -> str:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Personal CFO Agent v0.1 runner")
+    parser = argparse.ArgumentParser(description="Personal CFO Agent v0.6 local-first runner")
     parser.add_argument(
         "--provider",
         choices=["all", "ibkr", "moomoo", "tiger", "webull", "manual"],
@@ -723,6 +746,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Generate a local-only static HTML unified private input center form.",
     )
     parser.add_argument(
+        "--private-input-center-local-app",
+        action="store_true",
+        help="Serve the unified private input center locally and save JSON to --input-file.",
+    )
+    parser.add_argument(
         "--init-private-input-center",
         action="store_true",
         help="Copy the unified private input center placeholder JSON into an ignored local file.",
@@ -748,9 +776,43 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run a local-only health check for private input, refresh, FX, and broker config presence.",
     )
     parser.add_argument(
+        "--snapshot-review",
+        action="store_true",
+        help="Write a local-only redacted review page before confirmed history write.",
+    )
+    parser.add_argument(
+        "--local-workbench",
+        action="store_true",
+        help="Write a static local Personal CFO workbench launcher.",
+    )
+    parser.add_argument(
         "--refresh-brokers",
         default="ibkr,moomoo,tiger",
         help="Comma-separated broker live reads for --run-net-worth-refresh, or 'none' for manual-only refresh.",
+    )
+    parser.add_argument(
+        "--confirm-snapshot-history-write",
+        action="store_true",
+        help=(
+            "For --run-net-worth-refresh, append the reviewed snapshot to "
+            "confirmed net worth history. Without this flag the snapshot is "
+            "generated for dashboard review only."
+        ),
+    )
+    parser.add_argument(
+        "--confirmed-history-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional confirmed history directory for --run-net-worth-refresh "
+            "integrity comparison before a confirmed history write."
+        ),
+    )
+    parser.add_argument(
+        "--local-app-port",
+        type=int,
+        default=8765,
+        help="Localhost port for --private-input-center-local-app.",
     )
     parser.add_argument(
         "--overwrite",
@@ -907,6 +969,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _manual_nav_to_provider_bundle_cli(args, parser)
     if args.private_input_center_form:
         return _private_input_center_form_cli(args, parser)
+    if args.private_input_center_local_app:
+        return _private_input_center_local_app_cli(args, parser)
     if args.init_private_input_center:
         return _init_private_input_center_cli(args, parser)
     if args.validate_private_input_center:
@@ -915,6 +979,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _private_input_center_to_snapshots_cli(args, parser)
     if args.net_worth_doctor:
         return _net_worth_doctor_cli(args, parser)
+    if args.snapshot_review:
+        return _snapshot_review_cli(args, parser)
+    if args.local_workbench:
+        return _local_workbench_cli(args, parser)
     if args.dashboard_v4:
         return _dashboard_v4_cli(args, parser)
     if args.run_net_worth_refresh:
@@ -1224,6 +1292,39 @@ def _private_input_center_form_cli(
     return 0
 
 
+def _private_input_center_local_app_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_private_input_center_cli_scope(
+        args, parser, "--private-input-center-local-app"
+    )
+    if args.input_file is None:
+        parser.error("--private-input-center-local-app requires --input-file")
+    if args.out_file is not None:
+        parser.error("--private-input-center-local-app does not use --out-file")
+    if not (1 <= args.local_app_port <= 65535):
+        parser.error("--local-app-port must be between 1 and 65535")
+    out_dir = args.out_dir or Path("reports/personal_cfo_agent/private_input_center_local")
+    url = f"http://127.0.0.1:{args.local_app_port}/"
+    print("Personal CFO Private Input Center local app v0.5.8 (offline)", flush=True)
+    print("External connections used: no", flush=True)
+    print("Broker live reads used: no", flush=True)
+    print(f"Local URL: {url}", flush=True)
+    print(f"Form output directory: {out_dir}", flush=True)
+    print(f"Target file name: {args.input_file.name}", flush=True)
+    print("Press Ctrl+C to stop the local app.", flush=True)
+    try:
+        serve_private_input_center_local_app(
+            input_file=args.input_file,
+            out_dir=out_dir,
+            port=args.local_app_port,
+        )
+    except KeyboardInterrupt:
+        print("Private input center local app stopped.", flush=True)
+        return 0
+    return 0
+
+
 def _init_private_input_center_cli(
     args: argparse.Namespace, parser: argparse.ArgumentParser
 ) -> int:
@@ -1300,11 +1401,17 @@ def _run_net_worth_refresh_cli(
         fx_rates_input=args.fx_rates_input,
         env=dict(os.environ),
         allow_live_read=args.allow_live_read,
+        confirm_snapshot_history_write=args.confirm_snapshot_history_write,
+        confirmed_history_dir=args.confirmed_history_dir,
     )
     for line in _format_net_worth_refresh_result(result):
         print(line)
     broker_failed = WarningCode.NET_WORTH_REFRESH_BROKER_READ_FAILED in result.warning_codes
-    return 0 if result.generated and not broker_failed else 1
+    integrity_blocked = (
+        args.confirm_snapshot_history_write
+        and WarningCode.INTEGRITY_GUARD_BLOCKED in result.warning_codes
+    )
+    return 0 if result.generated and not broker_failed and not integrity_blocked else 1
 
 
 def _net_worth_doctor_cli(
@@ -1330,6 +1437,32 @@ def _net_worth_doctor_cli(
     return 1 if any(code in result.warning_codes for code in blocking) else 0
 
 
+def _snapshot_review_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_snapshot_review_cli_scope(args, parser)
+    result = write_snapshot_review(refresh_dir=args.refresh_dir, out_dir=args.out_dir)
+    for line in _format_snapshot_review_result(result):
+        print(line)
+    return 0 if result.generated else 1
+
+
+def _local_workbench_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_local_workbench_cli_scope(args, parser)
+    result = write_local_workbench(
+        out_dir=args.out_dir or Path("reports/personal_cfo_agent/local_workbench"),
+        input_file=args.input_file,
+        refresh_dir=args.refresh_dir,
+        fx_rates_file=args.fx_rates_file,
+        dashboard_dir=args.dashboard_dir,
+    )
+    for line in _format_local_workbench_result(result):
+        print(line)
+    return 0 if result.generated else 1
+
+
 def _run_net_worth_refresh(
     *,
     input_file: Path,
@@ -1340,6 +1473,8 @@ def _run_net_worth_refresh(
     fx_rates_input: Path | None,
     env: dict[str, str],
     allow_live_read: bool,
+    confirm_snapshot_history_write: bool = False,
+    confirmed_history_dir: Path | None = None,
 ) -> NetWorthRefreshResult:
     warnings: list[WarningCode] = []
     broker_results: dict[str, RunnerResult] = {}
@@ -1347,7 +1482,14 @@ def _run_net_worth_refresh(
     provider_input_root = out_dir / "provider_inputs"
     merge_dir = out_dir / "merged"
     snapshot_dir = out_dir / "snapshots"
+    confirmed_snapshot_dir = out_dir / "snapshots_confirmed"
     dashboard_out_dir = out_dir / "dashboard"
+    integrity_guard_dir = out_dir / "integrity_guard"
+    snapshot_review_dir = out_dir / "snapshot_review"
+    effective_fx_rates_input = fx_rates_input or write_fx_rates_from_private_input_center(
+        input_file=input_file,
+        out_file=out_dir / "fx_rates_from_private_input.json",
+    )
 
     manual_result = private_input_center_to_snapshots(
         input_file=input_file,
@@ -1357,6 +1499,22 @@ def _run_net_worth_refresh(
     warnings.extend(manual_result.warning_codes)
     if not manual_result.generated:
         warnings.append(WarningCode.NET_WORTH_REFRESH_FAILED)
+        refresh_warnings = _dedupe_warning_codes(warnings)
+        data_quality_result = _write_refresh_data_quality(
+            output_dir=out_dir,
+            brokers=brokers,
+            broker_results=broker_results,
+            manual_result=manual_result,
+            merge_result=None,
+            snapshot_result=None,
+            dashboard_result=None,
+            fx_rates_input=effective_fx_rates_input,
+            upstream_warning_codes=refresh_warnings,
+        )
+        snapshot_review_result = write_snapshot_review(
+            refresh_dir=out_dir,
+            out_dir=snapshot_review_dir,
+        )
         return NetWorthRefreshResult(
             input_file=input_file,
             output_dir=out_dir,
@@ -1365,7 +1523,16 @@ def _run_net_worth_refresh(
             merge_result=None,
             snapshot_result=None,
             dashboard_result=None,
-            warning_codes=_dedupe_warning_codes(warnings),
+            data_quality_result=data_quality_result,
+            snapshot_review_result=snapshot_review_result,
+            snapshot_history_confirmed=False,
+            warning_codes=_dedupe_warning_codes(
+                [
+                    *refresh_warnings,
+                    *data_quality_result.warning_codes,
+                    *snapshot_review_result.warning_codes,
+                ]
+            ),
         )
 
     provider_input_root.mkdir(parents=True, exist_ok=True)
@@ -1390,6 +1557,7 @@ def _run_net_worth_refresh(
 
     merge_result = merge_provider_bundles(input_root=provider_input_root, out_dir=merge_dir)
     warnings.extend(merge_result.warning_codes)
+    _clear_generated_dir(snapshot_dir)
     snapshot_result = record_snapshot(
         merge_dir=merge_result.output_dir,
         dashboard_dir=dashboard_dir,
@@ -1399,6 +1567,22 @@ def _run_net_worth_refresh(
     warnings.extend(snapshot_result.warning_codes)
     if not snapshot_result.generated:
         warnings.append(WarningCode.NET_WORTH_REFRESH_FAILED)
+        refresh_warnings = _dedupe_warning_codes(warnings)
+        data_quality_result = _write_refresh_data_quality(
+            output_dir=out_dir,
+            brokers=brokers,
+            broker_results=broker_results,
+            manual_result=manual_result,
+            merge_result=merge_result,
+            snapshot_result=snapshot_result,
+            dashboard_result=None,
+            fx_rates_input=effective_fx_rates_input,
+            upstream_warning_codes=refresh_warnings,
+        )
+        snapshot_review_result = write_snapshot_review(
+            refresh_dir=out_dir,
+            out_dir=snapshot_review_dir,
+        )
         return NetWorthRefreshResult(
             input_file=input_file,
             output_dir=out_dir,
@@ -1407,23 +1591,115 @@ def _run_net_worth_refresh(
             merge_result=merge_result,
             snapshot_result=snapshot_result,
             dashboard_result=None,
-            warning_codes=_dedupe_warning_codes(warnings),
+            data_quality_result=data_quality_result,
+            snapshot_review_result=snapshot_review_result,
+            snapshot_history_confirmed=False,
+            warning_codes=_dedupe_warning_codes(
+                [
+                    *refresh_warnings,
+                    *data_quality_result.warning_codes,
+                    *snapshot_review_result.warning_codes,
+                ]
+            ),
         )
-
     dashboard_result = write_dashboard_v3(
         merge_dir=merge_result.output_dir,
         snapshot_dir=snapshot_result.output_dir or snapshot_dir,
         dashboard_dir=dashboard_dir,
         property_mortgage_dir=manual_result.property_output_dir,
         sg_snapshot_dir=manual_result.sg_output_dir,
-        fx_rates_input=fx_rates_input,
+        fx_rates_input=effective_fx_rates_input,
         out_dir=dashboard_out_dir,
     )
     warnings.extend(dashboard_result.warning_codes)
+    guard_input_warnings = _dedupe_warning_codes(warnings)
+    integrity_guard_result = run_net_worth_integrity_guard(
+        refresh_dir=out_dir,
+        out_dir=integrity_guard_dir,
+        providers_requested=brokers,
+        merge_result=merge_result,
+        snapshot_result=snapshot_result,
+        dashboard_result=dashboard_result,
+        fx_rates_file=effective_fx_rates_input,
+        upstream_warning_codes=guard_input_warnings,
+        confirmed_history_dir=confirmed_history_dir,
+    )
+    warnings.extend(integrity_guard_result.warning_codes)
+    snapshot_history_confirmed = False
+    if confirm_snapshot_history_write and integrity_guard_result.ready_to_confirm:
+        confirmed_snapshot_result = record_snapshot(
+            merge_dir=merge_result.output_dir,
+            dashboard_dir=dashboard_dir,
+            out_dir=confirmed_snapshot_dir,
+            snapshot_id=snapshot_id,
+        )
+        warnings.extend(confirmed_snapshot_result.warning_codes)
+        if not confirmed_snapshot_result.generated:
+            warnings.append(WarningCode.NET_WORTH_REFRESH_FAILED)
+            refresh_warnings = _dedupe_warning_codes(warnings)
+            data_quality_result = _write_refresh_data_quality(
+                output_dir=out_dir,
+                brokers=brokers,
+                broker_results=broker_results,
+                manual_result=manual_result,
+                merge_result=merge_result,
+                snapshot_result=confirmed_snapshot_result,
+                dashboard_result=dashboard_result,
+                fx_rates_input=effective_fx_rates_input,
+                upstream_warning_codes=refresh_warnings,
+                integrity_guard_result=integrity_guard_result,
+            )
+            snapshot_review_result = write_snapshot_review(
+                refresh_dir=out_dir,
+                out_dir=snapshot_review_dir,
+            )
+            return NetWorthRefreshResult(
+                input_file=input_file,
+                output_dir=out_dir,
+                manual_result=manual_result,
+                broker_results=broker_results,
+                merge_result=merge_result,
+                snapshot_result=confirmed_snapshot_result,
+                dashboard_result=dashboard_result,
+                data_quality_result=data_quality_result,
+                integrity_guard_result=integrity_guard_result,
+                snapshot_review_result=snapshot_review_result,
+                snapshot_history_confirmed=False,
+                warning_codes=_dedupe_warning_codes(
+                    [
+                        *refresh_warnings,
+                        *data_quality_result.warning_codes,
+                        *snapshot_review_result.warning_codes,
+                    ]
+                ),
+            )
+        _replace_generated_dir(source_dir=confirmed_snapshot_dir, target_dir=snapshot_dir)
+        snapshot_result = confirmed_snapshot_result
+        snapshot_history_confirmed = True
+        warnings.append(WarningCode.NET_WORTH_REFRESH_SNAPSHOT_HISTORY_CONFIRMED)
+    else:
+        warnings.append(WarningCode.NET_WORTH_REFRESH_SNAPSHOT_PENDING_REVIEW)
     completion = (
         WarningCode.NET_WORTH_REFRESH_GENERATED_WITH_WARNINGS
         if warnings
         else WarningCode.NET_WORTH_REFRESH_GENERATED_OK
+    )
+    refresh_warnings = _dedupe_warning_codes([*warnings, completion])
+    data_quality_result = _write_refresh_data_quality(
+        output_dir=out_dir,
+        brokers=brokers,
+        broker_results=broker_results,
+        manual_result=manual_result,
+        merge_result=merge_result,
+        snapshot_result=snapshot_result,
+        dashboard_result=dashboard_result,
+        fx_rates_input=effective_fx_rates_input,
+        upstream_warning_codes=refresh_warnings,
+        integrity_guard_result=integrity_guard_result,
+    )
+    snapshot_review_result = write_snapshot_review(
+        refresh_dir=out_dir,
+        out_dir=snapshot_review_dir,
     )
     return NetWorthRefreshResult(
         input_file=input_file,
@@ -1433,8 +1709,143 @@ def _run_net_worth_refresh(
         merge_result=merge_result,
         snapshot_result=snapshot_result,
         dashboard_result=dashboard_result,
-        warning_codes=_dedupe_warning_codes([*warnings, completion]),
+        data_quality_result=data_quality_result,
+        integrity_guard_result=integrity_guard_result,
+        snapshot_review_result=snapshot_review_result,
+        snapshot_history_confirmed=snapshot_history_confirmed,
+        warning_codes=_dedupe_warning_codes(
+            [
+                *refresh_warnings,
+                *data_quality_result.warning_codes,
+                *snapshot_review_result.warning_codes,
+            ]
+        ),
     )
+
+
+def _write_refresh_data_quality(
+    *,
+    output_dir: Path,
+    brokers: list[str],
+    broker_results: dict[str, RunnerResult],
+    manual_result: PrivateInputCenterSnapshotResult | None,
+    merge_result: MergeResult | None,
+    snapshot_result: SnapshotStoreResult | None,
+    dashboard_result: DashboardV3Result | None,
+    fx_rates_input: Path | None,
+    upstream_warning_codes: list[WarningCode],
+    integrity_guard_result: NetWorthIntegrityGuardResult | None = None,
+) -> DataQualitySummaryResult:
+    providers_succeeded = [
+        provider
+        for provider, result in sorted(broker_results.items())
+        if result.output_dir is not None and bool(result.normalized_assets)
+    ]
+    providers_failed = [
+        provider for provider in sorted(brokers) if provider not in providers_succeeded
+    ]
+    fx_file_present = bool(fx_rates_input is not None and fx_rates_input.exists())
+    fx_complete = _refresh_fx_complete(
+        fx_rates_input=fx_rates_input,
+        merge_result=merge_result,
+    )
+    stale_or_mixed_date_warning_codes = [
+        code.value
+        for code in upstream_warning_codes
+        if "STALE" in code.value or "MIXED_DATE" in code.value
+    ]
+    manual_layer_status = {
+        "manual_input_converted": bool(manual_result and manual_result.generated),
+        "manual_nav": bool(
+            manual_result and manual_result.manual_nav_result and manual_result.manual_nav_result.generated
+        ),
+        "property_mortgage": bool(
+            manual_result and manual_result.property_result and manual_result.property_result.generated
+        ),
+        "sg_retirement_tax": bool(
+            manual_result and manual_result.sg_result and manual_result.sg_result.generated
+        ),
+    }
+    return write_data_quality_summary(
+        out_dir=output_dir,
+        providers_requested=brokers,
+        providers_succeeded=providers_succeeded,
+        providers_failed=providers_failed,
+        manual_layer_status=manual_layer_status,
+        account_nav_row_count=merge_result.account_nav_row_count if merge_result else 0,
+        position_row_count=merge_result.position_row_count if merge_result else 0,
+        snapshot_generated=bool(snapshot_result and snapshot_result.generated),
+        fx_file_present=fx_file_present,
+        fx_complete=fx_complete,
+        stale_or_mixed_date_warning_codes=stale_or_mixed_date_warning_codes,
+        dashboard_generated=bool(dashboard_result and dashboard_result.generated),
+        upstream_warning_codes=upstream_warning_codes,
+        integrity_guard_generated=bool(
+            integrity_guard_result and integrity_guard_result.generated
+        ),
+        integrity_ready_to_confirm=bool(
+            integrity_guard_result and integrity_guard_result.ready_to_confirm
+        ),
+        integrity_blocking_warning_codes=[
+            code.value
+            for code in (
+                integrity_guard_result.blocking_warning_codes
+                if integrity_guard_result
+                else []
+            )
+        ],
+    )
+
+
+def _refresh_fx_complete(
+    *, fx_rates_input: Path | None, merge_result: MergeResult | None
+) -> bool:
+    if fx_rates_input is None or not fx_rates_input.exists() or merge_result is None:
+        return False
+    try:
+        payload = json.loads(fx_rates_input.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict) or not str(payload.get("base_currency", "")).strip():
+        return False
+    rates = payload.get("rates_to_base")
+    if not isinstance(rates, dict):
+        return False
+    covered = {
+        str(currency).strip().upper()
+        for currency, value in rates.items()
+        if str(currency).strip()
+        and (parsed_value := _parse_optional_float(value)) is not None
+        and parsed_value > 0
+    }
+    required = _refresh_account_nav_currencies(merge_result.output_dir)
+    return bool(required) and required <= covered
+
+
+def _parse_optional_float(value: object) -> float | None:
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _refresh_account_nav_currencies(merge_dir: Path) -> set[str]:
+    path = merge_dir / "merged_account_nav_ledger.csv"
+    if not path.exists():
+        return set()
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return set()
+    return {
+        str(row.get("base_currency", "")).strip().upper()
+        for row in rows
+        if str(row.get("base_currency", "")).strip()
+    }
 
 
 def _run_live_provider_refresh(
@@ -1466,6 +1877,16 @@ def _copy_provider_bundle(*, source_dir: Path, target_dir: Path) -> None:
     for path in source_dir.iterdir():
         if path.is_file():
             shutil.copy2(path, target_dir / path.name)
+
+
+def _clear_generated_dir(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path)
+
+
+def _replace_generated_dir(*, source_dir: Path, target_dir: Path) -> None:
+    _clear_generated_dir(target_dir)
+    shutil.copytree(source_dir, target_dir)
 
 
 def _parse_refresh_brokers(
@@ -1523,9 +1944,13 @@ def _validate_net_worth_refresh_cli_scope(
         or args.validate_manual_nav_input
         or args.manual_nav_to_provider_bundle
         or args.private_input_center_form
+        or args.private_input_center_local_app
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
+        or args.net_worth_doctor
+        or args.snapshot_review
+        or args.local_workbench
     ):
         parser.error("--run-net-worth-refresh cannot be combined with other workflows")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
@@ -1581,10 +2006,13 @@ def _validate_net_worth_doctor_cli_scope(
         or args.validate_manual_nav_input
         or args.manual_nav_to_provider_bundle
         or args.private_input_center_form
+        or args.private_input_center_local_app
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
         or args.run_net_worth_refresh
+        or args.snapshot_review
+        or args.local_workbench
     ):
         parser.error("--net-worth-doctor cannot be combined with other workflows")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
@@ -1612,16 +2040,111 @@ def _validate_net_worth_doctor_cli_scope(
         parser.error("--net-worth-doctor inspects existing unified inputs and refresh dirs")
 
 
+def _validate_snapshot_review_cli_scope(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> None:
+    if args.refresh_dir is None:
+        parser.error("--snapshot-review requires --refresh-dir")
+    if args.out_dir is None:
+        parser.error("--snapshot-review requires --out-dir")
+    if args.allow_live_read:
+        parser.error("--snapshot-review cannot be combined with --allow-live-read")
+    if args.provider != "all":
+        parser.error("--snapshot-review uses --provider all")
+    if args.readiness_check or args.connection_diagnostics:
+        parser.error("--snapshot-review cannot be combined with readiness or diagnostics")
+    if args.account_discovery or args.read_context_probe:
+        parser.error("--snapshot-review cannot be combined with Moomoo discovery probes")
+    if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
+        parser.error("--snapshot-review cannot be combined with data diagnostics")
+    if (
+        args.merge_provider_bundles
+        or args.dashboard_v2
+        or args.dashboard_v3
+        or args.dashboard_v4
+        or args.dashboard
+        or args.record_snapshot
+        or args.property_mortgage_snapshot
+        or args.sg_manual_snapshot
+        or args.init_private_input_kit
+        or args.validate_private_inputs
+        or args.run_manual_snapshot_chain
+        or args.init_manual_nav_input
+        or args.validate_manual_nav_input
+        or args.manual_nav_to_provider_bundle
+        or args.private_input_center_form
+        or args.private_input_center_local_app
+        or args.init_private_input_center
+        or args.validate_private_input_center
+        or args.private_input_center_to_snapshots
+        or args.run_net_worth_refresh
+        or args.net_worth_doctor
+        or args.local_workbench
+    ):
+        parser.error("--snapshot-review cannot be combined with other workflows")
+    if args.input_file is not None or args.input_dir is not None or args.out_file is not None:
+        parser.error("--snapshot-review uses --refresh-dir and --out-dir")
+    if args.fx_rates_file is not None or args.fx_rates_input is not None:
+        parser.error("--snapshot-review does not use FX input files")
+
+
+def _validate_local_workbench_cli_scope(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> None:
+    if args.allow_live_read:
+        parser.error("--local-workbench cannot be combined with --allow-live-read")
+    if args.provider != "all":
+        parser.error("--local-workbench uses --provider all")
+    if args.readiness_check or args.connection_diagnostics:
+        parser.error("--local-workbench cannot be combined with readiness or diagnostics")
+    if args.account_discovery or args.read_context_probe:
+        parser.error("--local-workbench cannot be combined with Moomoo discovery probes")
+    if args.ibkr_data_diagnostics or args.moomoo_data_diagnostics or args.tiger_data_diagnostics:
+        parser.error("--local-workbench cannot be combined with data diagnostics")
+    if (
+        args.merge_provider_bundles
+        or args.dashboard_v2
+        or args.dashboard_v3
+        or args.dashboard_v4
+        or args.dashboard
+        or args.record_snapshot
+        or args.property_mortgage_snapshot
+        or args.sg_manual_snapshot
+        or args.init_private_input_kit
+        or args.validate_private_inputs
+        or args.run_manual_snapshot_chain
+        or args.init_manual_nav_input
+        or args.validate_manual_nav_input
+        or args.manual_nav_to_provider_bundle
+        or args.private_input_center_form
+        or args.private_input_center_local_app
+        or args.init_private_input_center
+        or args.validate_private_input_center
+        or args.private_input_center_to_snapshots
+        or args.run_net_worth_refresh
+        or args.net_worth_doctor
+        or args.snapshot_review
+    ):
+        parser.error("--local-workbench cannot be combined with other workflows")
+    if args.input_dir is not None or args.out_file is not None:
+        parser.error("--local-workbench uses --input-file/--refresh-dir/--fx-rates-file/--dashboard-dir/--out-dir")
+    if args.fx_rates_input is not None:
+        parser.error("--local-workbench uses --fx-rates-file, not --fx-rates-input")
+
+
 def _validate_private_input_center_cli_scope(
     args: argparse.Namespace, parser: argparse.ArgumentParser, command_name: str
 ) -> None:
     commands = [
         args.private_input_center_form,
+        args.private_input_center_local_app,
         args.init_private_input_center,
         args.validate_private_input_center,
         args.private_input_center_to_snapshots,
         args.run_net_worth_refresh,
         args.net_worth_doctor,
+        args.snapshot_review,
+        args.local_workbench,
     ]
     if sum(1 for enabled in commands if enabled) > 1:
         parser.error("private input center commands cannot be combined")
@@ -1650,6 +2173,8 @@ def _validate_private_input_center_cli_scope(
         or args.manual_nav_to_provider_bundle
         or args.run_net_worth_refresh
         or args.net_worth_doctor
+        or args.snapshot_review
+        or args.local_workbench
     ):
         parser.error(f"{command_name} cannot be combined with other offline workflows")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
@@ -1679,6 +2204,8 @@ def _validate_manual_nav_cli_scope(
         args.manual_nav_to_provider_bundle,
         args.run_net_worth_refresh,
         args.net_worth_doctor,
+        args.snapshot_review,
+        args.local_workbench,
     ]
     if sum(1 for enabled in manual_nav_commands if enabled) > 1:
         parser.error("manual NAV commands cannot be combined")
@@ -1703,11 +2230,14 @@ def _validate_manual_nav_cli_scope(
         or args.validate_private_inputs
         or args.run_manual_snapshot_chain
         or args.private_input_center_form
+        or args.private_input_center_local_app
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
         or args.run_net_worth_refresh
         or args.net_worth_doctor
+        or args.snapshot_review
+        or args.local_workbench
     ):
         parser.error(f"{command_name} cannot be combined with other offline workflows")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
@@ -1749,11 +2279,14 @@ def _validate_private_input_cli_scope(
         or args.property_mortgage_snapshot
         or args.sg_manual_snapshot
         or args.private_input_center_form
+        or args.private_input_center_local_app
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
         or args.run_net_worth_refresh
         or args.net_worth_doctor
+        or args.snapshot_review
+        or args.local_workbench
     ):
         parser.error(f"{command_name} cannot be combined with report generators")
     if args.write_manual_template is not None or args.validate_manual_snapshot is not None:
@@ -1876,6 +2409,7 @@ def _dashboard_v4_cli(args: argparse.Namespace, parser: argparse.ArgumentParser)
         or args.validate_manual_nav_input
         or args.manual_nav_to_provider_bundle
         or args.private_input_center_form
+        or args.private_input_center_local_app
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -1893,9 +2427,22 @@ def _dashboard_v4_cli(args: argparse.Namespace, parser: argparse.ArgumentParser)
         fx_rates_file=args.fx_rates_file,
         out_dir=args.out_dir,
     )
+    current_dir = _sync_dashboard_current(result)
     for line in _format_dashboard_v4_result(result):
         print(line)
+    if current_dir is not None:
+        print(f"Current dashboard directory: {current_dir}")
     return 0 if result.generated else 1
+
+
+def _sync_dashboard_current(result: DashboardV4Result) -> Path | None:
+    if not result.generated or result.output_dir is None:
+        return None
+    current_dir = Path("reports/personal_cfo_agent/dashboard_current")
+    if result.output_dir.resolve() == current_dir.resolve():
+        return current_dir
+    _replace_generated_dir(source_dir=result.output_dir, target_dir=current_dir)
+    return current_dir
 
 
 def _record_snapshot_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
@@ -2204,6 +2751,22 @@ def _format_net_worth_refresh_result(result: NetWorthRefreshResult) -> list[str]
     provider_count = len(result.merge_result.provider_counts) if result.merge_result else 0
     dashboard_dir = result.dashboard_result.output_dir if result.dashboard_result else None
     snapshot_dir = result.snapshot_result.output_dir if result.snapshot_result else None
+    integrity_ready = bool(
+        result.integrity_guard_result and result.integrity_guard_result.ready_to_confirm
+    )
+    integrity_blocking = (
+        ", ".join(
+            code.value for code in result.integrity_guard_result.blocking_warning_codes
+        )
+        if result.integrity_guard_result
+        else "None"
+    ) or "None"
+    review_snapshot_dir = (
+        result.snapshot_review_result.output_dir
+        if result.snapshot_review_result
+        else result.output_dir / "snapshot_review"
+    )
+    confirmed_snapshot_dir = result.output_dir / "snapshots_confirmed"
     lines = [
         "Personal CFO local net worth refresh v0.5.9",
         f"Input file: {result.input_file}",
@@ -2214,11 +2777,17 @@ def _format_net_worth_refresh_result(result: NetWorthRefreshResult) -> list[str]
         f"Manual layers generated: {_yes_no(bool(result.manual_result and result.manual_result.generated))}",
         f"Merge generated: {_yes_no(result.merge_result is not None)}",
         f"Snapshot generated: {_yes_no(bool(result.snapshot_result and result.snapshot_result.generated))}",
+        f"Integrity guard generated: {_yes_no(bool(result.integrity_guard_result and result.integrity_guard_result.generated))}",
+        f"Integrity ready to confirm history: {_yes_no(integrity_ready)}",
+        f"Integrity blocking warning codes: {integrity_blocking}",
+        f"Snapshot history write confirmed: {_yes_no(result.snapshot_history_confirmed)}",
         f"Dashboard generated: {_yes_no(bool(result.dashboard_result and result.dashboard_result.generated))}",
         f"Account NAV rows: {account_rows}",
         f"Provider count: {provider_count}",
         f"Position rows: {position_rows}",
         f"Snapshot output directory: {snapshot_dir or ''}",
+        f"Snapshot review directory: {review_snapshot_dir}",
+        f"Confirmed history directory: {confirmed_snapshot_dir if confirmed_snapshot_dir.exists() else ''}",
         f"Dashboard output directory: {dashboard_dir or ''}",
         f"Warning codes: {warnings}",
     ]
@@ -2226,6 +2795,30 @@ def _format_net_worth_refresh_result(result: NetWorthRefreshResult) -> list[str]
         lines.append(
             "Dashboard files: "
             + ", ".join(path.name for path in sorted(result.dashboard_result.output_paths.values()))
+        )
+    if result.data_quality_result and result.data_quality_result.output_paths:
+        lines.append(
+            "Data quality files: "
+            + ", ".join(
+                path.name
+                for path in sorted(result.data_quality_result.output_paths.values())
+            )
+        )
+    if result.integrity_guard_result and result.integrity_guard_result.output_paths:
+        lines.append(
+            "Integrity guard files: "
+            + ", ".join(
+                path.name
+                for path in sorted(result.integrity_guard_result.output_paths.values())
+            )
+        )
+    if result.snapshot_review_result and result.snapshot_review_result.output_paths:
+        lines.append(
+            "Snapshot review files: "
+            + ", ".join(
+                path.name
+                for path in sorted(result.snapshot_review_result.output_paths.values())
+            )
         )
     return lines
 
@@ -2251,6 +2844,36 @@ def _format_net_worth_doctor_result(result: NetWorthDoctorResult) -> list[str]:
         f"FX present: {_yes_no(result.fx_present)}",
         f"FX complete: {_yes_no(result.fx_complete)}",
         f"Broker config presence: {brokers}",
+        f"Output files: {files}",
+        f"Warning codes: {warnings}",
+    ]
+
+
+def _format_snapshot_review_result(result: SnapshotReviewResult) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    files = ", ".join(path.name for path in sorted(result.output_paths.values())) or "None"
+    return [
+        "Personal CFO snapshot review v0.6.6 (offline)",
+        "External connections used: no",
+        "Broker live reads used: no",
+        f"Refresh directory: {result.refresh_dir}",
+        f"Output directory: {result.output_dir}",
+        f"Review generated: {_yes_no(result.generated)}",
+        f"Ready to confirm history: {_yes_no(result.ready_to_confirm)}",
+        f"Output files: {files}",
+        f"Warning codes: {warnings}",
+    ]
+
+
+def _format_local_workbench_result(result: LocalWorkbenchResult) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    files = ", ".join(path.name for path in sorted(result.output_paths.values())) or "None"
+    return [
+        "Personal CFO local workbench v0.6.6 (offline)",
+        "External connections used: no",
+        "Broker live reads used: no",
+        f"Output directory: {result.output_dir}",
+        f"Workbench generated: {_yes_no(result.generated)}",
         f"Output files: {files}",
         f"Warning codes: {warnings}",
     ]
@@ -2372,6 +2995,7 @@ def _format_dashboard_v4_result(result: DashboardV4Result) -> list[str]:
         f"Asset bucket rows: {result.bucket_count}",
         f"Bucket history rows: {result.history_count}",
         f"Withdrawal rows: {result.withdrawal_row_count}",
+        f"FIRE projection rows: {result.fire_projection_row_count}",
         f"Warning codes: {warnings}",
     ]
     if result.output_paths:

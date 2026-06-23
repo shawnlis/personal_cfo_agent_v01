@@ -17,6 +17,7 @@ from personal_cfo_agent.config import (
 )
 from personal_cfo_agent.models import WarningCode
 from personal_cfo_agent.private_input_center import validate_private_input_center
+from personal_cfo_agent.warning_text import warning_details, warning_lines
 
 
 SCHEMA_VERSION = "v0.6.2"
@@ -88,6 +89,7 @@ def run_net_worth_doctor(
         "fx": fx_summary,
         "broker_config_presence": broker_summary,
         "warning_codes": [code.value for code in warnings],
+        "warning_details": warning_details(warnings),
     }
     output_paths["summary"].write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -293,10 +295,7 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
 
 def _write_warnings(path: Path, warnings: list[WarningCode]) -> None:
     lines = ["# Net Worth Doctor Warnings", ""]
-    if warnings:
-        lines.extend(f"- `{code.value}`" for code in warnings)
-    else:
-        lines.append("- None")
+    lines.extend(warning_lines(warnings))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -341,7 +340,7 @@ def _report(summary: dict[str, Any]) -> str:
         "",
         "## Warning Codes",
         "",
-        *[f"- `{code}`" for code in warnings],
+        *warning_lines(warnings),
     ]
     return "\n".join(lines) + "\n"
 

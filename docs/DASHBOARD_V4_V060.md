@@ -20,7 +20,9 @@ python .\scripts\personal_cfo_agent.py `
 
 - `merged/`
 - `snapshots/`
+- optional `snapshots_confirmed/`
 - `dashboard/`
+- optional `integrity_guard/`
 - `manual_layers/property_mortgage/`
 - `manual_layers/sg_retirement_tax/`
 
@@ -60,6 +62,7 @@ Dashboard v4 writes these files under the requested ignored `reports/` output pa
 - `dashboard_v060_summary.json`
 - `asset_bucket_summary.csv`
 - `liquid_withdrawal_cashflow.csv`
+- `fire_target_projection.csv`
 - `net_worth_bucket_history.csv`
 - `dashboard_v060_warnings.md`
 - `asset_bucket_chart.svg`
@@ -73,13 +76,39 @@ The HTML and SVG outputs are static/local. They do not load external JavaScript,
 Dashboard v4 focuses on visual readability:
 
 - CFO cockpit
+- source coverage and snapshot history review status
+- integrity status for confirmed history writes
 - fixed assets, retirement accounts, liquid investment assets, and review bucket
 - explicit FX status
 - liquid-asset withdrawal cashflow ladder at 3.0%, 3.5%, and 4.0%
+- FIRE target scenario table from current liquid investment assets to a USD 20,000,000 target, using USD 400,000 annual investment and 10%, 15%, 20%, 25%, and 30% annual return assumptions
 - bucketed net worth history
-- review queue for unclassified assets and missing FX
 
 The withdrawal cashflow rows are deterministic calculations from the liquid investment asset bucket only. They are planning math for local review, not recommendations.
+
+The FIRE target scenario also uses the liquid investment asset bucket only. If the dashboard base currency is not USD, the scenario requires an explicit local USD FX rate. Missing USD FX causes the scenario table to be skipped rather than silently converting.
+
+The dashboard scenario table shows approximate fractional years to two decimal places. The companion CSV also preserves the conservative full-year count and projected value at that full year for audit.
+
+## Snapshot History Confirmation
+
+Dashboard v4 is intended to be reviewed before long-term net worth history is
+updated. A normal `--run-net-worth-refresh` creates a pending snapshot under
+`snapshots/` and Dashboard v4 displays a Snapshot History Review section. The
+confirmed history folder, `snapshots_confirmed/`, is written only when the
+refresh is rerun with `--confirm-snapshot-history-write` after broker coverage,
+warning codes, and totals have been reviewed.
+
+## Integrity Status
+
+When the refresh directory contains v0.6.5 guard outputs, Dashboard v4 displays
+an Integrity Status section. It reports whether the refresh is ready to confirm
+and lists blocking warning codes. The section is redacted and does not display
+raw account IDs, account hashes, exact private input contents, credentials, or
+broker raw payloads.
+
+If the guard is missing or blocked, confirmed history should not be updated from
+that refresh.
 
 ## Warning Codes
 
@@ -90,6 +119,9 @@ The withdrawal cashflow rows are deterministic calculations from the liquid inve
 - `DASHBOARD_V4_FX_CONVERSION_SKIPPED`
 - `DASHBOARD_V4_BUCKET_HISTORY_LIMITED`
 - `DASHBOARD_V4_WITHDRAWAL_CASHFLOW_GENERATED`
+- `DASHBOARD_V4_FIRE_TARGET_INPUT_MISSING`
+- `DASHBOARD_V4_FIRE_TARGET_FX_MISSING`
+- `DASHBOARD_V4_FIRE_TARGET_GENERATED`
 - `DASHBOARD_V4_GENERATED_OK`
 - `DASHBOARD_V4_GENERATED_WITH_WARNINGS`
 

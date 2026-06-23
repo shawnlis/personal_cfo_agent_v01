@@ -9,10 +9,13 @@ from pathlib import Path
 
 from personal_cfo_agent.models import WarningCode
 from personal_cfo_agent.private_input_center import (
+    build_private_input_center_form_html,
     generate_private_input_center_form,
     init_private_input_center,
     private_input_center_to_snapshots,
+    save_private_input_center_payload,
     validate_private_input_center,
+    write_fx_rates_from_private_input_center,
 )
 from personal_cfo_agent.provider_bundle_merge import merge_provider_bundles
 from personal_cfo_agent.runner import build_arg_parser, main
@@ -29,11 +32,14 @@ def test_private_input_center_cli_options_exist() -> None:
     option_strings = {option for action in parser._actions for option in action.option_strings}
 
     assert "--private-input-center-form" in option_strings
+    assert "--private-input-center-local-app" in option_strings
     assert "--init-private-input-center" in option_strings
     assert "--validate-private-input-center" in option_strings
     assert "--private-input-center-to-snapshots" in option_strings
     assert "--run-net-worth-refresh" in option_strings
     assert "--refresh-brokers" in option_strings
+    assert "--snapshot-review" in option_strings
+    assert "--local-workbench" in option_strings
 
 
 def test_private_input_center_form_generation_is_static_local(tmp_path: Path) -> None:
@@ -46,17 +52,32 @@ def test_private_input_center_form_generation_is_static_local(tmp_path: Path) ->
     assert "http://" not in html
     assert "https://" not in html
     assert "<script" in html
-    assert "fetch(" not in html
+    assert "fetch(local_save_endpoint" in html
     assert "xmlhttprequest" not in html
     assert "sendbeacon" not in html
     assert "upload" not in html
     assert "preview json" in html
-    assert "download json" in html
-    assert "save json file" in html
+    assert "save to local json" in html
+    assert "download json" not in html
+    assert "save json file" not in html
+    assert "download_json" not in html
+    assert "save_json" not in html
+    assert "showsavefilepicker" not in html
     assert "global snapshot" in html
     assert "snapshot_date" in html
     assert "income tax payable" in html
     assert 'id="income_tax_payable"' in html
+    assert "cpf ia" in html
+    assert 'id="cpf_ia"' in html
+    assert "cpf balance" in html
+    assert 'id="cpf_balance"' in html
+    assert "cpf retirement assets" not in html
+    assert "amountsum([\"cpf_ia\", \"cpf_balance\"])" in html
+    assert "fx rates" in html
+    assert 'id="fx_usd_to_base"' in html
+    assert 'id="fx_cny_to_base"' in html
+    assert 'id="fx_hkd_to_base"' in html
+    assert "optionalamount(\"fx_usd_to_base\")" in html
     assert "value of unvested shares" in html
     assert 'id="unvested_shares_nav"' in html
     assert "webull nav" in html
@@ -74,6 +95,41 @@ def test_private_input_center_form_generation_is_static_local(tmp_path: Path) ->
     assert 'for="loan_id_hash"' not in html
     assert 'id="loan_id_hash"' not in html
     assert WarningCode.PRIVATE_INPUT_CENTER_FORM_GENERATED in result.warning_codes
+
+
+def test_private_input_center_form_can_embed_local_save_endpoint() -> None:
+    html = build_private_input_center_form_html(
+        local_save_endpoint="http://127.0.0.1:8765/save"
+    )
+
+    assert 'const LOCAL_SAVE_ENDPOINT = "http://127.0.0.1:8765/save";' in html
+    assert "https://" not in html
+    assert "sendbeacon" not in html.lower()
+    assert "xmlhttprequest" not in html.lower()
+
+
+def test_private_input_center_local_save_validates_before_write(tmp_path: Path) -> None:
+    target = tmp_path / "personal_cfo_input.local.json"
+    result = save_private_input_center_payload(
+        input_file=target,
+        payload_text=TEMPLATE.read_text(encoding="utf-8"),
+    )
+
+    assert result.saved is True
+    assert target.exists()
+    assert PRIVATE_VALUE_MARKER not in repr(result)
+    assert WarningCode.PRIVATE_INPUT_CENTER_VALIDATION_WITH_WARNINGS in result.warning_codes
+
+
+def test_private_input_center_local_save_fails_closed_on_invalid_json(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "personal_cfo_input.local.json"
+    result = save_private_input_center_payload(input_file=target, payload_text="{")
+
+    assert result.saved is False
+    assert not target.exists()
+    assert WarningCode.PRIVATE_INPUT_CENTER_SCHEMA_INVALID in result.warning_codes
 
 
 def test_private_input_center_init_creates_and_does_not_overwrite(tmp_path: Path) -> None:
@@ -169,6 +225,77 @@ def test_private_input_center_maps_form_percent_ownership_for_property_snapshot(
     assert summary["property_equity_rows"][0]["owned_property_value"] == "1000.00"
     assert summary["property_equity_rows"][0]["equity"] == "750.00"
     assert summary["total_equity_by_currency"]["SGD"] == "750.00"
+
+
+def test_private_input_center_maps_cpf_ia_and_balance_to_total(
+    tmp_path: Path,
+) -> None:
+    input_file = _write_input(tmp_path)
+    payload = json.loads(input_file.read_text(encoding="utf-8"))
+    payload["cpf"][0]["cpf_ia"] = "1250.00"
+    payload["cpf"][0]["cpf_balance"] = "2750.00"
+    payload["cpf"][0]["total"] = "0.00"
+    input_file.write_text(json.dumps(payload), encoding="utf-8")
+    out_dir = tmp_path / "reports" / "private_input_center_cpf_split"
+
+    result = private_input_center_to_snapshots(
+        input_file=input_file,
+        out_dir=out_dir,
+        env={"CFO_ACCOUNT_HASH_SALT": "SYNTHETIC_TEST_SALT"},
+    )
+
+    rows = _read_csv(out_dir / "sg_retirement_tax" / "cpf_snapshot_ledger.csv")
+
+    assert result.generated is True
+    assert rows[0]["total"] == "4000.00"
+
+
+def test_private_input_center_extracts_positive_fx_rates_only(tmp_path: Path) -> None:
+    input_file = _write_input(tmp_path)
+    payload = json.loads(input_file.read_text(encoding="utf-8"))
+    payload["fx_rates"] = {
+        "base_currency": "SGD",
+        "rates_to_base": {
+            "SGD": "1.00",
+            "USD": "1.35",
+            "CNY": "",
+            "HKD": "0.00",
+        },
+    }
+    input_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    output = write_fx_rates_from_private_input_center(
+        input_file=input_file,
+        out_file=tmp_path / "fx_rates_from_input.json",
+    )
+
+    assert output is not None
+    exported = json.loads(output.read_text(encoding="utf-8"))
+    assert exported["base_currency"] == "SGD"
+    assert exported["rates_to_base"] == {"USD": "1.35", "SGD": "1.00"}
+    assert "CNY" not in exported["rates_to_base"]
+    assert "HKD" not in exported["rates_to_base"]
+    assert PRIVATE_VALUE_MARKER not in output.read_text(encoding="utf-8")
+
+
+def test_private_input_center_skips_fx_export_when_no_positive_cross_rate(
+    tmp_path: Path,
+) -> None:
+    input_file = _write_input(tmp_path)
+    payload = json.loads(input_file.read_text(encoding="utf-8"))
+    payload["fx_rates"] = {
+        "base_currency": "SGD",
+        "rates_to_base": {"SGD": "1.00", "USD": "", "CNY": "0.00"},
+    }
+    input_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    output = write_fx_rates_from_private_input_center(
+        input_file=input_file,
+        out_file=tmp_path / "fx_rates_from_input.json",
+    )
+
+    assert output is None
+    assert not (tmp_path / "fx_rates_from_input.json").exists()
 
 
 def test_private_input_center_validation_fails_missing_required_dates(

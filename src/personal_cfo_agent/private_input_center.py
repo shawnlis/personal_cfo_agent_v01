@@ -8,6 +8,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -32,6 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = REPO_ROOT / "templates" / "private_inputs"
 PRIVATE_INPUT_CENTER_EXAMPLE = TEMPLATE_DIR / "personal_cfo_input.example.json"
 PRIVATE_INPUT_CENTER_FORM_TEMPLATE = TEMPLATE_DIR / "personal_cfo_input_form.html"
+PRIVATE_INPUT_CENTER_SAVE_ENDPOINT_TOKEN = "__LOCAL_SAVE_ENDPOINT__"
 
 SECTION_KEYS = (
     "manual_nav_accounts",
@@ -112,6 +114,13 @@ class PrivateInputCenterValidationResult:
 
 
 @dataclass(frozen=True)
+class PrivateInputCenterLocalSaveResult:
+    input_file: Path
+    saved: bool
+    warning_codes: list[WarningCode] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class PrivateInputCenterSnapshotResult:
     input_file: Path
     output_dir: Path
@@ -128,12 +137,163 @@ class PrivateInputCenterSnapshotResult:
 def generate_private_input_center_form(*, out_dir: Path) -> PrivateInputCenterFormResult:
     out_dir.mkdir(parents=True, exist_ok=True)
     output_path = out_dir / "personal_cfo_input_form.html"
-    shutil.copyfile(PRIVATE_INPUT_CENTER_FORM_TEMPLATE, output_path)
+    output_path.write_text(
+        build_private_input_center_form_html(local_save_endpoint=""),
+        encoding="utf-8",
+    )
     return PrivateInputCenterFormResult(
         output_dir=out_dir,
         output_path=output_path,
         warning_codes=[WarningCode.PRIVATE_INPUT_CENTER_FORM_GENERATED],
     )
+
+
+def build_private_input_center_form_html(*, local_save_endpoint: str = "") -> str:
+    template = PRIVATE_INPUT_CENTER_FORM_TEMPLATE.read_text(encoding="utf-8")
+    return template.replace(
+        PRIVATE_INPUT_CENTER_SAVE_ENDPOINT_TOKEN,
+        _escape_javascript_string(local_save_endpoint),
+    )
+
+
+def save_private_input_center_payload(
+    *, input_file: Path, payload_text: str
+) -> PrivateInputCenterLocalSaveResult:
+    try:
+        payload = json.loads(payload_text)
+    except json.JSONDecodeError:
+        return PrivateInputCenterLocalSaveResult(
+            input_file=input_file,
+            saved=False,
+            warning_codes=[WarningCode.PRIVATE_INPUT_CENTER_SCHEMA_INVALID],
+        )
+    if not isinstance(payload, dict):
+        return PrivateInputCenterLocalSaveResult(
+            input_file=input_file,
+            saved=False,
+            warning_codes=[WarningCode.PRIVATE_INPUT_CENTER_SCHEMA_INVALID],
+        )
+
+    normalized = json.dumps(payload, indent=2)
+    with tempfile.TemporaryDirectory(prefix="personal_cfo_input_center_save_") as temp_name:
+        temp_file = Path(temp_name) / "personal_cfo_input.local.json"
+        temp_file.write_text(normalized, encoding="utf-8")
+        validation = validate_private_input_center(input_file=temp_file)
+    if not validation.valid:
+        return PrivateInputCenterLocalSaveResult(
+            input_file=input_file,
+            saved=False,
+            warning_codes=validation.warning_codes,
+        )
+
+    input_file.parent.mkdir(parents=True, exist_ok=True)
+    input_file.write_text(normalized + "\n", encoding="utf-8")
+    return PrivateInputCenterLocalSaveResult(
+        input_file=input_file,
+        saved=True,
+        warning_codes=validation.warning_codes,
+    )
+
+
+def serve_private_input_center_local_app(
+    *,
+    input_file: Path,
+    out_dir: Path | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+) -> None:
+    endpoint = f"http://{host}:{port}/save"
+    html = build_private_input_center_form_html(local_save_endpoint=endpoint)
+    if out_dir is not None:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "personal_cfo_input_form.html").write_text(html, encoding="utf-8")
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            return
+
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path in {"/", "/personal_cfo_input_form.html"}:
+                self._send_text(200, html, content_type="text/html; charset=utf-8")
+                return
+            if self.path == "/status":
+                self._send_json(
+                    200,
+                    {
+                        "local_save_ready": True,
+                        "target_file_name": input_file.name,
+                        "external_connections_used": False,
+                    },
+                )
+                return
+            self._send_json(404, {"error": "not_found"})
+
+        def do_POST(self) -> None:  # noqa: N802
+            if self.path != "/save":
+                self._send_json(404, {"error": "not_found"})
+                return
+            length_header = self.headers.get("Content-Length", "0")
+            try:
+                length = int(length_header)
+            except ValueError:
+                self._send_json(
+                    400,
+                    {
+                        "saved": False,
+                        "warning_codes": [
+                            WarningCode.PRIVATE_INPUT_CENTER_SCHEMA_INVALID.value
+                        ],
+                    },
+                )
+                return
+            if length <= 0 or length > 1_000_000:
+                self._send_json(
+                    400,
+                    {
+                        "saved": False,
+                        "warning_codes": [
+                            WarningCode.PRIVATE_INPUT_CENTER_SCHEMA_INVALID.value
+                        ],
+                    },
+                )
+                return
+            payload_text = self.rfile.read(length).decode("utf-8")
+            result = save_private_input_center_payload(
+                input_file=input_file,
+                payload_text=payload_text,
+            )
+            status = 200 if result.saved else 400
+            self._send_json(
+                status,
+                {
+                    "saved": result.saved,
+                    "target_file_name": input_file.name,
+                    "warning_codes": [code.value for code in result.warning_codes],
+                },
+            )
+
+        def _send_text(
+            self, status: int, text: str, *, content_type: str = "text/plain"
+        ) -> None:
+            body = text.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_json(self, status: int, payload: dict[str, Any]) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+    with ThreadingHTTPServer((host, port), Handler) as server:
+        server.serve_forever()
 
 
 def init_private_input_center(
@@ -315,6 +475,45 @@ def private_input_center_to_snapshots(
     )
 
 
+def write_fx_rates_from_private_input_center(
+    *, input_file: Path, out_file: Path
+) -> Path | None:
+    """Extract explicit local FX rates from the unified private input file."""
+
+    payload, _ = _load_payload(input_file)
+    if payload is None:
+        return None
+    fx_rates = payload.get("fx_rates")
+    if not isinstance(fx_rates, dict):
+        return None
+    base_currency = _clean(fx_rates.get("base_currency") or payload.get("base_currency")).upper()
+    rates = fx_rates.get("rates_to_base")
+    if not base_currency or not isinstance(rates, dict):
+        return None
+    clean_rates: dict[str, str] = {}
+    for currency, rate in rates.items():
+        currency_text = _clean(currency).upper()
+        rate_text = _clean(rate).replace(",", "")
+        rate_value = _parse_amount(rate_text)
+        if not currency_text or rate_value is None or rate_value <= 0:
+            continue
+        clean_rates[currency_text] = rate_text
+    clean_rates.setdefault(base_currency, "1.00")
+    if len(clean_rates) <= 1:
+        return None
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        out_file,
+        {
+            "base_currency": base_currency,
+            "rates_to_base": clean_rates,
+            "source_type": "local_private_input_center",
+            "review_required": True,
+        },
+    )
+    return out_file
+
+
 def _load_payload(path: Path) -> tuple[dict[str, Any] | None, list[WarningCode]]:
     if not path.exists():
         return None, [WarningCode.PRIVATE_INPUT_CENTER_INPUT_MISSING]
@@ -441,7 +640,7 @@ def _write_split_inputs(payload: dict[str, Any], out_dir: Path) -> dict[str, Pat
     )
     _write_json(paths["property"], {"properties": _property_rows_for_split(payload)})
     _write_json(paths["mortgage"], {"mortgages": _rows(payload, "mortgages")})
-    _write_json(paths["cpf"], {"cpf": _rows(payload, "cpf")})
+    _write_json(paths["cpf"], {"cpf": _cpf_rows_for_split(payload)})
     _write_json(paths["srs"], {"srs_accounts": _rows(payload, "srs")})
     _write_json(paths["tax"], {"tax_records": _rows(payload, "tax")})
     _write_json(paths["hdb_loan"], {"hdb_loans": _rows(payload, "hdb_loans")})
@@ -481,6 +680,18 @@ def _property_rows_for_split(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _cpf_rows_for_split(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in _rows(payload, "cpf"):
+        mapped = dict(row)
+        cpf_ia = _parse_amount(mapped.get("cpf_ia"))
+        cpf_balance = _parse_amount(mapped.get("cpf_balance"))
+        if cpf_ia is not None or cpf_balance is not None:
+            mapped["total"] = _number_to_text((cpf_ia or 0.0) + (cpf_balance or 0.0))
+        rows.append(mapped)
+    return rows
+
+
 def _property_ownership_for_split(value: object) -> str:
     text = _clean(value).replace(",", "")
     if not text or text.endswith("%"):
@@ -493,6 +704,20 @@ def _property_ownership_for_split(value: object) -> str:
         normalized = parsed / 100.0
         return f"{normalized:.6f}".rstrip("0").rstrip(".")
     return _clean(value)
+
+
+def _parse_amount(value: object) -> float | None:
+    text = _clean(value).replace(",", "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _number_to_text(value: float) -> str:
+    return f"{value:.2f}"
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -547,6 +772,10 @@ def _clean(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _escape_javascript_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _dedupe(codes: list[WarningCode]) -> list[WarningCode]:

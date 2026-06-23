@@ -166,8 +166,12 @@
     <h2>Singapore Manual Layers</h2>
     <div class="grid">
       <div>
-        <label for="cpf_total">CPF retirement assets</label>
-        <input id="cpf_total" inputmode="decimal" placeholder="0.00">
+        <label for="cpf_ia">CPF IA</label>
+        <input id="cpf_ia" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div>
+        <label for="cpf_balance">CPF Balance</label>
+        <input id="cpf_balance" inputmode="decimal" placeholder="0.00">
       </div>
       <div>
         <label for="srs_total">SRS retirement assets</label>
@@ -185,11 +189,28 @@
   </section>
 
   <section class="panel">
+    <h2>FX Rates</h2>
+    <div class="grid">
+      <div>
+        <label for="fx_usd_to_base">USD to base currency</label>
+        <input id="fx_usd_to_base" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div>
+        <label for="fx_cny_to_base">CNY to base currency</label>
+        <input id="fx_cny_to_base" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div>
+        <label for="fx_hkd_to_base">HKD to base currency</label>
+        <input id="fx_hkd_to_base" inputmode="decimal" placeholder="0.00">
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
     <h2>Export JSON</h2>
     <div class="actions">
-      <button type="button" id="preview_json">Preview JSON</button>
-      <button type="button" id="download_json" class="secondary">Download JSON</button>
-      <button type="button" id="save_json" class="secondary">Save JSON File</button>
+      <button type="button" id="save_local_json">Save to local JSON</button>
+      <button type="button" id="preview_json" class="secondary">Preview JSON</button>
     </div>
     <p id="status" class="status"></p>
     <textarea id="json_preview" spellcheck="false" aria-label="JSON preview"></textarea>
@@ -201,6 +222,7 @@
   "use strict";
 
   const $ = (name) => document.getElementById(name);
+  const LOCAL_SAVE_ENDPOINT = "__LOCAL_SAVE_ENDPOINT__";
   const today = new Date().toISOString().slice(0, 10);
   $("snapshot_date").value = today;
   $("tax_ya").value = String(new Date().getFullYear());
@@ -212,6 +234,20 @@
 
   function amount(id) {
     return value(id) || "0.00";
+  }
+
+  function optionalAmount(id) {
+    return value(id).replace(/,/g, "");
+  }
+
+  function amountNumber(id) {
+    const text = amount(id).replace(/,/g, "");
+    const parsed = Number(text);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function amountSum(ids) {
+    return ids.reduce((total, id) => total + amountNumber(id), 0).toFixed(2);
   }
 
   function boolAvailable(id) {
@@ -258,6 +294,17 @@
       base_currency: baseCurrency,
       source_type: "local_private_input_center",
       review_required: true,
+      fx_rates: {
+        base_currency: baseCurrency,
+        rates_to_base: {
+          [baseCurrency]: "1.00",
+          USD: optionalAmount("fx_usd_to_base"),
+          CNY: optionalAmount("fx_cny_to_base"),
+          HKD: optionalAmount("fx_hkd_to_base")
+        },
+        source_type: "local_private_input_center",
+        review_required: true
+      },
       manual_nav_accounts: [
         manualAccount("syfe_trade", "syfe_nav", "Syfe Trade manual NAV"),
         manualAccount("webull", "webull_nav", "Webull NAV"),
@@ -304,7 +351,9 @@
           sa: "",
           ma: "",
           ra: "",
-          total: amount("cpf_total"),
+          cpf_ia: amount("cpf_ia"),
+          cpf_balance: amount("cpf_balance"),
+          total: amountSum(["cpf_ia", "cpf_balance"]),
           currency: baseCurrency,
           source_type: "local_private_input_center",
           source_date: snapshotDate,
@@ -362,29 +411,28 @@
   }
 
   $("preview_json").addEventListener("click", renderJson);
-  $("download_json").addEventListener("click", function () {
-    const blob = new Blob([renderJson()], { type: "application/json" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = "personal_cfo_input.local.json";
-    link.click();
-    URL.revokeObjectURL(link.href);
-    $("status").textContent = "JSON download prepared locally.";
-  });
-  $("save_json").addEventListener("click", async function () {
+  $("save_local_json").addEventListener("click", async function () {
     const text = renderJson();
-    if (!window.showSaveFilePicker) {
-      $("status").textContent = "Use Download JSON, then place the file in private_inputs.";
+    if (!LOCAL_SAVE_ENDPOINT) {
+      $("status").textContent = "Run the local app command to save directly without choosing a file.";
       return;
     }
-    const handle = await window.showSaveFilePicker({
-      suggestedName: "personal_cfo_input.local.json",
-      types: [{ description: "JSON", accept: { "application/json": [".json"] } }]
-    });
-    const writable = await handle.createWritable();
-    await writable.write(text);
-    await writable.close();
-    $("status").textContent = "JSON saved locally.";
+    try {
+      const response = await fetch(LOCAL_SAVE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: text
+      });
+      const result = await response.json();
+      const warnings = (result.warning_codes || []).join(", ");
+      if (!response.ok || !result.saved) {
+        $("status").textContent = "Local JSON save failed. Warning codes: " + (warnings || "None");
+        return;
+      }
+      $("status").textContent = "Saved to local private input JSON. Warning codes: " + (warnings || "None");
+    } catch (error) {
+      $("status").textContent = "Local JSON save app is not reachable.";
+    }
   });
 })();
 </script>
