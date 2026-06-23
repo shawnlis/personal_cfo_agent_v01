@@ -944,6 +944,7 @@ def _markdown(
         "## CFO Cockpit",
         f"- Base currency: {summary['base_currency']}",
         f"- Asset buckets: {summary['display_asset_bucket_count']}",
+        *_cockpit_asset_lines(bucket_rows),
         "",
         "## Data Source Coverage",
         *_source_coverage_lines(summary.get("source_coverage", {})),
@@ -1019,19 +1020,41 @@ def _fire_target_table_lines(fire_rows: list[dict[str, str]]) -> list[str]:
 
 
 def _asset_bucket_total_line(bucket_rows: list[dict[str, str]]) -> str:
+    total = _asset_bucket_total(bucket_rows)
+    if total is None:
+        return ""
+    amount, currency = total
+    return f"- 总资产 / Total assets: {_display_number_text(amount)} {currency} (100.00%)"
+
+
+def _cockpit_asset_lines(bucket_rows: list[dict[str, str]]) -> list[str]:
+    lines: list[str] = []
+    total = _asset_bucket_total(bucket_rows)
+    if total is not None:
+        amount, currency = total
+        lines.append(f"- Total assets: {_display_number_text(amount)} {currency}")
+    liquid_amount, liquid_currency = _liquid_bucket_amount(bucket_rows)
+    if liquid_amount is not None and liquid_currency:
+        lines.append(
+            f"- Liquid investment assets: {_display_number_text(liquid_amount)} {liquid_currency}"
+        )
+    return lines
+
+
+def _asset_bucket_total(bucket_rows: list[dict[str, str]]) -> tuple[float, str] | None:
     amounts: list[float] = []
     currencies: set[str] = set()
     for row in bucket_rows:
         amount = _parse_number(row.get("amount"))
         currency = row.get("currency", "")
         if amount is None or not currency:
-            return ""
+            return None
         amounts.append(amount)
         currencies.add(currency)
     if not amounts or len(currencies) != 1:
-        return ""
+        return None
     currency = next(iter(currencies))
-    return f"- 总资产 / Total assets: {_display_number_text(sum(amounts))} {currency} (100.00%)"
+    return sum(amounts), currency
 
 
 def _liquid_bucket_amount(bucket_rows: list[dict[str, str]]) -> tuple[float | None, str]:

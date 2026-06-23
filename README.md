@@ -186,6 +186,10 @@ python .\scripts\personal_cfo_agent.py `
 Dashboard outputs stay under ignored `reports/` paths. HTML and SVG outputs are
 static/local.
 
+The current Dashboard v4 cockpit shows total assets and liquid investment assets
+first, then source coverage, data quality, integrity status, asset buckets,
+withdrawal cashflow, FIRE target math, and bucketed history.
+
 ## Local Net Worth Doctor
 
 Use the doctor when you want to check local readiness without any live reads:
@@ -251,6 +255,8 @@ Expected source contract behavior is documented in
 `docs/EXPECTED_SOURCE_CONTRACT_V067.md`.
 Snapshot history cleanup is documented in
 `docs/SNAPSHOT_HISTORY_MANAGER_V068.md`.
+Dashboard/input UX polish is documented in
+`docs/DASHBOARD_INPUT_UX_POLISH_V069.md`.
 
 ## Validation
 

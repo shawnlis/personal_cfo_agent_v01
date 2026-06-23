@@ -57,7 +57,11 @@ def test_private_input_center_form_generation_is_static_local(tmp_path: Path) ->
     assert "xmlhttprequest" not in html
     assert "sendbeacon" not in html
     assert "upload" not in html
-    assert "preview json" in html
+    assert "save input" in html
+    assert "advanced json preview" in html
+    assert "refresh preview" in html
+    assert 'id="json_preview_panel"' in html
+    assert "export json" not in html
     assert "save to local json" in html
     assert "download json" not in html
     assert "save json file" not in html

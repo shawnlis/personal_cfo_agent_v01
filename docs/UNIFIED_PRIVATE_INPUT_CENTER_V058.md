@@ -38,7 +38,10 @@ python .\scripts\personal_cfo_agent.py `
 ```
 
 The generated form is static and local. It has no external scripts, styles, browser beacon calls, or external data transmission.
-It includes only local inline JavaScript for building the JSON preview or posting to the optional localhost save app described below. The user-facing form intentionally keeps one main save path: `Save to local JSON`.
+It includes only local inline JavaScript for building an advanced JSON preview or posting to the optional localhost save app described below. The user-facing form intentionally keeps one main save path: `Save to local JSON`.
+
+As of v0.6.9, the JSON textarea is inside an `Advanced JSON preview` panel so
+the day-to-day form stays focused on the values the user edits.
 
 The form intentionally keeps the visible inputs short: one global snapshot date, one base currency, optional local FX rates, manual NAV rows, unvested shares, property value, mortgage balance, CPF IA, CPF Balance, SRS total, tax year, and income tax payable availability. CPF IA and CPF Balance are automatically summed into the downstream CPF `total` field so existing snapshot and dashboard schemas remain compatible. Internal hashes required by the JSON schema are generated automatically from local labels/dates; raw account IDs, raw addresses, NRIC/FIN, and government identifiers are not requested.
 

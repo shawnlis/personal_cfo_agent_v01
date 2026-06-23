@@ -88,6 +88,17 @@
     .compact {
       max-width: 860px;
     }
+    .json-preview {
+      margin-top: 12px;
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+    .json-preview summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
   </style>
 </head>
 <body>
@@ -249,13 +260,18 @@
   </section>
 
   <section class="panel">
-    <h2>Export JSON</h2>
+    <h2>Save Input</h2>
     <div class="actions">
       <button type="button" id="save_local_json">Save to local JSON</button>
-      <button type="button" id="preview_json" class="secondary">Preview JSON</button>
     </div>
     <p id="status" class="status"></p>
-    <textarea id="json_preview" spellcheck="false" aria-label="JSON preview"></textarea>
+    <details id="json_preview_panel" class="json-preview">
+      <summary>Advanced JSON preview</summary>
+      <div class="actions">
+        <button type="button" id="preview_json" class="secondary">Refresh preview</button>
+      </div>
+      <textarea id="json_preview" spellcheck="false" aria-label="JSON preview"></textarea>
+    </details>
   </section>
 </main>
 
@@ -457,16 +473,24 @@
     };
   }
 
-  function renderJson() {
-    const text = JSON.stringify(payload(), null, 2);
+  function jsonText() {
+    return JSON.stringify(payload(), null, 2);
+  }
+
+  function renderJson(openPreview) {
+    const text = jsonText();
     $("json_preview").value = text;
     $("status").textContent = "JSON prepared locally.";
+    if (openPreview) {
+      $("json_preview_panel").open = true;
+    }
     return text;
   }
 
-  $("preview_json").addEventListener("click", renderJson);
+  $("preview_json").addEventListener("click", function () { renderJson(true); });
   $("save_local_json").addEventListener("click", async function () {
-    const text = renderJson();
+    const text = jsonText();
+    $("json_preview").value = text;
     if (!LOCAL_SAVE_ENDPOINT) {
       $("status").textContent = "Run the local app command to save directly without choosing a file.";
       return;
