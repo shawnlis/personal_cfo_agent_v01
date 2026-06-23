@@ -35,6 +35,9 @@ The JSON report includes redacted statuses and counts only:
 - providers requested
 - providers succeeded
 - providers failed
+- provider gate rows with requested/succeeded/failed/status
+- source provenance rows for manual, broker, pending snapshot, explicit FX,
+  dashboard, and integrity-guard layers
 - manual layer availability
 - account NAV row count
 - position row count
@@ -44,6 +47,7 @@ The JSON report includes redacted statuses and counts only:
 - stale or mixed-date warning codes
 - dashboard generated yes/no
 - source warning codes
+- human-readable warning details
 - data quality warning codes
 
 ## Warning Codes

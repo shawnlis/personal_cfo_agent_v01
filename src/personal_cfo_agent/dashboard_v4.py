@@ -71,6 +71,15 @@ BUCKET_LABELS = {
     "unclassified": "Needs review / unclassified",
 }
 
+BUCKET_LABELS.update(
+    {
+        "fixed_assets": "固定资产 / Fixed assets",
+        "retirement_accounts": "退休账户 / Retirement accounts",
+        "non_liquid_unvested_equity": "非流动/未归属股权 / Non-liquid unvested equity",
+        "liquid_investment_assets": "流动投资资产 / Liquid investment assets",
+    }
+)
+
 WITHDRAWAL_RATES = (0.03, 0.035, 0.04)
 WITHDRAWAL_CURRENCIES = ("USD", "SGD", "CNY")
 FIRE_TARGET_USD = 20_000_000.0
@@ -722,6 +731,7 @@ def _summary(
         "asset_bucket_count": len(bucket_rows),
         "display_asset_bucket_count": len(_display_bucket_rows(bucket_rows)),
         "source_coverage": source_coverage,
+        "data_quality": _data_quality_review(refresh_dir),
         "snapshot_history_review": _snapshot_history_review(refresh_dir),
         "integrity_guard": _integrity_guard_review(refresh_dir),
         "history_row_count": len(history_rows),
@@ -866,6 +876,52 @@ def _source_coverage_lines(source_coverage: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _data_quality_review(refresh_dir: Path) -> dict[str, Any]:
+    payload = _read_json(refresh_dir / "data_quality_summary.json") or {}
+    if not isinstance(payload, dict) or not payload:
+        return {"generated": False, "warning_codes": []}
+    providers = payload.get("providers", {})
+    counts = payload.get("counts", {})
+    return {
+        "generated": True,
+        "providers_requested": providers.get("requested", []),
+        "providers_succeeded": providers.get("succeeded", []),
+        "providers_failed": providers.get("failed", []),
+        "source_provenance": payload.get("source_provenance", []),
+        "account_nav_row_count": counts.get("account_nav_row_count", 0),
+        "position_row_count": counts.get("position_row_count", 0),
+        "fx_complete": bool(payload.get("fx", {}).get("complete")),
+        "warning_codes": payload.get("warning_codes", []),
+    }
+
+
+def _data_quality_lines(review: dict[str, Any]) -> list[str]:
+    if not bool(review.get("generated")):
+        return ["- Data quality summary generated: no"]
+    return [
+        "- Data quality summary generated: yes",
+        f"- Providers requested: {_join_text_list(review.get('providers_requested'))}",
+        f"- Providers succeeded: {_join_text_list(review.get('providers_succeeded'))}",
+        f"- Providers failed: {_join_text_list(review.get('providers_failed'))}",
+        f"- Account NAV rows: {review.get('account_nav_row_count', 0)}",
+        f"- Position rows: {review.get('position_row_count', 0)}",
+        f"- Source layers available: {_source_layer_count(review.get('source_provenance'), available=True)}",
+        f"- Source layers needing review: {_source_layer_count(review.get('source_provenance'), available=False)}",
+        f"- FX complete: {'yes' if bool(review.get('fx_complete')) else 'no'}",
+        f"- Quality warning codes: {_join_text_list(review.get('warning_codes'))}",
+    ]
+
+
+def _source_layer_count(value: object, *, available: bool) -> int:
+    if not isinstance(value, list):
+        return 0
+    return sum(
+        1
+        for row in value
+        if isinstance(row, dict) and bool(row.get("available")) is available
+    )
+
+
 def _join_text_list(value: object) -> str:
     if not isinstance(value, list):
         return "None"
@@ -891,6 +947,9 @@ def _markdown(
         "",
         "## Data Source Coverage",
         *_source_coverage_lines(summary.get("source_coverage", {})),
+        "",
+        "## Data Quality",
+        *_data_quality_lines(summary.get("data_quality", {})),
         "",
         "## Integrity Status",
         *_integrity_guard_lines(summary.get("integrity_guard", {})),

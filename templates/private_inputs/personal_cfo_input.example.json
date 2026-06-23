@@ -4,6 +4,17 @@
   "base_currency": "SGD",
   "source_type": "synthetic_fixture",
   "review_required": true,
+  "fx_rates": {
+    "base_currency": "SGD",
+    "rates_to_base": {
+      "SGD": "1.00",
+      "USD": "1.35",
+      "CNY": "0.19",
+      "HKD": "0.17"
+    },
+    "source_type": "synthetic_fixture",
+    "review_required": true
+  },
   "manual_nav_accounts": [
     {
       "provider_label": "syfe_trade",
@@ -90,6 +101,8 @@
       "sa": "0.00",
       "ma": "0.00",
       "ra": "0.00",
+      "cpf_ia": "0.00",
+      "cpf_balance": "0.00",
       "total": "0.00",
       "currency": "SGD",
       "source_type": "local_manual_placeholder",

@@ -10,7 +10,8 @@ It does not change provider adapter semantics. It orchestrates existing modules 
 4. Generate a pending snapshot for review.
 5. Generate Dashboard v3 and its static net worth history chart.
 6. Run the v0.6.5 integrity guard.
-7. Append to confirmed snapshot history only when explicitly confirmed and the integrity guard passes.
+7. Write a v0.6.6 snapshot review page.
+8. Append to confirmed snapshot history only when explicitly confirmed and the integrity guard passes.
 
 ## Local Input Form
 
@@ -56,9 +57,15 @@ history:
 - `snapshots/` (pending review copy)
 - `dashboard/`
 - `integrity_guard/`
+- `snapshot_review/`
 - `data_quality_summary.json`
 - `data_quality_warnings.md`
 - `DATA_QUALITY_SUMMARY_V064.md`
+
+If the unified private input file contains positive explicit FX rates, the
+refresh writes `fx_rates_from_private_input.json` and uses it for dashboard and
+integrity checks. Blank or zero FX entries are ignored and still produce FX
+warnings when cross-currency aggregation needs those rates.
 
 If the dashboard looks correct, run the same command again with explicit
 confirmation to append the reviewed row to confirmed local history. The
@@ -140,6 +147,18 @@ v0.6.5 adds an offline confirmation gate under `integrity_guard/`:
 
 The guard is status-only and redacted. It decides whether a refresh is safe to
 confirm into history; it does not read brokers or private input values.
+
+## Snapshot Review
+
+v0.6.6 adds a redacted review page under `snapshot_review/`:
+
+- `snapshot_review_summary.json`
+- `SNAPSHOT_REVIEW_V066.md`
+- `snapshot_review.html`
+
+Use this page before `--confirm-snapshot-history-write`. It summarizes provider
+coverage, account NAV row counts, position row counts, FX completeness, and
+blocking warning codes without printing private values.
 
 ## Boundaries
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from personal_cfo_agent.models import WarningCode
+from personal_cfo_agent.warning_text import warning_details, warning_lines
 
 
 SCHEMA_VERSION = "v0.6.4"
@@ -75,9 +76,25 @@ def write_data_quality_summary(
             "succeeded": sorted(providers_succeeded),
             "failed": sorted(providers_failed),
         },
+        "provider_gate": _provider_gate_rows(
+            providers_requested=providers_requested,
+            providers_succeeded=providers_succeeded,
+            providers_failed=providers_failed,
+        ),
         "manual_layers": {
             key: bool(value) for key, value in sorted(manual_layer_status.items())
         },
+        "source_provenance": _source_provenance_rows(
+            providers_requested=providers_requested,
+            providers_succeeded=providers_succeeded,
+            providers_failed=providers_failed,
+            manual_layer_status=manual_layer_status,
+            snapshot_generated=snapshot_generated,
+            fx_file_present=fx_file_present,
+            fx_complete=fx_complete,
+            dashboard_generated=dashboard_generated,
+            integrity_guard_generated=integrity_guard_generated,
+        ),
         "counts": {
             "account_nav_row_count": max(0, int(account_nav_row_count)),
             "position_row_count": max(0, int(position_row_count)),
@@ -102,6 +119,7 @@ def write_data_quality_summary(
         },
         "source_warning_codes": [code.value for code in upstream_warning_codes],
         "warning_codes": [code.value for code in warnings],
+        "warning_details": warning_details(warnings),
     }
     output_paths["summary"].write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -140,10 +158,7 @@ def _data_quality_warning_codes(
 
 def _write_warnings(path: Path, warnings: list[WarningCode]) -> None:
     lines = ["# Data Quality Warnings", ""]
-    if warnings:
-        lines.extend(f"- `{code.value}`" for code in warnings)
-    else:
-        lines.append("- None")
+    lines.extend(warning_lines(warnings))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -153,6 +168,8 @@ def _report(summary: dict[str, Any]) -> str:
     counts = summary["counts"]
     warnings = summary["warning_codes"]
     integrity = summary.get("integrity_guard", {})
+    provider_gate = summary.get("provider_gate", [])
+    source_provenance = summary.get("source_provenance", [])
     lines = [
         "# Data Quality Summary v0.6.4",
         "",
@@ -164,9 +181,17 @@ def _report(summary: dict[str, Any]) -> str:
         f"- Succeeded: {', '.join(providers['succeeded']) or 'None'}",
         f"- Failed: {', '.join(providers['failed']) or 'None'}",
         "",
+        "## Provider Gate",
+        "",
+        *(_provider_gate_lines(provider_gate)),
+        "",
         "## Manual Layers",
         "",
         *[f"- {name}: {_yes_no(value)}" for name, value in sorted(layers.items())],
+        "",
+        "## Source Provenance",
+        "",
+        *(_source_provenance_lines(source_provenance)),
         "",
         "## Counts",
         "",
@@ -198,9 +223,155 @@ def _report(summary: dict[str, Any]) -> str:
         "",
         "## Warning Codes",
         "",
-        *[f"- `{code}`" for code in warnings],
+        *warning_lines(warnings),
     ]
     return "\n".join(lines) + "\n"
+
+
+def _provider_gate_rows(
+    *,
+    providers_requested: list[str],
+    providers_succeeded: list[str],
+    providers_failed: list[str],
+) -> list[dict[str, bool | str]]:
+    providers = sorted(
+        {
+            *[provider for provider in providers_requested if provider],
+            *[provider for provider in providers_succeeded if provider],
+            *[provider for provider in providers_failed if provider],
+        }
+    )
+    requested = set(providers_requested)
+    succeeded = set(providers_succeeded)
+    failed = set(providers_failed)
+    rows: list[dict[str, bool | str]] = []
+    for provider in providers:
+        status = "not_requested"
+        if provider in succeeded:
+            status = "ok"
+        elif provider in failed:
+            status = "failed"
+        elif provider in requested:
+            status = "missing"
+        rows.append(
+            {
+                "provider": provider,
+                "requested": provider in requested,
+                "succeeded": provider in succeeded,
+                "failed": provider in failed,
+                "status": status,
+            }
+        )
+    return rows
+
+
+def _provider_gate_lines(provider_gate: object) -> list[str]:
+    if not isinstance(provider_gate, list) or not provider_gate:
+        return ["- None"]
+    lines: list[str] = []
+    for row in provider_gate:
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"- {row.get('provider', 'unknown')}: "
+            f"requested={_yes_no(bool(row.get('requested')))}; "
+            f"succeeded={_yes_no(bool(row.get('succeeded')))}; "
+            f"failed={_yes_no(bool(row.get('failed')))}; "
+            f"status={row.get('status', 'unknown')}"
+        )
+    return lines or ["- None"]
+
+
+def _source_provenance_rows(
+    *,
+    providers_requested: list[str],
+    providers_succeeded: list[str],
+    providers_failed: list[str],
+    manual_layer_status: dict[str, bool],
+    snapshot_generated: bool,
+    fx_file_present: bool,
+    fx_complete: bool,
+    dashboard_generated: bool,
+    integrity_guard_generated: bool,
+) -> list[dict[str, bool | str]]:
+    rows: list[dict[str, bool | str]] = []
+    for layer_name, available in sorted(manual_layer_status.items()):
+        rows.append(
+            {
+                "layer": layer_name,
+                "source_type": "local_manual_private_input",
+                "available": bool(available),
+                "status": "available" if available else "missing",
+                "confirmed_history_source": False,
+            }
+        )
+    for provider in sorted(
+        {
+            *[item for item in providers_requested if item],
+            *[item for item in providers_succeeded if item],
+            *[item for item in providers_failed if item],
+        }
+    ):
+        succeeded = provider in providers_succeeded
+        failed = provider in providers_failed
+        rows.append(
+            {
+                "layer": f"broker_provider_{provider}",
+                "source_type": "supervised_read_only_provider_bundle",
+                "available": succeeded,
+                "status": "available" if succeeded else "failed" if failed else "missing",
+                "confirmed_history_source": False,
+            }
+        )
+    rows.extend(
+        [
+            {
+                "layer": "pending_snapshot",
+                "source_type": "derived_pending_review_snapshot",
+                "available": bool(snapshot_generated),
+                "status": "available" if snapshot_generated else "missing",
+                "confirmed_history_source": False,
+            },
+            {
+                "layer": "explicit_fx",
+                "source_type": "local_explicit_fx_rates",
+                "available": bool(fx_file_present and fx_complete),
+                "status": "available" if fx_file_present and fx_complete else "incomplete",
+                "confirmed_history_source": False,
+            },
+            {
+                "layer": "dashboard",
+                "source_type": "derived_local_dashboard",
+                "available": bool(dashboard_generated),
+                "status": "available" if dashboard_generated else "missing",
+                "confirmed_history_source": False,
+            },
+            {
+                "layer": "integrity_guard",
+                "source_type": "offline_confirmation_gate",
+                "available": bool(integrity_guard_generated),
+                "status": "available" if integrity_guard_generated else "missing",
+                "confirmed_history_source": False,
+            },
+        ]
+    )
+    return rows
+
+
+def _source_provenance_lines(source_provenance: object) -> list[str]:
+    if not isinstance(source_provenance, list) or not source_provenance:
+        return ["- None"]
+    lines: list[str] = []
+    for row in source_provenance:
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"- {row.get('layer', 'unknown')}: "
+            f"source_type={row.get('source_type', 'unknown')}; "
+            f"available={_yes_no(bool(row.get('available')))}; "
+            f"status={row.get('status', 'unknown')}"
+        )
+    return lines or ["- None"]
 
 
 def _yes_no(value: bool) -> str:

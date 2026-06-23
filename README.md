@@ -108,6 +108,27 @@ preview orders, modify orders, move cash, unlock trade flows, or print secrets.
 Do not add `--confirm-snapshot-history-write` until the generated dashboard has
 been reviewed for missing broker rows or warning codes.
 
+## Snapshot Review Gate
+
+Every local net worth refresh now writes a redacted review folder:
+
+- `snapshot_review/snapshot_review_summary.json`
+- `snapshot_review/SNAPSHOT_REVIEW_V066.md`
+- `snapshot_review/snapshot_review.html`
+
+You can regenerate it directly without running brokers or recomputing the
+refresh:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --snapshot-review `
+  --refresh-dir .\reports\personal_cfo_agent\net_worth_refresh_local `
+  --out-dir .\reports\personal_cfo_agent\net_worth_refresh_local\snapshot_review
+```
+
+Only write confirmed history after this page says the refresh is ready and the
+dashboard has been reviewed.
+
 ## Dashboard v4
 
 Dashboard v4 reads an existing refresh directory and optional explicit local FX
@@ -140,6 +161,24 @@ python .\scripts\personal_cfo_agent.py `
 The doctor checks private input validity, refresh completeness, FX coverage, and
 broker config presence as redacted yes/no status only.
 
+## Local Workbench
+
+Use the static workbench as the local entry page for the current input, refresh,
+dashboard, doctor, and snapshot review paths:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --local-workbench `
+  --input-file .\private_inputs\personal_cfo_input.local.json `
+  --refresh-dir .\reports\personal_cfo_agent\net_worth_refresh_local `
+  --fx-rates-file .\private_inputs\fx_rates.local.json `
+  --dashboard-dir .\reports\personal_cfo_agent\dashboard_current `
+  --out-dir .\reports\personal_cfo_agent\local_workbench
+```
+
+The workbench is a static local launcher. It does not read private values or run
+broker refreshes.
+
 ## Safe Output Review
 
 Inspect generated files locally. Do not paste raw report contents into PRs or
@@ -152,6 +191,7 @@ Useful output folders:
 - `merged/`
 - `snapshots/`
 - `dashboard/`
+- `snapshot_review/`
 
 Useful summary files:
 
@@ -161,7 +201,11 @@ Useful summary files:
 - `dashboard/dashboard_v050_summary.json`
 - `dashboard/dashboard_v060_summary.json`
 - `data_quality_summary.json`
+- `snapshot_review/snapshot_review_summary.json`
 - `net_worth_doctor_summary.json`
+
+The stabilization checklist for this local-first workflow is documented in
+`docs/LOCAL_WORKFLOW_STABILIZATION_V066.md`.
 
 ## Validation
 

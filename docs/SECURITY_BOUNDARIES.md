@@ -85,6 +85,26 @@ v0.6.4 data quality summary is an offline report produced by local net worth ref
 
 v0.6.5 net worth integrity guard is an offline confirmation gate for local net worth refresh. It reads only already-generated local refresh artifacts, checks requested broker coverage, provider-reported NAV availability, FX completeness, mixed/stale date warnings, total availability, and large changes versus confirmed history, then reports whether `--confirm-snapshot-history-write` may proceed. It must not run broker reads, Webull token preflight, Moomoo discovery, account diagnostics, browser automation, external uploads, trading, cash movement, tax filing, or recommendation output. It must not include exact NAV, balances, positions, raw account IDs, account hashes, private input contents, `.env.local` values, API keys, tokens, or secrets. Generated guard outputs must stay under ignored `reports/` paths.
 
+## Snapshot Review Rule
+
+v0.6.6 snapshot review is an offline review page generated from local refresh,
+data quality, and integrity-guard artifacts. It reports confirmation readiness,
+provider gate status, row counts, FX completeness, warning explanations, and the
+next safe action. It must not run broker reads, Webull token preflight, Moomoo
+discovery, account diagnostics, browser automation, external uploads, trading,
+cash movement, tax filing, or recommendation output. It must not include exact
+NAV, balances, positions, raw account IDs, account hashes, private input
+contents, `.env.local` values, API keys, tokens, or secrets.
+
+## Local Workbench Rule
+
+v0.6.6 local workbench is a static local launcher and path/status checklist. It
+may link to existing local dashboard and snapshot review HTML files, but it must
+not read private values, run broker reads, call Webull token preflight, run
+Moomoo discovery, use browser automation, upload data, move cash, trade, file
+taxes, or generate recommendations. It reports path presence only and all
+generated workbench outputs must stay under ignored `reports/` paths.
+
 ## Dashboard v4 Rule
 
 v0.6.0 Dashboard v4 is an offline visual reporting layer over an already-generated v0.5.9 refresh directory. It reads local merged account NAV, snapshot history, Dashboard v3 history, property/mortgage, and Singapore manual snapshot outputs; it writes Markdown, HTML, CSV, JSON, and inline SVG artifacts under ignored `reports/` paths. It must not connect to brokers, banks, CPF, IRAS, HDB, SingPass, browsers, Webull token flows, or external accounts. It must not perform market execution, move cash, file taxes, create scheduler jobs, upload data, load external chart services, or produce action instructions. Mixed-currency display requires explicit local FX rates and must warn instead of silently converting when FX is missing.

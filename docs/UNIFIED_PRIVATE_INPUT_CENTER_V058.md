@@ -4,12 +4,13 @@ v0.5.8 adds a single local-only input workflow for the manual Personal CFO layer
 
 It is the preferred local input workflow when you want one file for:
 
-- manual account NAVs for Syfe Trade, Webull, uSMART, and other manual accounts
+- manual account NAVs for Syfe Trade, Webull, uSMART, other manual accounts, and unvested shares
 - property and mortgage snapshots
 - CPF
 - SRS
 - tax review snapshot
 - HDB loan snapshot
+- explicit local FX rates for dashboard conversion
 
 This is not a connector. It does not connect to brokers, banks, CPF, IRAS, HDB, SingPass, browsers, or external accounts. It does not file taxes, provide advice, move cash, trade, schedule jobs, or generate recommendations.
 
@@ -37,9 +38,14 @@ python .\scripts\personal_cfo_agent.py `
 ```
 
 The generated form is static and local. It has no external scripts, styles, browser beacon calls, or external data transmission.
-It includes only local inline JavaScript for building the JSON preview, downloading the JSON file, saving it through a user-initiated local file picker, or posting to the optional localhost save app described below.
+It includes only local inline JavaScript for building the JSON preview or posting to the optional localhost save app described below. The user-facing form intentionally keeps one main save path: `Save to local JSON`.
 
-The form intentionally keeps the visible inputs short: one global snapshot date, one base currency, manual NAV rows, property value, mortgage balance, CPF/SRS totals, tax year, and HDB loan availability. Internal hashes required by the JSON schema are generated automatically from local labels/dates; raw account IDs, raw addresses, NRIC/FIN, and government identifiers are not requested.
+The form intentionally keeps the visible inputs short: one global snapshot date, one base currency, optional local FX rates, manual NAV rows, unvested shares, property value, mortgage balance, CPF IA, CPF Balance, SRS total, tax year, and income tax payable availability. CPF IA and CPF Balance are automatically summed into the downstream CPF `total` field so existing snapshot and dashboard schemas remain compatible. Internal hashes required by the JSON schema are generated automatically from local labels/dates; raw account IDs, raw addresses, NRIC/FIN, and government identifiers are not requested.
+
+FX values are optional. Blank or zero FX entries are not treated as valid rates.
+When positive explicit rates are present in the unified input file,
+`--run-net-worth-refresh` can extract them into a local generated FX file for
+Dashboard v3/v4 and integrity checks.
 
 ## Open A Local Save App
 

@@ -12,6 +12,7 @@ from personal_cfo_agent.dashboard_v3 import DashboardV3Result
 from personal_cfo_agent.models import WarningCode
 from personal_cfo_agent.provider_bundle_merge import MergeResult
 from personal_cfo_agent.snapshot_store import SnapshotStoreResult
+from personal_cfo_agent.warning_text import warning_details, warning_lines
 
 
 SCHEMA_VERSION = "v0.6.5"
@@ -149,6 +150,7 @@ def run_net_worth_integrity_guard(
         "dashboard_generated": bool(dashboard_result and dashboard_result.generated),
         "source_warning_codes": [code.value for code in upstream_warning_codes],
         "warning_codes": [code.value for code in warnings],
+        "warning_details": warning_details(warnings),
     }
     output_paths["summary"].write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -308,7 +310,9 @@ def _fx_complete(*, fx_rates_file: Path | None, required_currencies: set[str]) -
     covered = {
         str(currency).strip().upper()
         for currency, value in rates.items()
-        if str(currency).strip() and _parse_number(value) is not None
+        if str(currency).strip()
+        and (rate_value := _parse_number(value)) is not None
+        and rate_value > 0
     }
     covered.add(base_currency)
     return required_currencies <= covered
@@ -351,7 +355,7 @@ def _write_warnings(
     else:
         lines.append("- None")
     lines.extend(["", "## All Warning Codes", ""])
-    lines.extend(f"- `{code.value}`" for code in warnings)
+    lines.extend(warning_lines(warnings))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -383,7 +387,7 @@ def _report(summary: dict[str, Any]) -> str:
         "",
         "## Warning Codes",
         "",
-        *[f"- `{code}`" for code in summary["warning_codes"]],
+        *warning_lines(summary["warning_codes"]),
     ]
     return "\n".join(lines) + "\n"
 

@@ -475,6 +475,45 @@ def private_input_center_to_snapshots(
     )
 
 
+def write_fx_rates_from_private_input_center(
+    *, input_file: Path, out_file: Path
+) -> Path | None:
+    """Extract explicit local FX rates from the unified private input file."""
+
+    payload, _ = _load_payload(input_file)
+    if payload is None:
+        return None
+    fx_rates = payload.get("fx_rates")
+    if not isinstance(fx_rates, dict):
+        return None
+    base_currency = _clean(fx_rates.get("base_currency") or payload.get("base_currency")).upper()
+    rates = fx_rates.get("rates_to_base")
+    if not base_currency or not isinstance(rates, dict):
+        return None
+    clean_rates: dict[str, str] = {}
+    for currency, rate in rates.items():
+        currency_text = _clean(currency).upper()
+        rate_text = _clean(rate).replace(",", "")
+        rate_value = _parse_amount(rate_text)
+        if not currency_text or rate_value is None or rate_value <= 0:
+            continue
+        clean_rates[currency_text] = rate_text
+    clean_rates.setdefault(base_currency, "1.00")
+    if len(clean_rates) <= 1:
+        return None
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        out_file,
+        {
+            "base_currency": base_currency,
+            "rates_to_base": clean_rates,
+            "source_type": "local_private_input_center",
+            "review_required": True,
+        },
+    )
+    return out_file
+
+
 def _load_payload(path: Path) -> tuple[dict[str, Any] | None, list[WarningCode]]:
     if not path.exists():
         return None, [WarningCode.PRIVATE_INPUT_CENTER_INPUT_MISSING]
@@ -601,7 +640,7 @@ def _write_split_inputs(payload: dict[str, Any], out_dir: Path) -> dict[str, Pat
     )
     _write_json(paths["property"], {"properties": _property_rows_for_split(payload)})
     _write_json(paths["mortgage"], {"mortgages": _rows(payload, "mortgages")})
-    _write_json(paths["cpf"], {"cpf": _rows(payload, "cpf")})
+    _write_json(paths["cpf"], {"cpf": _cpf_rows_for_split(payload)})
     _write_json(paths["srs"], {"srs_accounts": _rows(payload, "srs")})
     _write_json(paths["tax"], {"tax_records": _rows(payload, "tax")})
     _write_json(paths["hdb_loan"], {"hdb_loans": _rows(payload, "hdb_loans")})
@@ -641,6 +680,18 @@ def _property_rows_for_split(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _cpf_rows_for_split(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in _rows(payload, "cpf"):
+        mapped = dict(row)
+        cpf_ia = _parse_amount(mapped.get("cpf_ia"))
+        cpf_balance = _parse_amount(mapped.get("cpf_balance"))
+        if cpf_ia is not None or cpf_balance is not None:
+            mapped["total"] = _number_to_text((cpf_ia or 0.0) + (cpf_balance or 0.0))
+        rows.append(mapped)
+    return rows
+
+
 def _property_ownership_for_split(value: object) -> str:
     text = _clean(value).replace(",", "")
     if not text or text.endswith("%"):
@@ -653,6 +704,20 @@ def _property_ownership_for_split(value: object) -> str:
         normalized = parsed / 100.0
         return f"{normalized:.6f}".rstrip("0").rstrip(".")
     return _clean(value)
+
+
+def _parse_amount(value: object) -> float | None:
+    text = _clean(value).replace(",", "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _number_to_text(value: float) -> str:
+    return f"{value:.2f}"
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:

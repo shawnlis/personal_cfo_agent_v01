@@ -17,6 +17,7 @@ from personal_cfo_agent.dashboard_v4 import (
     LIQUID_WITHDRAWAL_FIELDNAMES,
     write_dashboard_v4,
 )
+from personal_cfo_agent.data_quality_summary import write_data_quality_summary
 from personal_cfo_agent.models import WarningCode
 from personal_cfo_agent.net_worth_integrity_guard import run_net_worth_integrity_guard
 from personal_cfo_agent.provider_bundle_merge import merge_provider_bundles
@@ -99,6 +100,7 @@ def test_dashboard_v4_generates_asset_buckets_and_outputs(tmp_path: Path) -> Non
     html = result.output_paths["html_report"].read_text(encoding="utf-8")
     summary = json.loads(result.output_paths["dashboard_summary"].read_text(encoding="utf-8"))
     assert "## Data Source Coverage" in markdown
+    assert "## Data Quality" in markdown
     assert "## Integrity Status" in markdown
     assert "Integrity Status" in html
     assert "Integrity guard generated: yes" in markdown
@@ -107,6 +109,8 @@ def test_dashboard_v4_generates_asset_buckets_and_outputs(tmp_path: Path) -> Non
     assert "Broker data included: no" in markdown
     assert "Broker provider inputs: None" in markdown
     assert "Account NAV rows: 4" in markdown
+    assert "Source layers available:" in markdown
+    assert "Source layers needing review:" in markdown
     assert "No broker provider input folders found; live broker assets are not confirmed in this refresh." in markdown
     assert "Data Source Coverage" in html
     assert "live broker assets are not confirmed" in html
@@ -313,9 +317,12 @@ def test_dashboard_v4_unclassified_assets_are_review_required(tmp_path: Path) ->
     assert WarningCode.DASHBOARD_V4_BUCKET_CLASSIFICATION_WARNING in result.warning_codes
 
 
-def test_dashboard_v4_cli_generates_redacted_offline_summary(tmp_path: Path, capsys) -> None:
+def test_dashboard_v4_cli_generates_redacted_offline_summary(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
     refresh_dir = _generate_refresh_dir(tmp_path)
     out_dir = tmp_path / "dashboard_v4_cli"
+    monkeypatch.chdir(tmp_path)
 
     assert (
         main(
@@ -337,8 +344,16 @@ def test_dashboard_v4_cli_generates_redacted_offline_summary(tmp_path: Path, cap
     assert "External connections used: no" in output
     assert "Broker connections used: no" in output
     assert "Asset bucket rows: 5" in output
+    assert "Current dashboard directory:" in output
     assert "Warning codes:" in output
     assert (out_dir / "PERSONAL_CFO_DASHBOARD_V060.md").exists()
+    assert (
+        tmp_path
+        / "reports"
+        / "personal_cfo_agent"
+        / "dashboard_current"
+        / "PERSONAL_CFO_DASHBOARD_V060.html"
+    ).exists()
 
 
 def test_dashboard_v4_cli_rejects_live_and_other_generators(tmp_path: Path) -> None:
@@ -441,6 +456,28 @@ def _generate_refresh_dir(tmp_path: Path) -> Path:
         dashboard_result=None,
         fx_rates_file=_write_fx_rates(tmp_path),
         upstream_warning_codes=[],
+    )
+    write_data_quality_summary(
+        out_dir=refresh_dir,
+        providers_requested=[],
+        providers_succeeded=[],
+        providers_failed=[],
+        manual_layer_status={
+            "manual_nav": True,
+            "property_mortgage": True,
+            "sg_retirement_tax": True,
+        },
+        account_nav_row_count=len(_read_rows(refresh_dir / "merged" / "merged_account_nav_ledger.csv")),
+        position_row_count=len(_read_rows(refresh_dir / "merged" / "merged_position_ledger.csv")),
+        snapshot_generated=True,
+        fx_file_present=True,
+        fx_complete=True,
+        stale_or_mixed_date_warning_codes=[],
+        dashboard_generated=True,
+        upstream_warning_codes=[],
+        integrity_guard_generated=True,
+        integrity_ready_to_confirm=True,
+        integrity_blocking_warning_codes=[],
     )
     return refresh_dir
 
