@@ -17,7 +17,9 @@ unified private input center
 + optional supervised read-only broker refresh
 + manual NAV / property / mortgage / CPF / SRS / tax / HDB layers
 -> merged account NAV
--> snapshot history
+-> pending snapshot review
+-> integrity guard
+-> confirmed snapshot history after explicit approval
 -> Dashboard v3 / Dashboard v4
 -> local net worth doctor
 ```
@@ -60,11 +62,33 @@ python .\scripts\personal_cfo_agent.py `
 
 Manual-only mode does not run broker reads.
 
+By default this creates a pending review snapshot under `snapshots/`; it does
+not append to confirmed long-term history. After reviewing the dashboard and
+data quality summary, rerun with explicit confirmation to write history. The
+v0.6.5 integrity guard must also pass before confirmed history is written:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --run-net-worth-refresh `
+  --refresh-brokers none `
+  --confirm-snapshot-history-write `
+  --input-file .\private_inputs\personal_cfo_input.local.json `
+  --out-dir .\reports\personal_cfo_agent\net_worth_refresh_local
+```
+
+Confirmed history is written under `snapshots_confirmed/`.
+
 The refresh also writes a redacted data quality summary:
 
 - `data_quality_summary.json`
 - `data_quality_warnings.md`
 - `DATA_QUALITY_SUMMARY_V064.md`
+
+It also writes a redacted integrity guard report:
+
+- `integrity_guard/net_worth_integrity_summary.json`
+- `integrity_guard/net_worth_integrity_warnings.md`
+- `integrity_guard/NET_WORTH_INTEGRITY_GUARD_V065.md`
 
 ## Supervised Read-Only Broker Refresh
 
@@ -81,6 +105,8 @@ python .\scripts\personal_cfo_agent.py `
 
 This uses only existing read-only provider paths. It must not place orders,
 preview orders, modify orders, move cash, unlock trade flows, or print secrets.
+Do not add `--confirm-snapshot-history-write` until the generated dashboard has
+been reviewed for missing broker rows or warning codes.
 
 ## Dashboard v4
 
@@ -131,6 +157,7 @@ Useful summary files:
 
 - `merged/merged_account_nav_summary.json`
 - `snapshots/snapshot_manifest.json`
+- `integrity_guard/net_worth_integrity_summary.json`
 - `dashboard/dashboard_v050_summary.json`
 - `dashboard/dashboard_v060_summary.json`
 - `data_quality_summary.json`

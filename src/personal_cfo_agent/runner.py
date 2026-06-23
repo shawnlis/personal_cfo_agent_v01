@@ -65,6 +65,10 @@ from personal_cfo_agent.net_worth_doctor import (
     NetWorthDoctorResult,
     run_net_worth_doctor,
 )
+from personal_cfo_agent.net_worth_integrity_guard import (
+    NetWorthIntegrityGuardResult,
+    run_net_worth_integrity_guard,
+)
 from personal_cfo_agent.normalizer import normalize_snapshots
 from personal_cfo_agent.private_input_center import (
     PrivateInputCenterFormResult,
@@ -74,6 +78,7 @@ from personal_cfo_agent.private_input_center import (
     generate_private_input_center_form,
     init_private_input_center,
     private_input_center_to_snapshots,
+    serve_private_input_center_local_app,
     validate_private_input_center,
 )
 from personal_cfo_agent.providers import (
@@ -145,6 +150,8 @@ class NetWorthRefreshResult:
     snapshot_result: SnapshotStoreResult | None
     dashboard_result: DashboardV3Result | None
     data_quality_result: DataQualitySummaryResult | None = None
+    integrity_guard_result: NetWorthIntegrityGuardResult | None = None
+    snapshot_history_confirmed: bool = False
     warning_codes: list[WarningCode] = field(default_factory=list)
 
     @property
@@ -729,6 +736,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Generate a local-only static HTML unified private input center form.",
     )
     parser.add_argument(
+        "--private-input-center-local-app",
+        action="store_true",
+        help="Serve the unified private input center locally and save JSON to --input-file.",
+    )
+    parser.add_argument(
         "--init-private-input-center",
         action="store_true",
         help="Copy the unified private input center placeholder JSON into an ignored local file.",
@@ -757,6 +769,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--refresh-brokers",
         default="ibkr,moomoo,tiger",
         help="Comma-separated broker live reads for --run-net-worth-refresh, or 'none' for manual-only refresh.",
+    )
+    parser.add_argument(
+        "--confirm-snapshot-history-write",
+        action="store_true",
+        help=(
+            "For --run-net-worth-refresh, append the reviewed snapshot to "
+            "confirmed net worth history. Without this flag the snapshot is "
+            "generated for dashboard review only."
+        ),
+    )
+    parser.add_argument(
+        "--confirmed-history-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional confirmed history directory for --run-net-worth-refresh "
+            "integrity comparison before a confirmed history write."
+        ),
+    )
+    parser.add_argument(
+        "--local-app-port",
+        type=int,
+        default=8765,
+        help="Localhost port for --private-input-center-local-app.",
     )
     parser.add_argument(
         "--overwrite",
@@ -913,6 +949,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _manual_nav_to_provider_bundle_cli(args, parser)
     if args.private_input_center_form:
         return _private_input_center_form_cli(args, parser)
+    if args.private_input_center_local_app:
+        return _private_input_center_local_app_cli(args, parser)
     if args.init_private_input_center:
         return _init_private_input_center_cli(args, parser)
     if args.validate_private_input_center:
@@ -1230,6 +1268,39 @@ def _private_input_center_form_cli(
     return 0
 
 
+def _private_input_center_local_app_cli(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
+    _validate_private_input_center_cli_scope(
+        args, parser, "--private-input-center-local-app"
+    )
+    if args.input_file is None:
+        parser.error("--private-input-center-local-app requires --input-file")
+    if args.out_file is not None:
+        parser.error("--private-input-center-local-app does not use --out-file")
+    if not (1 <= args.local_app_port <= 65535):
+        parser.error("--local-app-port must be between 1 and 65535")
+    out_dir = args.out_dir or Path("reports/personal_cfo_agent/private_input_center_local")
+    url = f"http://127.0.0.1:{args.local_app_port}/"
+    print("Personal CFO Private Input Center local app v0.5.8 (offline)", flush=True)
+    print("External connections used: no", flush=True)
+    print("Broker live reads used: no", flush=True)
+    print(f"Local URL: {url}", flush=True)
+    print(f"Form output directory: {out_dir}", flush=True)
+    print(f"Target file name: {args.input_file.name}", flush=True)
+    print("Press Ctrl+C to stop the local app.", flush=True)
+    try:
+        serve_private_input_center_local_app(
+            input_file=args.input_file,
+            out_dir=out_dir,
+            port=args.local_app_port,
+        )
+    except KeyboardInterrupt:
+        print("Private input center local app stopped.", flush=True)
+        return 0
+    return 0
+
+
 def _init_private_input_center_cli(
     args: argparse.Namespace, parser: argparse.ArgumentParser
 ) -> int:
@@ -1306,11 +1377,17 @@ def _run_net_worth_refresh_cli(
         fx_rates_input=args.fx_rates_input,
         env=dict(os.environ),
         allow_live_read=args.allow_live_read,
+        confirm_snapshot_history_write=args.confirm_snapshot_history_write,
+        confirmed_history_dir=args.confirmed_history_dir,
     )
     for line in _format_net_worth_refresh_result(result):
         print(line)
     broker_failed = WarningCode.NET_WORTH_REFRESH_BROKER_READ_FAILED in result.warning_codes
-    return 0 if result.generated and not broker_failed else 1
+    integrity_blocked = (
+        args.confirm_snapshot_history_write
+        and WarningCode.INTEGRITY_GUARD_BLOCKED in result.warning_codes
+    )
+    return 0 if result.generated and not broker_failed and not integrity_blocked else 1
 
 
 def _net_worth_doctor_cli(
@@ -1346,6 +1423,8 @@ def _run_net_worth_refresh(
     fx_rates_input: Path | None,
     env: dict[str, str],
     allow_live_read: bool,
+    confirm_snapshot_history_write: bool = False,
+    confirmed_history_dir: Path | None = None,
 ) -> NetWorthRefreshResult:
     warnings: list[WarningCode] = []
     broker_results: dict[str, RunnerResult] = {}
@@ -1353,7 +1432,9 @@ def _run_net_worth_refresh(
     provider_input_root = out_dir / "provider_inputs"
     merge_dir = out_dir / "merged"
     snapshot_dir = out_dir / "snapshots"
+    confirmed_snapshot_dir = out_dir / "snapshots_confirmed"
     dashboard_out_dir = out_dir / "dashboard"
+    integrity_guard_dir = out_dir / "integrity_guard"
 
     manual_result = private_input_center_to_snapshots(
         input_file=input_file,
@@ -1384,6 +1465,7 @@ def _run_net_worth_refresh(
             snapshot_result=None,
             dashboard_result=None,
             data_quality_result=data_quality_result,
+            snapshot_history_confirmed=False,
             warning_codes=_dedupe_warning_codes(
                 [*refresh_warnings, *data_quality_result.warning_codes]
             ),
@@ -1411,6 +1493,7 @@ def _run_net_worth_refresh(
 
     merge_result = merge_provider_bundles(input_root=provider_input_root, out_dir=merge_dir)
     warnings.extend(merge_result.warning_codes)
+    _clear_generated_dir(snapshot_dir)
     snapshot_result = record_snapshot(
         merge_dir=merge_result.output_dir,
         dashboard_dir=dashboard_dir,
@@ -1441,11 +1524,11 @@ def _run_net_worth_refresh(
             snapshot_result=snapshot_result,
             dashboard_result=None,
             data_quality_result=data_quality_result,
+            snapshot_history_confirmed=False,
             warning_codes=_dedupe_warning_codes(
                 [*refresh_warnings, *data_quality_result.warning_codes]
             ),
         )
-
     dashboard_result = write_dashboard_v3(
         merge_dir=merge_result.output_dir,
         snapshot_dir=snapshot_result.output_dir or snapshot_dir,
@@ -1456,6 +1539,64 @@ def _run_net_worth_refresh(
         out_dir=dashboard_out_dir,
     )
     warnings.extend(dashboard_result.warning_codes)
+    guard_input_warnings = _dedupe_warning_codes(warnings)
+    integrity_guard_result = run_net_worth_integrity_guard(
+        refresh_dir=out_dir,
+        out_dir=integrity_guard_dir,
+        providers_requested=brokers,
+        merge_result=merge_result,
+        snapshot_result=snapshot_result,
+        dashboard_result=dashboard_result,
+        fx_rates_file=fx_rates_input,
+        upstream_warning_codes=guard_input_warnings,
+        confirmed_history_dir=confirmed_history_dir,
+    )
+    warnings.extend(integrity_guard_result.warning_codes)
+    snapshot_history_confirmed = False
+    if confirm_snapshot_history_write and integrity_guard_result.ready_to_confirm:
+        confirmed_snapshot_result = record_snapshot(
+            merge_dir=merge_result.output_dir,
+            dashboard_dir=dashboard_dir,
+            out_dir=confirmed_snapshot_dir,
+            snapshot_id=snapshot_id,
+        )
+        warnings.extend(confirmed_snapshot_result.warning_codes)
+        if not confirmed_snapshot_result.generated:
+            warnings.append(WarningCode.NET_WORTH_REFRESH_FAILED)
+            refresh_warnings = _dedupe_warning_codes(warnings)
+            data_quality_result = _write_refresh_data_quality(
+                output_dir=out_dir,
+                brokers=brokers,
+                broker_results=broker_results,
+                manual_result=manual_result,
+                merge_result=merge_result,
+                snapshot_result=confirmed_snapshot_result,
+                dashboard_result=dashboard_result,
+                fx_rates_input=fx_rates_input,
+                upstream_warning_codes=refresh_warnings,
+                integrity_guard_result=integrity_guard_result,
+            )
+            return NetWorthRefreshResult(
+                input_file=input_file,
+                output_dir=out_dir,
+                manual_result=manual_result,
+                broker_results=broker_results,
+                merge_result=merge_result,
+                snapshot_result=confirmed_snapshot_result,
+                dashboard_result=dashboard_result,
+                data_quality_result=data_quality_result,
+                integrity_guard_result=integrity_guard_result,
+                snapshot_history_confirmed=False,
+                warning_codes=_dedupe_warning_codes(
+                    [*refresh_warnings, *data_quality_result.warning_codes]
+                ),
+            )
+        _replace_generated_dir(source_dir=confirmed_snapshot_dir, target_dir=snapshot_dir)
+        snapshot_result = confirmed_snapshot_result
+        snapshot_history_confirmed = True
+        warnings.append(WarningCode.NET_WORTH_REFRESH_SNAPSHOT_HISTORY_CONFIRMED)
+    else:
+        warnings.append(WarningCode.NET_WORTH_REFRESH_SNAPSHOT_PENDING_REVIEW)
     completion = (
         WarningCode.NET_WORTH_REFRESH_GENERATED_WITH_WARNINGS
         if warnings
@@ -1472,6 +1613,7 @@ def _run_net_worth_refresh(
         dashboard_result=dashboard_result,
         fx_rates_input=fx_rates_input,
         upstream_warning_codes=refresh_warnings,
+        integrity_guard_result=integrity_guard_result,
     )
     return NetWorthRefreshResult(
         input_file=input_file,
@@ -1482,6 +1624,8 @@ def _run_net_worth_refresh(
         snapshot_result=snapshot_result,
         dashboard_result=dashboard_result,
         data_quality_result=data_quality_result,
+        integrity_guard_result=integrity_guard_result,
+        snapshot_history_confirmed=snapshot_history_confirmed,
         warning_codes=_dedupe_warning_codes(
             [*refresh_warnings, *data_quality_result.warning_codes]
         ),
@@ -1499,6 +1643,7 @@ def _write_refresh_data_quality(
     dashboard_result: DashboardV3Result | None,
     fx_rates_input: Path | None,
     upstream_warning_codes: list[WarningCode],
+    integrity_guard_result: NetWorthIntegrityGuardResult | None = None,
 ) -> DataQualitySummaryResult:
     providers_succeeded = [
         provider
@@ -1544,6 +1689,20 @@ def _write_refresh_data_quality(
         stale_or_mixed_date_warning_codes=stale_or_mixed_date_warning_codes,
         dashboard_generated=bool(dashboard_result and dashboard_result.generated),
         upstream_warning_codes=upstream_warning_codes,
+        integrity_guard_generated=bool(
+            integrity_guard_result and integrity_guard_result.generated
+        ),
+        integrity_ready_to_confirm=bool(
+            integrity_guard_result and integrity_guard_result.ready_to_confirm
+        ),
+        integrity_blocking_warning_codes=[
+            code.value
+            for code in (
+                integrity_guard_result.blocking_warning_codes
+                if integrity_guard_result
+                else []
+            )
+        ],
     )
 
 
@@ -1617,6 +1776,16 @@ def _copy_provider_bundle(*, source_dir: Path, target_dir: Path) -> None:
             shutil.copy2(path, target_dir / path.name)
 
 
+def _clear_generated_dir(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path)
+
+
+def _replace_generated_dir(*, source_dir: Path, target_dir: Path) -> None:
+    _clear_generated_dir(target_dir)
+    shutil.copytree(source_dir, target_dir)
+
+
 def _parse_refresh_brokers(
     value: str, parser: argparse.ArgumentParser
 ) -> list[str]:
@@ -1672,6 +1841,7 @@ def _validate_net_worth_refresh_cli_scope(
         or args.validate_manual_nav_input
         or args.manual_nav_to_provider_bundle
         or args.private_input_center_form
+        or args.private_input_center_local_app
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -1730,6 +1900,7 @@ def _validate_net_worth_doctor_cli_scope(
         or args.validate_manual_nav_input
         or args.manual_nav_to_provider_bundle
         or args.private_input_center_form
+        or args.private_input_center_local_app
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -1766,6 +1937,7 @@ def _validate_private_input_center_cli_scope(
 ) -> None:
     commands = [
         args.private_input_center_form,
+        args.private_input_center_local_app,
         args.init_private_input_center,
         args.validate_private_input_center,
         args.private_input_center_to_snapshots,
@@ -1852,6 +2024,7 @@ def _validate_manual_nav_cli_scope(
         or args.validate_private_inputs
         or args.run_manual_snapshot_chain
         or args.private_input_center_form
+        or args.private_input_center_local_app
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -1898,6 +2071,7 @@ def _validate_private_input_cli_scope(
         or args.property_mortgage_snapshot
         or args.sg_manual_snapshot
         or args.private_input_center_form
+        or args.private_input_center_local_app
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -2025,6 +2199,7 @@ def _dashboard_v4_cli(args: argparse.Namespace, parser: argparse.ArgumentParser)
         or args.validate_manual_nav_input
         or args.manual_nav_to_provider_bundle
         or args.private_input_center_form
+        or args.private_input_center_local_app
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -2353,6 +2528,18 @@ def _format_net_worth_refresh_result(result: NetWorthRefreshResult) -> list[str]
     provider_count = len(result.merge_result.provider_counts) if result.merge_result else 0
     dashboard_dir = result.dashboard_result.output_dir if result.dashboard_result else None
     snapshot_dir = result.snapshot_result.output_dir if result.snapshot_result else None
+    integrity_ready = bool(
+        result.integrity_guard_result and result.integrity_guard_result.ready_to_confirm
+    )
+    integrity_blocking = (
+        ", ".join(
+            code.value for code in result.integrity_guard_result.blocking_warning_codes
+        )
+        if result.integrity_guard_result
+        else "None"
+    ) or "None"
+    review_snapshot_dir = result.output_dir / "snapshots"
+    confirmed_snapshot_dir = result.output_dir / "snapshots_confirmed"
     lines = [
         "Personal CFO local net worth refresh v0.5.9",
         f"Input file: {result.input_file}",
@@ -2363,11 +2550,17 @@ def _format_net_worth_refresh_result(result: NetWorthRefreshResult) -> list[str]
         f"Manual layers generated: {_yes_no(bool(result.manual_result and result.manual_result.generated))}",
         f"Merge generated: {_yes_no(result.merge_result is not None)}",
         f"Snapshot generated: {_yes_no(bool(result.snapshot_result and result.snapshot_result.generated))}",
+        f"Integrity guard generated: {_yes_no(bool(result.integrity_guard_result and result.integrity_guard_result.generated))}",
+        f"Integrity ready to confirm history: {_yes_no(integrity_ready)}",
+        f"Integrity blocking warning codes: {integrity_blocking}",
+        f"Snapshot history write confirmed: {_yes_no(result.snapshot_history_confirmed)}",
         f"Dashboard generated: {_yes_no(bool(result.dashboard_result and result.dashboard_result.generated))}",
         f"Account NAV rows: {account_rows}",
         f"Provider count: {provider_count}",
         f"Position rows: {position_rows}",
         f"Snapshot output directory: {snapshot_dir or ''}",
+        f"Snapshot review directory: {review_snapshot_dir}",
+        f"Confirmed history directory: {confirmed_snapshot_dir if confirmed_snapshot_dir.exists() else ''}",
         f"Dashboard output directory: {dashboard_dir or ''}",
         f"Warning codes: {warnings}",
     ]
@@ -2382,6 +2575,14 @@ def _format_net_worth_refresh_result(result: NetWorthRefreshResult) -> list[str]
             + ", ".join(
                 path.name
                 for path in sorted(result.data_quality_result.output_paths.values())
+            )
+        )
+    if result.integrity_guard_result and result.integrity_guard_result.output_paths:
+        lines.append(
+            "Integrity guard files: "
+            + ", ".join(
+                path.name
+                for path in sorted(result.integrity_guard_result.output_paths.values())
             )
         )
     return lines
@@ -2529,6 +2730,7 @@ def _format_dashboard_v4_result(result: DashboardV4Result) -> list[str]:
         f"Asset bucket rows: {result.bucket_count}",
         f"Bucket history rows: {result.history_count}",
         f"Withdrawal rows: {result.withdrawal_row_count}",
+        f"FIRE projection rows: {result.fire_projection_row_count}",
         f"Warning codes: {warnings}",
     ]
     if result.output_paths:

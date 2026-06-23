@@ -188,6 +188,7 @@
     <h2>Export JSON</h2>
     <div class="actions">
       <button type="button" id="preview_json">Preview JSON</button>
+      <button type="button" id="save_local_json">Save to local JSON</button>
       <button type="button" id="download_json" class="secondary">Download JSON</button>
       <button type="button" id="save_json" class="secondary">Save JSON File</button>
     </div>
@@ -201,6 +202,7 @@
   "use strict";
 
   const $ = (name) => document.getElementById(name);
+  const LOCAL_SAVE_ENDPOINT = "__LOCAL_SAVE_ENDPOINT__";
   const today = new Date().toISOString().slice(0, 10);
   $("snapshot_date").value = today;
   $("tax_ya").value = String(new Date().getFullYear());
@@ -362,6 +364,29 @@
   }
 
   $("preview_json").addEventListener("click", renderJson);
+  $("save_local_json").addEventListener("click", async function () {
+    const text = renderJson();
+    if (!LOCAL_SAVE_ENDPOINT) {
+      $("status").textContent = "Run the local app command to save directly without choosing a file.";
+      return;
+    }
+    try {
+      const response = await fetch(LOCAL_SAVE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: text
+      });
+      const result = await response.json();
+      const warnings = (result.warning_codes || []).join(", ");
+      if (!response.ok || !result.saved) {
+        $("status").textContent = "Local JSON save failed. Warning codes: " + (warnings || "None");
+        return;
+      }
+      $("status").textContent = "Saved to local private input JSON. Warning codes: " + (warnings || "None");
+    } catch (error) {
+      $("status").textContent = "Local JSON save app is not reachable.";
+    }
+  });
   $("download_json").addEventListener("click", function () {
     const blob = new Blob([renderJson()], { type: "application/json" });
     const link = document.createElement("a");
@@ -378,6 +403,7 @@
       return;
     }
     const handle = await window.showSaveFilePicker({
+      id: "personal-cfo-input-center-json",
       suggestedName: "personal_cfo_input.local.json",
       types: [{ description: "JSON", accept: { "application/json": [".json"] } }]
     });

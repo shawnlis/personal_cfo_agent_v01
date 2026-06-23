@@ -9,9 +9,11 @@ from pathlib import Path
 
 from personal_cfo_agent.models import WarningCode
 from personal_cfo_agent.private_input_center import (
+    build_private_input_center_form_html,
     generate_private_input_center_form,
     init_private_input_center,
     private_input_center_to_snapshots,
+    save_private_input_center_payload,
     validate_private_input_center,
 )
 from personal_cfo_agent.provider_bundle_merge import merge_provider_bundles
@@ -29,6 +31,7 @@ def test_private_input_center_cli_options_exist() -> None:
     option_strings = {option for action in parser._actions for option in action.option_strings}
 
     assert "--private-input-center-form" in option_strings
+    assert "--private-input-center-local-app" in option_strings
     assert "--init-private-input-center" in option_strings
     assert "--validate-private-input-center" in option_strings
     assert "--private-input-center-to-snapshots" in option_strings
@@ -46,11 +49,12 @@ def test_private_input_center_form_generation_is_static_local(tmp_path: Path) ->
     assert "http://" not in html
     assert "https://" not in html
     assert "<script" in html
-    assert "fetch(" not in html
+    assert "fetch(local_save_endpoint" in html
     assert "xmlhttprequest" not in html
     assert "sendbeacon" not in html
     assert "upload" not in html
     assert "preview json" in html
+    assert "save to local json" in html
     assert "download json" in html
     assert "save json file" in html
     assert "global snapshot" in html
@@ -74,6 +78,41 @@ def test_private_input_center_form_generation_is_static_local(tmp_path: Path) ->
     assert 'for="loan_id_hash"' not in html
     assert 'id="loan_id_hash"' not in html
     assert WarningCode.PRIVATE_INPUT_CENTER_FORM_GENERATED in result.warning_codes
+
+
+def test_private_input_center_form_can_embed_local_save_endpoint() -> None:
+    html = build_private_input_center_form_html(
+        local_save_endpoint="http://127.0.0.1:8765/save"
+    )
+
+    assert 'const LOCAL_SAVE_ENDPOINT = "http://127.0.0.1:8765/save";' in html
+    assert "https://" not in html
+    assert "sendbeacon" not in html.lower()
+    assert "xmlhttprequest" not in html.lower()
+
+
+def test_private_input_center_local_save_validates_before_write(tmp_path: Path) -> None:
+    target = tmp_path / "personal_cfo_input.local.json"
+    result = save_private_input_center_payload(
+        input_file=target,
+        payload_text=TEMPLATE.read_text(encoding="utf-8"),
+    )
+
+    assert result.saved is True
+    assert target.exists()
+    assert PRIVATE_VALUE_MARKER not in repr(result)
+    assert WarningCode.PRIVATE_INPUT_CENTER_VALIDATION_WITH_WARNINGS in result.warning_codes
+
+
+def test_private_input_center_local_save_fails_closed_on_invalid_json(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "personal_cfo_input.local.json"
+    result = save_private_input_center_payload(input_file=target, payload_text="{")
+
+    assert result.saved is False
+    assert not target.exists()
+    assert WarningCode.PRIVATE_INPUT_CENTER_SCHEMA_INVALID in result.warning_codes
 
 
 def test_private_input_center_init_creates_and_does_not_overwrite(tmp_path: Path) -> None:

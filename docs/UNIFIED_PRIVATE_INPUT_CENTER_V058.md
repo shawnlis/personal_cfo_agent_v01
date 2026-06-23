@@ -36,10 +36,24 @@ python .\scripts\personal_cfo_agent.py `
   --out-dir .\reports\personal_cfo_agent\private_input_center_v058
 ```
 
-The generated form is static and local. It has no external scripts, styles, network calls, browser beacon calls, or data transmission.
-It includes only local inline JavaScript for building the JSON preview, downloading the JSON file, or saving it through a user-initiated local file picker when the browser supports that API.
+The generated form is static and local. It has no external scripts, styles, browser beacon calls, or external data transmission.
+It includes only local inline JavaScript for building the JSON preview, downloading the JSON file, saving it through a user-initiated local file picker, or posting to the optional localhost save app described below.
 
 The form intentionally keeps the visible inputs short: one global snapshot date, one base currency, manual NAV rows, property value, mortgage balance, CPF/SRS totals, tax year, and HDB loan availability. Internal hashes required by the JSON schema are generated automatically from local labels/dates; raw account IDs, raw addresses, NRIC/FIN, and government identifiers are not requested.
+
+## Open A Local Save App
+
+For day-to-day editing, use the local save app so the form can write the ignored JSON file without making you find the file path in the browser:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --private-input-center-local-app `
+  --input-file .\private_inputs\personal_cfo_input.local.json `
+  --out-dir .\reports\personal_cfo_agent\private_input_center_local
+```
+
+Open the printed `http://127.0.0.1:8765/` URL, edit the form, and click `Save to local JSON`.
+The app binds to localhost only, validates the JSON before writing, and returns only save status plus warning codes. It does not print values, connect to brokers, or use external services.
 
 ## Initialize One Local Input File
 

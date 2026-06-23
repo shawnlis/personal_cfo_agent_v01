@@ -40,6 +40,9 @@ def write_data_quality_summary(
     stale_or_mixed_date_warning_codes: list[str],
     dashboard_generated: bool,
     upstream_warning_codes: list[WarningCode],
+    integrity_guard_generated: bool = False,
+    integrity_ready_to_confirm: bool = False,
+    integrity_blocking_warning_codes: list[str] | None = None,
 ) -> DataQualitySummaryResult:
     """Write refresh data-quality outputs without private values."""
 
@@ -91,6 +94,11 @@ def write_data_quality_summary(
         },
         "dashboard": {
             "generated": bool(dashboard_generated),
+        },
+        "integrity_guard": {
+            "generated": bool(integrity_guard_generated),
+            "ready_to_confirm": bool(integrity_ready_to_confirm),
+            "blocking_warning_codes": sorted(integrity_blocking_warning_codes or []),
         },
         "source_warning_codes": [code.value for code in upstream_warning_codes],
         "warning_codes": [code.value for code in warnings],
@@ -144,6 +152,7 @@ def _report(summary: dict[str, Any]) -> str:
     layers = summary["manual_layers"]
     counts = summary["counts"]
     warnings = summary["warning_codes"]
+    integrity = summary.get("integrity_guard", {})
     lines = [
         "# Data Quality Summary v0.6.4",
         "",
@@ -168,6 +177,19 @@ def _report(summary: dict[str, Any]) -> str:
         "",
         f"- Snapshot generated: {_yes_no(summary['snapshot']['generated'])}",
         f"- Dashboard generated: {_yes_no(summary['dashboard']['generated'])}",
+        "",
+        "## Integrity Guard",
+        "",
+        f"- Guard generated: {_yes_no(bool(integrity.get('generated')))}",
+        f"- Ready to confirm history: {_yes_no(bool(integrity.get('ready_to_confirm')))}",
+        (
+            "- Blocking warning codes: "
+            + (
+                ", ".join(integrity.get("blocking_warning_codes", []))
+                if integrity.get("blocking_warning_codes")
+                else "None"
+            )
+        ),
         "",
         "## FX",
         "",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import html
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,18 @@ LIQUID_WITHDRAWAL_FIELDNAMES = [
     "warning_codes",
 ]
 
+FIRE_TARGET_FIELDNAMES = [
+    "return_rate",
+    "starting_liquid_nav_usd",
+    "annual_investment_usd",
+    "fire_target_usd",
+    "estimated_years_to_target",
+    "years_to_target",
+    "projected_value_at_target_year_usd",
+    "fx_mode",
+    "warning_codes",
+]
+
 BUCKET_HISTORY_FIELDNAMES = [
     "snapshot_date",
     "snapshot_id",
@@ -60,6 +73,10 @@ BUCKET_LABELS = {
 
 WITHDRAWAL_RATES = (0.03, 0.035, 0.04)
 WITHDRAWAL_CURRENCIES = ("USD", "SGD", "CNY")
+FIRE_TARGET_USD = 20_000_000.0
+FIRE_ANNUAL_INVESTMENT_USD = 400_000.0
+FIRE_RETURN_RATES = (0.10, 0.15, 0.20, 0.25, 0.30)
+BROKER_PROVIDERS = ("ibkr", "moomoo", "tiger")
 
 
 @dataclass(frozen=True)
@@ -73,6 +90,7 @@ class DashboardV4Result:
     bucket_count: int = 0
     history_count: int = 0
     withdrawal_row_count: int = 0
+    fire_projection_row_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -153,6 +171,14 @@ def write_dashboard_v4(
         warnings=warnings,
     )
     warnings.append(WarningCode.DASHBOARD_V4_WITHDRAWAL_CASHFLOW_GENERATED)
+    fire_rows = _fire_target_rows(
+        bucket_amounts.get("liquid_investment_assets"),
+        base_currency=base_currency,
+        fx_context=fx_context,
+        warnings=warnings,
+    )
+    if fire_rows:
+        warnings.append(WarningCode.DASHBOARD_V4_FIRE_TARGET_GENERATED)
     warnings = _dedupe_warning_codes(warnings)
     completion = (
         WarningCode.DASHBOARD_V4_GENERATED_WITH_WARNINGS
@@ -168,6 +194,10 @@ def write_dashboard_v4(
         if row["warning_codes"]:
             continue
         row["warning_codes"] = _warning_text(warnings)
+    for row in fire_rows:
+        if row["warning_codes"]:
+            continue
+        row["warning_codes"] = _warning_text(warnings)
     for row in history_rows:
         if row["warning_codes"]:
             continue
@@ -180,6 +210,7 @@ def write_dashboard_v4(
         "dashboard_summary": out_dir / "dashboard_v060_summary.json",
         "asset_bucket_summary": out_dir / "asset_bucket_summary.csv",
         "liquid_withdrawal_cashflow": out_dir / "liquid_withdrawal_cashflow.csv",
+        "fire_target_projection": out_dir / "fire_target_projection.csv",
         "net_worth_bucket_history": out_dir / "net_worth_bucket_history.csv",
         "dashboard_warnings": out_dir / "dashboard_v060_warnings.md",
         "asset_bucket_chart": out_dir / "asset_bucket_chart.svg",
@@ -191,8 +222,10 @@ def write_dashboard_v4(
         fx_rates_file=fx_rates_file,
         base_currency=base_currency,
         bucket_rows=bucket_rows,
+        source_coverage=_source_coverage(refresh_dir, account_rows),
         history_rows=history_rows,
         withdrawal_rows=withdrawal_rows,
+        fire_rows=fire_rows,
         warnings=warnings,
     )
     _write_csv(output_paths["asset_bucket_summary"], ASSET_BUCKET_FIELDNAMES, bucket_rows)
@@ -200,6 +233,11 @@ def write_dashboard_v4(
         output_paths["liquid_withdrawal_cashflow"],
         LIQUID_WITHDRAWAL_FIELDNAMES,
         withdrawal_rows,
+    )
+    _write_csv(
+        output_paths["fire_target_projection"],
+        FIRE_TARGET_FIELDNAMES,
+        fire_rows,
     )
     _write_csv(
         output_paths["net_worth_bucket_history"],
@@ -216,7 +254,7 @@ def write_dashboard_v4(
     output_paths["asset_bucket_chart"].write_text(asset_svg, encoding="utf-8")
     output_paths["withdrawal_cashflow_chart"].write_text(cashflow_svg, encoding="utf-8")
     output_paths["net_worth_bucket_history_chart"].write_text(history_svg, encoding="utf-8")
-    markdown = _markdown(summary, display_bucket_rows, withdrawal_rows, history_rows)
+    markdown = _markdown(summary, display_bucket_rows, withdrawal_rows, fire_rows, history_rows)
     liquid_amount, liquid_currency = _liquid_bucket_amount(display_bucket_rows)
     output_paths["markdown_report"].write_text(markdown, encoding="utf-8")
     output_paths["html_report"].write_text(
@@ -242,6 +280,7 @@ def write_dashboard_v4(
         bucket_count=len(bucket_rows),
         history_count=len(history_rows),
         withdrawal_row_count=len(withdrawal_rows),
+        fire_projection_row_count=len(fire_rows),
     )
 
 
@@ -254,6 +293,9 @@ def _refresh_paths(refresh_dir: Path) -> dict[str, Path]:
         "property_summary": manual_dir / "property_mortgage" / "property_equity_summary.json",
         "cpf_ledger": manual_dir / "sg_retirement_tax" / "cpf_snapshot_ledger.csv",
         "srs_ledger": manual_dir / "sg_retirement_tax" / "srs_snapshot_ledger.csv",
+        "integrity_summary": refresh_dir
+        / "integrity_guard"
+        / "net_worth_integrity_summary.json",
     }
 
 
@@ -545,14 +587,127 @@ def _withdrawal_rows(
     return rows
 
 
+def _fire_target_rows(
+    liquid_amount: float | None,
+    *,
+    base_currency: str,
+    fx_context: _FxContext | None,
+    warnings: list[WarningCode],
+) -> list[dict[str, str]]:
+    start_usd, fx_mode = _liquid_amount_usd(
+        liquid_amount,
+        base_currency=base_currency,
+        fx_context=fx_context,
+        warnings=warnings,
+    )
+    if start_usd is None:
+        return []
+
+    rows: list[dict[str, str]] = []
+    for rate in FIRE_RETURN_RATES:
+        estimated_years = _estimated_years_to_fire_target(
+            start_usd,
+            annual_investment=FIRE_ANNUAL_INVESTMENT_USD,
+            target=FIRE_TARGET_USD,
+            return_rate=rate,
+        )
+        years, projected = _years_to_fire_target(
+            start_usd,
+            annual_investment=FIRE_ANNUAL_INVESTMENT_USD,
+            target=FIRE_TARGET_USD,
+            return_rate=rate,
+        )
+        rows.append(
+            {
+                "return_rate": f"{rate:.3f}",
+                "starting_liquid_nav_usd": _number_to_text(start_usd),
+                "annual_investment_usd": _number_to_text(FIRE_ANNUAL_INVESTMENT_USD),
+                "fire_target_usd": _number_to_text(FIRE_TARGET_USD),
+                "estimated_years_to_target": f"{estimated_years:.2f}",
+                "years_to_target": str(years),
+                "projected_value_at_target_year_usd": _number_to_text(projected),
+                "fx_mode": fx_mode,
+                "warning_codes": "",
+            }
+        )
+    return rows
+
+
+def _liquid_amount_usd(
+    liquid_amount: float | None,
+    *,
+    base_currency: str,
+    fx_context: _FxContext | None,
+    warnings: list[WarningCode],
+) -> tuple[float | None, str]:
+    if liquid_amount is None:
+        warnings.append(WarningCode.DASHBOARD_V4_FIRE_TARGET_INPUT_MISSING)
+        return None, ""
+    if base_currency == "USD":
+        return liquid_amount, "native"
+    if fx_context is None:
+        warnings.extend(
+            [
+                WarningCode.DASHBOARD_V4_FIRE_TARGET_FX_MISSING,
+                WarningCode.DASHBOARD_V4_FX_CONVERSION_SKIPPED,
+            ]
+        )
+        return None, ""
+    usd_to_base = fx_context.rates_to_base.get("USD")
+    if usd_to_base is None or usd_to_base <= 0:
+        warnings.extend(
+            [
+                WarningCode.DASHBOARD_V4_FIRE_TARGET_FX_MISSING,
+                WarningCode.DASHBOARD_V4_FX_CONVERSION_SKIPPED,
+            ]
+        )
+        return None, ""
+    return liquid_amount / usd_to_base, f"{fx_context.base_currency}_to_USD"
+
+
+def _estimated_years_to_fire_target(
+    starting_amount: float,
+    *,
+    annual_investment: float,
+    target: float,
+    return_rate: float,
+) -> float:
+    if starting_amount >= target:
+        return 0.0
+    if return_rate <= 0:
+        return (target - starting_amount) / annual_investment
+    numerator = target + annual_investment / return_rate
+    denominator = starting_amount + annual_investment / return_rate
+    return math.log(numerator / denominator) / math.log(1.0 + return_rate)
+
+
+def _years_to_fire_target(
+    starting_amount: float,
+    *,
+    annual_investment: float,
+    target: float,
+    return_rate: float,
+) -> tuple[int, float]:
+    if starting_amount >= target:
+        return 0, starting_amount
+    years = 0
+    projected = starting_amount
+    while projected < target and years < 200:
+        years += 1
+        projected = projected * (1.0 + return_rate) + annual_investment
+    return years, projected
+
+
 def _summary(
     *,
     refresh_dir: Path,
     fx_rates_file: Path | None,
     base_currency: str,
     bucket_rows: list[dict[str, str]],
+    source_coverage: dict[str, Any],
     history_rows: list[dict[str, str]],
     withdrawal_rows: list[dict[str, str]],
+    fire_rows: list[dict[str, str]],
     warnings: list[WarningCode],
 ) -> dict[str, Any]:
     return {
@@ -566,17 +721,163 @@ def _summary(
         "base_currency": base_currency,
         "asset_bucket_count": len(bucket_rows),
         "display_asset_bucket_count": len(_display_bucket_rows(bucket_rows)),
+        "source_coverage": source_coverage,
+        "snapshot_history_review": _snapshot_history_review(refresh_dir),
+        "integrity_guard": _integrity_guard_review(refresh_dir),
         "history_row_count": len(history_rows),
         "withdrawal_cashflow_row_count": len(withdrawal_rows),
+        "fire_target_projection_row_count": len(fire_rows),
+        "fire_target_usd": _number_to_text(FIRE_TARGET_USD),
+        "fire_annual_investment_usd": _number_to_text(FIRE_ANNUAL_INVESTMENT_USD),
         "warning_codes": [code.value for code in warnings],
         "bucket_labels": BUCKET_LABELS,
     }
+
+
+def _source_coverage(refresh_dir: Path, account_rows: list[dict[str, str]]) -> dict[str, Any]:
+    account_providers = sorted(
+        {
+            _clean(row.get("provider"))
+            for row in account_rows
+            if _clean(row.get("provider"))
+        }
+    )
+    provider_input_dirs = _provider_input_dirs(refresh_dir)
+    broker_input_dirs = [
+        provider for provider in provider_input_dirs if provider in BROKER_PROVIDERS
+    ]
+    broker_account_providers = [
+        provider for provider in account_providers if provider in BROKER_PROVIDERS
+    ]
+    manual_account_providers = [
+        provider for provider in account_providers if provider not in BROKER_PROVIDERS
+    ]
+    return {
+        "account_nav_row_count": len(account_rows),
+        "account_nav_providers": account_providers,
+        "provider_input_dirs": provider_input_dirs,
+        "broker_provider_input_dirs": broker_input_dirs,
+        "broker_account_providers": broker_account_providers,
+        "manual_account_providers": manual_account_providers,
+        "broker_data_included": bool(broker_input_dirs),
+    }
+
+
+def _provider_input_dirs(refresh_dir: Path) -> list[str]:
+    provider_inputs = refresh_dir / "provider_inputs"
+    if not provider_inputs.exists():
+        return []
+    return sorted(
+        path.name
+        for path in provider_inputs.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    )
+
+
+def _snapshot_history_review(refresh_dir: Path) -> dict[str, Any]:
+    review_dir = refresh_dir / "snapshots"
+    confirmed_dir = refresh_dir / "snapshots_confirmed"
+    return {
+        "review_snapshot_present": (review_dir / "net_worth_history.csv").exists(),
+        "confirmed_history_present": (confirmed_dir / "net_worth_history.csv").exists(),
+        "confirm_command": (
+            "python .\\scripts\\personal_cfo_agent.py --run-net-worth-refresh "
+            "--confirm-snapshot-history-write --input-file <private-input-file> "
+            f"--out-dir {refresh_dir}"
+        ),
+    }
+
+
+def _integrity_guard_review(refresh_dir: Path) -> dict[str, Any]:
+    path = refresh_dir / "integrity_guard" / "net_worth_integrity_summary.json"
+    if not path.exists():
+        return {
+            "generated": False,
+            "ready_to_confirm": False,
+            "blocking_warning_codes": ["INTEGRITY_GUARD_MISSING"],
+        }
+    payload = _read_json(path)
+    if not isinstance(payload, dict):
+        return {
+            "generated": False,
+            "ready_to_confirm": False,
+            "blocking_warning_codes": ["INTEGRITY_GUARD_UNREADABLE"],
+        }
+    blocking = payload.get("blocking_warning_codes", [])
+    if not isinstance(blocking, list):
+        blocking = []
+    return {
+        "generated": True,
+        "ready_to_confirm": bool(payload.get("ready_to_confirm")),
+        "blocking_warning_codes": [str(code) for code in blocking if str(code)],
+    }
+
+
+def _integrity_guard_lines(review: dict[str, Any]) -> list[str]:
+    generated = bool(review.get("generated"))
+    ready = bool(review.get("ready_to_confirm"))
+    blocking = _join_text_list(review.get("blocking_warning_codes"))
+    lines = [
+        f"- Integrity guard generated: {'yes' if generated else 'no'}",
+        f"- Ready to confirm history: {'yes' if ready else 'no'}",
+        f"- Blocking warning codes: {blocking}",
+    ]
+    if not ready:
+        lines.append("- Confirmed history should not be updated from this refresh.")
+    return lines
+
+
+def _snapshot_history_review_lines(review: dict[str, Any]) -> list[str]:
+    review_present = bool(review.get("review_snapshot_present"))
+    confirmed_present = bool(review.get("confirmed_history_present"))
+    lines = [
+        f"- Review snapshot generated: {'yes' if review_present else 'no'}",
+        f"- Confirmed history write present: {'yes' if confirmed_present else 'no'}",
+    ]
+    if not confirmed_present:
+        lines.append(
+            "- Confirm only after broker coverage, warning codes, and totals have been reviewed."
+        )
+        command = _clean(review.get("confirm_command"))
+        if command:
+            lines.append(f"- Confirm command: `{command}`")
+    return lines
+
+
+def _source_coverage_lines(source_coverage: dict[str, Any]) -> list[str]:
+    broker_data_included = bool(source_coverage.get("broker_data_included"))
+    broker_dirs = _join_text_list(source_coverage.get("broker_provider_input_dirs"))
+    manual_providers = _join_text_list(source_coverage.get("manual_account_providers"))
+    account_providers = _join_text_list(source_coverage.get("account_nav_providers"))
+    account_rows = source_coverage.get("account_nav_row_count", 0)
+    status = "yes" if broker_data_included else "no"
+    broker_detail = broker_dirs if broker_dirs != "None" else "None"
+    lines = [
+        f"- Broker data included: {status}",
+        f"- Broker provider inputs: {broker_detail}",
+        f"- Account NAV providers: {account_providers}",
+        f"- Manual/private input providers: {manual_providers}",
+        f"- Account NAV rows: {account_rows}",
+    ]
+    if not broker_data_included:
+        lines.append(
+            "- No broker provider input folders found; live broker assets are not confirmed in this refresh."
+        )
+    return lines
+
+
+def _join_text_list(value: object) -> str:
+    if not isinstance(value, list):
+        return "None"
+    cleaned = [str(item) for item in value if str(item)]
+    return ", ".join(cleaned) if cleaned else "None"
 
 
 def _markdown(
     summary: dict[str, Any],
     bucket_rows: list[dict[str, str]],
     withdrawal_rows: list[dict[str, str]],
+    fire_rows: list[dict[str, str]],
     history_rows: list[dict[str, str]],
 ) -> str:
     lines = [
@@ -587,7 +888,15 @@ def _markdown(
         "## CFO Cockpit",
         f"- Base currency: {summary['base_currency']}",
         f"- Asset buckets: {summary['display_asset_bucket_count']}",
-        f"- History rows: {summary['history_row_count']}",
+        "",
+        "## Data Source Coverage",
+        *_source_coverage_lines(summary.get("source_coverage", {})),
+        "",
+        "## Integrity Status",
+        *_integrity_guard_lines(summary.get("integrity_guard", {})),
+        "",
+        "## Snapshot History Review",
+        *_snapshot_history_review_lines(summary.get("snapshot_history_review", {})),
         "",
         "## Asset Buckets",
     ]
@@ -610,11 +919,44 @@ def _markdown(
     lines.extend(
         [
             "",
+            "## FIRE Target Scenario",
+            f"- Target: US${_display_number_text(summary['fire_target_usd'])}",
+            f"- Annual investment: US${_display_number_text(summary['fire_annual_investment_usd'])}",
+        ]
+    )
+    if fire_rows:
+        lines.append(
+            f"- Start liquid NAV: US${_display_number_text(fire_rows[0]['starting_liquid_nav_usd'])}"
+        )
+    lines.extend(_fire_target_table_lines(fire_rows))
+    lines.extend(
+        [
+            "",
             "## Bucketed Net Worth History",
-            f"- Rows: {len(history_rows)}",
         ]
     )
     return "\n".join(lines) + "\n"
+
+
+def _fire_target_table_lines(fire_rows: list[dict[str, str]]) -> list[str]:
+    if not fire_rows:
+        return ["- Not available"]
+    lines = [
+        "| Return | Years |",
+        "| --- | --- |",
+    ]
+    for row in fire_rows:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    f"{float(row['return_rate']) * 100:.0f}%",
+                    row["estimated_years_to_target"],
+                ]
+            )
+            + " |"
+        )
+    return lines
 
 
 def _asset_bucket_total_line(bucket_rows: list[dict[str, str]]) -> str:
@@ -760,12 +1102,24 @@ def _html(
     lines = markdown.splitlines()
     index = 0
     target_panel_inserted = False
+    current_section = ""
     while index < len(lines):
         line = lines[index]
         if line.startswith("# "):
+            current_section = ""
             sections.append(f"<h1>{html.escape(line[2:])}</h1>")
         elif line.startswith("## "):
+            current_section = line[3:]
             sections.append(f"<h2>{html.escape(line[3:])}</h2>")
+        elif current_section == "FIRE Target Scenario" and line.startswith("- Target:"):
+            fire_lines: list[str] = []
+            while index < len(lines) and lines[index].startswith("- "):
+                fire_lines.append(lines[index][2:])
+                index += 1
+            fire_panel = _fire_target_assumption_panel(fire_lines)
+            if fire_panel:
+                sections.append(fire_panel)
+            continue
         elif _is_markdown_table_row(line):
             table_lines: list[str] = []
             while index < len(lines) and _is_markdown_table_row(lines[index]):
@@ -805,6 +1159,13 @@ def _html(
         ".target-metric span{display:block;color:var(--muted);font-size:13px;margin-bottom:4px;}"
         ".target-metric strong{color:var(--ink);font-size:16px;}"
         "@media(max-width:760px){.target-controls{grid-template-columns:1fr;}}"
+        ".fire-assumptions{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px;margin:10px 0 12px;}"
+        ".fire-input-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:10px;}"
+        ".fire-field label{display:block;font-weight:700;color:var(--muted);margin-bottom:6px;}"
+        ".fire-money-input{display:flex;align-items:center;border:1px solid var(--line);border-radius:8px;background:#fff;overflow:hidden;}"
+        ".fire-money-input span{padding:0 10px;color:var(--muted);background:#f4f7f5;border-right:1px solid var(--line);align-self:stretch;display:flex;align-items:center;}"
+        ".fire-money-input input{width:100%;border:0;padding:11px 12px;font:inherit;color:var(--ink);background:#fff;outline:none;}"
+        ".fire-start{color:var(--muted);font-size:14px;margin:4px 0 0;}"
         ".chart-stack{display:grid;grid-template-columns:1fr;gap:22px;margin-top:22px;}"
         ".card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:22px;box-shadow:0 12px 28px rgba(22,32,42,.06);}"
         "svg{display:block;width:100%;height:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;}"
@@ -818,8 +1179,48 @@ def _html(
         + history_svg
         + "</section></div>"
         + _target_withdrawal_script()
+        + _fire_target_script()
         + "</main></body></html>\n"
     )
+
+
+def _fire_target_assumption_panel(fire_lines: list[str]) -> str:
+    target_usd = _extract_money_from_fire_line(fire_lines, "Target:")
+    annual_investment_usd = _extract_money_from_fire_line(fire_lines, "Annual investment:")
+    starting_liquid_nav_usd = _extract_money_from_fire_line(fire_lines, "Start liquid NAV:")
+    if target_usd is None or annual_investment_usd is None:
+        return ""
+    start_attr = ""
+    start_line = ""
+    if starting_liquid_nav_usd is not None:
+        start_attr = f" data-start-usd=\"{starting_liquid_nav_usd:.2f}\""
+        start_line = (
+            "<p class=\"fire-start\">Start liquid NAV: US$"
+            f"{_display_number_text(starting_liquid_nav_usd)}</p>"
+        )
+    return (
+        f"<section class=\"fire-assumptions\"{start_attr}>"
+        "<div class=\"fire-input-grid\">"
+        "<div class=\"fire-field\"><label for=\"fire-target-usd\">Target</label>"
+        "<div class=\"fire-money-input\"><span>US$</span>"
+        f"<input id=\"fire-target-usd\" type=\"number\" min=\"0\" step=\"100000\" value=\"{target_usd:.2f}\"></div></div>"
+        "<div class=\"fire-field\"><label for=\"fire-annual-investment-usd\">Annual investment</label>"
+        "<div class=\"fire-money-input\"><span>US$</span>"
+        f"<input id=\"fire-annual-investment-usd\" type=\"number\" min=\"0\" step=\"10000\" value=\"{annual_investment_usd:.2f}\"></div></div>"
+        "</div>"
+        + start_line
+        + "</section>"
+    )
+
+
+def _extract_money_from_fire_line(lines: list[str], prefix: str) -> float | None:
+    for line in lines:
+        if not line.startswith(prefix):
+            continue
+        text = line.removeprefix(prefix).strip()
+        text = text.removeprefix("US$").strip()
+        return _parse_number(text)
+    return None
 
 
 def _target_withdrawal_panel(
@@ -871,6 +1272,44 @@ def _target_withdrawal_script() -> str:
     )
 
 
+def _fire_target_script() -> str:
+    return (
+        "<script>"
+        "(()=>{"
+        "const panel=document.querySelector('.fire-assumptions');"
+        "const table=document.querySelector('.fire-target-table');"
+        "if(!panel||!table)return;"
+        "const targetInput=document.getElementById('fire-target-usd');"
+        "const investmentInput=document.getElementById('fire-annual-investment-usd');"
+        "const start=Number(panel.dataset.startUsd||0);"
+        "const yearsToTarget=(target,investment,rate)=>{"
+        "if(!target||target<=0)return NaN;"
+        "if(start>=target)return 0;"
+        "if(rate<=0){return investment>0?(target-start)/investment:NaN;}"
+        "const numerator=target+investment/rate;"
+        "const denominator=start+investment/rate;"
+        "if(numerator<=0||denominator<=0)return NaN;"
+        "return Math.log(numerator/denominator)/Math.log(1+rate);"
+        "};"
+        "const update=()=>{"
+        "const target=Number(targetInput.value||0);"
+        "const investment=Number(investmentInput.value||0);"
+        "table.querySelectorAll('tbody tr').forEach((row)=>{"
+        "const rate=Number(row.dataset.returnRate||0);"
+        "const cell=row.querySelector('.fire-years-cell');"
+        "if(!cell)return;"
+        "const years=yearsToTarget(target,investment,rate);"
+        "cell.textContent=Number.isFinite(years)?years.toFixed(2):'-';"
+        "});"
+        "};"
+        "targetInput.addEventListener('input',update);"
+        "investmentInput.addEventListener('input',update);"
+        "update();"
+        "})();"
+        "</script>"
+    )
+
+
 def _is_markdown_table_row(line: str) -> bool:
     stripped = line.strip()
     return stripped.startswith("|") and stripped.endswith("|")
@@ -882,18 +1321,33 @@ def _html_table(table_lines: list[str]) -> str:
 
     rows = [_markdown_table_cells(line) for line in table_lines]
     header = rows[0]
+    is_fire_target_table = header == ["Return", "Years"]
     body_rows = [
         row
         for index, row in enumerate(rows[1:], start=1)
         if not _is_markdown_separator_row(table_lines[index])
     ]
     head_html = "".join(f"<th>{html.escape(cell)}</th>" for cell in header)
-    body_html = "".join(
-        "<tr>" + "".join(f"<td>{_html_table_cell(cell)}</td>" for cell in row) + "</tr>"
-        for row in body_rows
-    )
+    body_html_parts: list[str] = []
+    for row in body_rows:
+        row_attrs = ""
+        if is_fire_target_table and row:
+            return_rate = _parse_percent_text(row[0])
+            if return_rate is not None:
+                row_attrs = f" data-return-rate=\"{return_rate:.6f}\""
+        cell_parts: list[str] = []
+        for cell_index, cell in enumerate(row):
+            cell_class = (
+                " class=\"fire-years-cell\""
+                if is_fire_target_table and cell_index == 1
+                else ""
+            )
+            cell_parts.append(f"<td{cell_class}>{_html_table_cell(cell)}</td>")
+        body_html_parts.append("<tr" + row_attrs + ">" + "".join(cell_parts) + "</tr>")
+    body_html = "".join(body_html_parts)
+    table_class = " class=\"fire-target-table\"" if is_fire_target_table else ""
     return (
-        "<div class=\"table-wrap\"><table><thead><tr>"
+        f"<div class=\"table-wrap\"><table{table_class}><thead><tr>"
         + head_html
         + "</tr></thead><tbody>"
         + body_html
@@ -903,6 +1357,14 @@ def _html_table(table_lines: list[str]) -> str:
 
 def _markdown_table_cells(line: str) -> list[str]:
     return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _parse_percent_text(value: str) -> float | None:
+    text = value.strip().removesuffix("%")
+    parsed = _parse_number(text)
+    if parsed is None:
+        return None
+    return parsed / 100.0
 
 
 def _html_table_cell(cell: str) -> str:
