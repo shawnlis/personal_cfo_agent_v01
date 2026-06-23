@@ -60,6 +60,14 @@ tested, documented, and does not rely on operator memory.
       no live read paths for offline commands, no external upload/browser
       markers, and no recommendation/trading/tax-advice wording.
 
+11. Snapshot history cleanup is explicit and backed up.
+    - `--snapshot-history-manager` must default to dry-run and never run broker
+      or account diagnostics.
+    - Applying changes must require explicit keep dates or snapshot IDs.
+    - Applying changes must create a local backup before rewriting history CSVs.
+    - Manager reports must show row counts and warning codes only, not exact
+      NAV, balances, positions, account IDs, or account hashes.
+
 ## Validation Gates
 
 Run focused tests after code changes:
@@ -71,6 +79,7 @@ python -m pytest `
   tests\test_local_workbench_snapshot_review_v066.py `
   tests\test_net_worth_doctor_v062.py `
   tests\test_net_worth_integrity_guard_v065.py `
+  tests\test_snapshot_history_manager_v068.py `
   tests\test_dashboard_v060.py `
   tests\test_security_boundaries.py `
   -q
