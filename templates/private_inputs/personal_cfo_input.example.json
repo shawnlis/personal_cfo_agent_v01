@@ -4,6 +4,27 @@
   "base_currency": "SGD",
   "source_type": "synthetic_fixture",
   "review_required": true,
+  "expected_sources": {
+    "providers": [
+      {
+        "provider": "ibkr",
+        "required": false
+      },
+      {
+        "provider": "moomoo",
+        "required": false
+      },
+      {
+        "provider": "tiger",
+        "required": false
+      }
+    ],
+    "manual_layers": {
+      "manual_nav": "required",
+      "property_mortgage": "optional",
+      "sg_retirement_tax": "optional"
+    }
+  },
   "fx_rates": {
     "base_currency": "SGD",
     "rates_to_base": {

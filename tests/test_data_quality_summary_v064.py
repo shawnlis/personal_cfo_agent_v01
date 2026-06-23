@@ -263,6 +263,80 @@ def test_data_quality_surfaces_broker_failure_without_live_read(tmp_path: Path) 
     assert WarningCode.DATA_QUALITY_BROKER_FAILURES.value in summary["warning_codes"]
 
 
+def test_expected_required_provider_missing_blocks_confirm_and_data_quality(
+    tmp_path: Path,
+) -> None:
+    input_file = _write_private_input(tmp_path)
+    payload = json.loads(input_file.read_text(encoding="utf-8"))
+    payload["expected_sources"] = {
+        "providers": [{"provider": "ibkr", "required": True}],
+        "manual_layers": {"manual_nav": "required"},
+    }
+    input_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = _run_net_worth_refresh(
+        input_file=input_file,
+        out_dir=tmp_path / "refresh_expected_required_missing",
+        brokers=[],
+        dashboard_dir=None,
+        snapshot_id=None,
+        fx_rates_input=_write_fx_rates(tmp_path),
+        env=_synthetic_env(),
+        allow_live_read=False,
+        confirm_snapshot_history_write=True,
+    )
+
+    assert result.snapshot_history_confirmed is False
+    assert result.integrity_guard_result is not None
+    assert result.integrity_guard_result.ready_to_confirm is False
+    assert WarningCode.INTEGRITY_EXPECTED_SOURCE_MISSING in result.warning_codes
+    assert WarningCode.DATA_QUALITY_EXPECTED_SOURCE_MISSING in result.warning_codes
+    summary = json.loads(
+        result.data_quality_result.output_paths["summary"].read_text(encoding="utf-8")
+    )
+    assert summary["expected_sources"]["providers_required"] == ["ibkr"]
+    assert summary["provider_gate"][0]["provider"] == "ibkr"
+    assert summary["provider_gate"][0]["expected_required"] is True
+    assert summary["provider_gate"][0]["status"] == "missing_required"
+    assert (
+        WarningCode.INTEGRITY_EXPECTED_SOURCE_MISSING.value
+        in summary["integrity_guard"]["blocking_warning_codes"]
+    )
+
+
+def test_expected_optional_provider_missing_is_non_blocking(
+    tmp_path: Path,
+) -> None:
+    input_file = _write_private_input(tmp_path)
+    payload = json.loads(input_file.read_text(encoding="utf-8"))
+    payload["expected_sources"] = {
+        "providers": [{"provider": "ibkr", "required": False}],
+        "manual_layers": {"manual_nav": "required"},
+    }
+    input_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = _run_net_worth_refresh(
+        input_file=input_file,
+        out_dir=tmp_path / "refresh_expected_optional_missing",
+        brokers=[],
+        dashboard_dir=None,
+        snapshot_id=None,
+        fx_rates_input=_write_fx_rates(tmp_path),
+        env=_synthetic_env(),
+        allow_live_read=False,
+        confirm_snapshot_history_write=True,
+    )
+
+    assert result.snapshot_history_confirmed is True
+    assert WarningCode.INTEGRITY_EXPECTED_SOURCE_MISSING not in result.warning_codes
+    assert WarningCode.DATA_QUALITY_EXPECTED_SOURCE_MISSING not in result.warning_codes
+    summary = json.loads(
+        result.data_quality_result.output_paths["summary"].read_text(encoding="utf-8")
+    )
+    assert summary["expected_sources"]["providers_optional"] == ["ibkr"]
+    assert summary["provider_gate"][0]["status"] == "optional_missing"
+
+
 def test_data_quality_outputs_do_not_include_private_values(tmp_path: Path) -> None:
     result = _run_net_worth_refresh(
         input_file=_write_private_input(tmp_path, private_marker=True),

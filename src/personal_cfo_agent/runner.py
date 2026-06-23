@@ -75,6 +75,7 @@ from personal_cfo_agent.net_worth_integrity_guard import (
 )
 from personal_cfo_agent.normalizer import normalize_snapshots
 from personal_cfo_agent.private_input_center import (
+    ExpectedSourceContract,
     PrivateInputCenterFormResult,
     PrivateInputCenterInitResult,
     PrivateInputCenterSnapshotResult,
@@ -82,6 +83,7 @@ from personal_cfo_agent.private_input_center import (
     generate_private_input_center_form,
     init_private_input_center,
     private_input_center_to_snapshots,
+    read_expected_source_contract,
     serve_private_input_center_local_app,
     validate_private_input_center,
     write_fx_rates_from_private_input_center,
@@ -1486,6 +1488,8 @@ def _run_net_worth_refresh(
     dashboard_out_dir = out_dir / "dashboard"
     integrity_guard_dir = out_dir / "integrity_guard"
     snapshot_review_dir = out_dir / "snapshot_review"
+    expected_contract = read_expected_source_contract(input_file=input_file)
+    warnings.extend(expected_contract.warning_codes)
     effective_fx_rates_input = fx_rates_input or write_fx_rates_from_private_input_center(
         input_file=input_file,
         out_file=out_dir / "fx_rates_from_private_input.json",
@@ -1510,6 +1514,7 @@ def _run_net_worth_refresh(
             dashboard_result=None,
             fx_rates_input=effective_fx_rates_input,
             upstream_warning_codes=refresh_warnings,
+            expected_contract=expected_contract,
         )
         snapshot_review_result = write_snapshot_review(
             refresh_dir=out_dir,
@@ -1578,6 +1583,7 @@ def _run_net_worth_refresh(
             dashboard_result=None,
             fx_rates_input=effective_fx_rates_input,
             upstream_warning_codes=refresh_warnings,
+            expected_contract=expected_contract,
         )
         snapshot_review_result = write_snapshot_review(
             refresh_dir=out_dir,
@@ -1617,6 +1623,9 @@ def _run_net_worth_refresh(
         refresh_dir=out_dir,
         out_dir=integrity_guard_dir,
         providers_requested=brokers,
+        expected_required_providers=expected_contract.providers_required,
+        expected_required_manual_layers=expected_contract.manual_layers_required,
+        manual_layer_status=_manual_layer_status(manual_result),
         merge_result=merge_result,
         snapshot_result=snapshot_result,
         dashboard_result=dashboard_result,
@@ -1648,6 +1657,7 @@ def _run_net_worth_refresh(
                 fx_rates_input=effective_fx_rates_input,
                 upstream_warning_codes=refresh_warnings,
                 integrity_guard_result=integrity_guard_result,
+                expected_contract=expected_contract,
             )
             snapshot_review_result = write_snapshot_review(
                 refresh_dir=out_dir,
@@ -1696,6 +1706,7 @@ def _run_net_worth_refresh(
         fx_rates_input=effective_fx_rates_input,
         upstream_warning_codes=refresh_warnings,
         integrity_guard_result=integrity_guard_result,
+        expected_contract=expected_contract,
     )
     snapshot_review_result = write_snapshot_review(
         refresh_dir=out_dir,
@@ -1735,6 +1746,7 @@ def _write_refresh_data_quality(
     fx_rates_input: Path | None,
     upstream_warning_codes: list[WarningCode],
     integrity_guard_result: NetWorthIntegrityGuardResult | None = None,
+    expected_contract: ExpectedSourceContract | None = None,
 ) -> DataQualitySummaryResult:
     providers_succeeded = [
         provider
@@ -1754,23 +1766,24 @@ def _write_refresh_data_quality(
         for code in upstream_warning_codes
         if "STALE" in code.value or "MIXED_DATE" in code.value
     ]
-    manual_layer_status = {
-        "manual_input_converted": bool(manual_result and manual_result.generated),
-        "manual_nav": bool(
-            manual_result and manual_result.manual_nav_result and manual_result.manual_nav_result.generated
-        ),
-        "property_mortgage": bool(
-            manual_result and manual_result.property_result and manual_result.property_result.generated
-        ),
-        "sg_retirement_tax": bool(
-            manual_result and manual_result.sg_result and manual_result.sg_result.generated
-        ),
-    }
+    manual_layer_status = _manual_layer_status(manual_result)
     return write_data_quality_summary(
         out_dir=output_dir,
         providers_requested=brokers,
         providers_succeeded=providers_succeeded,
         providers_failed=providers_failed,
+        expected_required_providers=(
+            expected_contract.providers_required if expected_contract else []
+        ),
+        expected_optional_providers=(
+            expected_contract.providers_optional if expected_contract else []
+        ),
+        expected_required_manual_layers=(
+            expected_contract.manual_layers_required if expected_contract else []
+        ),
+        expected_optional_manual_layers=(
+            expected_contract.manual_layers_optional if expected_contract else []
+        ),
         manual_layer_status=manual_layer_status,
         account_nav_row_count=merge_result.account_nav_row_count if merge_result else 0,
         position_row_count=merge_result.position_row_count if merge_result else 0,
@@ -1795,6 +1808,23 @@ def _write_refresh_data_quality(
             )
         ],
     )
+
+
+def _manual_layer_status(
+    manual_result: PrivateInputCenterSnapshotResult | None,
+) -> dict[str, bool]:
+    return {
+        "manual_input_converted": bool(manual_result and manual_result.generated),
+        "manual_nav": bool(
+            manual_result and manual_result.manual_nav_result and manual_result.manual_nav_result.generated
+        ),
+        "property_mortgage": bool(
+            manual_result and manual_result.property_result and manual_result.property_result.generated
+        ),
+        "sg_retirement_tax": bool(
+            manual_result and manual_result.sg_result and manual_result.sg_result.generated
+        ),
+    }
 
 
 def _refresh_fx_complete(

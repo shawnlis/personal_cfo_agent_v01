@@ -27,6 +27,8 @@ tested, documented, and does not rely on operator memory.
 4. Provider gate is visible.
    - Requested, succeeded, failed, missing, and not-requested providers must be
      represented in redacted data quality output.
+   - Required expected providers must be represented even when the refresh was
+     run manually and no live broker read was requested.
 
 5. Source provenance is visible.
    - Data quality output must identify whether layers came from local manual
@@ -42,6 +44,8 @@ tested, documented, and does not rely on operator memory.
    - Mixed currency without complete FX, missing requested brokers, stale/mixed
      dates, missing provider NAV, unavailable totals, and abnormal changes must
      block confirmed history writes.
+   - Missing sources marked required by the expected-source contract must block
+     confirmed history writes.
 
 8. Dashboard v4 has a stable current alias.
    - Dashboard v4 CLI generation must sync the latest generated dashboard to

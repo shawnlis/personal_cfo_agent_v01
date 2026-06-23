@@ -40,6 +40,9 @@ def run_net_worth_integrity_guard(
     refresh_dir: Path,
     out_dir: Path,
     providers_requested: list[str],
+    expected_required_providers: list[str] | None = None,
+    expected_required_manual_layers: list[str] | None = None,
+    manual_layer_status: dict[str, bool] | None = None,
     merge_result: MergeResult | None,
     snapshot_result: SnapshotStoreResult | None,
     dashboard_result: DashboardV3Result | None,
@@ -61,12 +64,27 @@ def run_net_worth_integrity_guard(
     account_rows = _account_nav_rows(refresh_dir, merge_result)
     warnings: list[WarningCode] = []
     blocking: list[WarningCode] = []
-    provider_checks = _provider_checks(account_rows, providers_requested)
+    required_providers = _clean_list(expected_required_providers or [])
+    required_manual_layers = _clean_list(expected_required_manual_layers or [])
+    provider_checks = _provider_checks(
+        account_rows,
+        providers_requested=providers_requested,
+        expected_required_providers=required_providers,
+    )
     for check in provider_checks.values():
         if not check["account_nav_rows"]:
             blocking.append(WarningCode.INTEGRITY_BROKER_REQUESTED_MISSING)
+            if check.get("expected_required"):
+                blocking.append(WarningCode.INTEGRITY_EXPECTED_SOURCE_MISSING)
         elif not check["provider_reported_nav_rows"]:
             blocking.append(WarningCode.INTEGRITY_PROVIDER_NAV_MISSING)
+    missing_manual_layers = [
+        layer
+        for layer in required_manual_layers
+        if not (manual_layer_status or {}).get(layer, False)
+    ]
+    if missing_manual_layers:
+        blocking.append(WarningCode.INTEGRITY_EXPECTED_SOURCE_MISSING)
 
     current_total = _current_total_net_worth(
         refresh_dir=refresh_dir,
@@ -131,6 +149,11 @@ def run_net_worth_integrity_guard(
         "ready_to_confirm": ready_to_confirm,
         "blocking_warning_codes": [code.value for code in blocking],
         "providers_requested": sorted(providers_requested),
+        "expected_sources": {
+            "providers_required": required_providers,
+            "manual_layers_required": required_manual_layers,
+            "manual_layers_missing": missing_manual_layers,
+        },
         "provider_checks": provider_checks,
         "account_nav_row_count": len(account_rows),
         "account_nav_currencies": sorted(account_nav_currencies),
@@ -178,10 +201,15 @@ def _account_nav_rows(
 
 
 def _provider_checks(
-    rows: list[dict[str, str]], providers_requested: list[str]
+    rows: list[dict[str, str]],
+    *,
+    providers_requested: list[str],
+    expected_required_providers: list[str],
 ) -> dict[str, dict[str, int | str]]:
     checks: dict[str, dict[str, int | str]] = {}
-    for provider in sorted({provider.strip().lower() for provider in providers_requested if provider}):
+    requested = {provider.strip().lower() for provider in providers_requested if provider}
+    expected_required = set(expected_required_providers)
+    for provider in sorted({*requested, *expected_required}):
         provider_rows = [
             row for row in rows if str(row.get("provider", "")).strip().lower() == provider
         ]
@@ -195,6 +223,8 @@ def _provider_checks(
             status = "provider_nav_missing"
         checks[provider] = {
             "status": status,
+            "requested": provider in requested,
+            "expected_required": provider in expected_required,
             "account_nav_rows": len(provider_rows),
             "provider_reported_nav_rows": len(provider_reported_rows),
         }
@@ -361,6 +391,7 @@ def _write_warnings(
 
 def _report(summary: dict[str, Any]) -> str:
     providers = summary["providers_requested"]
+    expected_sources = summary.get("expected_sources", {})
     blocking = summary["blocking_warning_codes"]
     lines = [
         "# Net Worth Integrity Guard v0.6.5",
@@ -375,6 +406,22 @@ def _report(summary: dict[str, Any]) -> str:
         "## Provider Coverage",
         "",
         f"- Providers requested: {', '.join(providers) if providers else 'None'}",
+        (
+            "- Required expected providers: "
+            + (
+                ", ".join(expected_sources.get("providers_required", []))
+                if expected_sources.get("providers_required")
+                else "None"
+            )
+        ),
+        (
+            "- Missing required manual layers: "
+            + (
+                ", ".join(expected_sources.get("manual_layers_missing", []))
+                if expected_sources.get("manual_layers_missing")
+                else "None"
+            )
+        ),
         f"- Account NAV rows: {summary['account_nav_row_count']}",
         "",
         "## FX And Dates",
@@ -394,6 +441,10 @@ def _report(summary: dict[str, Any]) -> str:
 
 def _yes_no(value: bool) -> str:
     return "yes" if value else "no"
+
+
+def _clean_list(values: list[str]) -> list[str]:
+    return sorted({str(value).strip().lower() for value in values if str(value).strip()})
 
 
 def _dedupe_warning_codes(codes: list[WarningCode]) -> list[WarningCode]:

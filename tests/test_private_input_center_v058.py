@@ -13,6 +13,7 @@ from personal_cfo_agent.private_input_center import (
     generate_private_input_center_form,
     init_private_input_center,
     private_input_center_to_snapshots,
+    read_expected_source_contract,
     save_private_input_center_payload,
     validate_private_input_center,
     write_fx_rates_from_private_input_center,
@@ -78,6 +79,12 @@ def test_private_input_center_form_generation_is_static_local(tmp_path: Path) ->
     assert 'id="fx_cny_to_base"' in html
     assert 'id="fx_hkd_to_base"' in html
     assert "optionalamount(\"fx_usd_to_base\")" in html
+    assert "expected sources" in html
+    assert 'id="expect_ibkr"' in html
+    assert 'id="expect_moomoo"' in html
+    assert 'id="expect_tiger"' in html
+    assert 'id="expect_manual_nav"' in html
+    assert "expected_sources" in html
     assert "value of unvested shares" in html
     assert 'id="unvested_shares_nav"' in html
     assert "webull nav" in html
@@ -162,6 +169,49 @@ def test_private_input_center_validation_accepts_synthetic_input(tmp_path: Path)
     assert WarningCode.MANUAL_NAV_OPTIONAL_SPLIT_MISSING in result.warning_codes
     assert WarningCode.MANUAL_NAV_MIXED_CURRENCIES in result.warning_codes
     assert WarningCode.PRIVATE_INPUT_CENTER_VALIDATION_WITH_WARNINGS in result.warning_codes
+
+
+def test_private_input_center_reads_expected_source_contract(
+    tmp_path: Path,
+) -> None:
+    input_file = _write_input(tmp_path)
+    payload = json.loads(input_file.read_text(encoding="utf-8"))
+    payload["expected_sources"] = {
+        "providers": [
+            {"provider": "ibkr", "required": True},
+            {"provider": "moomoo", "required": False},
+        ],
+        "manual_layers": {
+            "manual_nav": "required",
+            "property_mortgage": "optional",
+        },
+    }
+    input_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    contract = read_expected_source_contract(input_file=input_file)
+
+    assert contract.providers_required == ["ibkr"]
+    assert contract.providers_optional == ["moomoo"]
+    assert contract.manual_layers_required == ["manual_nav"]
+    assert contract.manual_layers_optional == ["property_mortgage"]
+    assert contract.warning_codes == []
+
+
+def test_private_input_center_invalid_expected_source_contract_warns(
+    tmp_path: Path,
+) -> None:
+    input_file = _write_input(tmp_path)
+    payload = json.loads(input_file.read_text(encoding="utf-8"))
+    payload["expected_sources"] = {"providers": "ibkr"}
+    input_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    validation = validate_private_input_center(input_file=input_file)
+    contract = read_expected_source_contract(input_file=input_file)
+
+    assert validation.valid is False
+    assert WarningCode.EXPECTED_SOURCE_CONTRACT_INVALID in validation.warning_codes
+    assert WarningCode.PRIVATE_INPUT_CENTER_VALIDATION_FAILED in validation.warning_codes
+    assert WarningCode.EXPECTED_SOURCE_CONTRACT_INVALID in contract.warning_codes
 
 
 def test_private_input_center_maps_simplified_form_enums_for_manual_nav(

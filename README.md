@@ -19,6 +19,7 @@ unified private input center
 -> merged account NAV
 -> pending snapshot review
 -> integrity guard
+-> expected source contract gate
 -> confirmed snapshot history after explicit approval
 -> Dashboard v3 / Dashboard v4
 -> local net worth doctor
@@ -49,6 +50,17 @@ python .\scripts\personal_cfo_agent.py `
 
 Validation prints presence, counts, provider labels, currencies, and warning
 codes only. It must not print exact private values.
+
+## Expected Source Contract
+
+The unified private input can declare which broker and manual sources are
+required for a refresh. Required sources appear in the data quality provider
+gate and block confirmed history writes when missing. Optional sources are
+reported but do not block history.
+
+The current template includes `expected_sources` with manual NAV required and
+IBKR/Moomoo/Tiger optional by default. Edit it locally when a run must include a
+specific live broker NAV.
 
 ## Manual-Only Net Worth Refresh
 
@@ -206,6 +218,8 @@ Useful summary files:
 
 The stabilization checklist for this local-first workflow is documented in
 `docs/LOCAL_WORKFLOW_STABILIZATION_V066.md`.
+Expected source contract behavior is documented in
+`docs/EXPECTED_SOURCE_CONTRACT_V067.md`.
 
 ## Validation
 

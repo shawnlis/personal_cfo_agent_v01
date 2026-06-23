@@ -207,6 +207,48 @@
   </section>
 
   <section class="panel">
+    <h2>Expected Sources</h2>
+    <div class="grid">
+      <div>
+        <label>
+          <input id="expect_ibkr" type="checkbox">
+          Require IBKR live NAV
+        </label>
+      </div>
+      <div>
+        <label>
+          <input id="expect_moomoo" type="checkbox">
+          Require Moomoo live NAV
+        </label>
+      </div>
+      <div>
+        <label>
+          <input id="expect_tiger" type="checkbox">
+          Require Tiger live NAV
+        </label>
+      </div>
+      <div>
+        <label>
+          <input id="expect_manual_nav" type="checkbox" checked>
+          Require manual NAV layer
+        </label>
+      </div>
+      <div>
+        <label>
+          <input id="expect_property_mortgage" type="checkbox">
+          Require property and mortgage layer
+        </label>
+      </div>
+      <div>
+        <label>
+          <input id="expect_sg_manual" type="checkbox">
+          Require Singapore manual layers
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
     <h2>Export JSON</h2>
     <div class="actions">
       <button type="button" id="save_local_json">Save to local JSON</button>
@@ -294,6 +336,18 @@
       base_currency: baseCurrency,
       source_type: "local_private_input_center",
       review_required: true,
+      expected_sources: {
+        providers: [
+          { provider: "ibkr", required: $("expect_ibkr").checked },
+          { provider: "moomoo", required: $("expect_moomoo").checked },
+          { provider: "tiger", required: $("expect_tiger").checked }
+        ],
+        manual_layers: {
+          manual_nav: $("expect_manual_nav").checked ? "required" : "optional",
+          property_mortgage: $("expect_property_mortgage").checked ? "required" : "optional",
+          sg_retirement_tax: $("expect_sg_manual").checked ? "required" : "optional"
+        }
+      },
       fx_rates: {
         base_currency: baseCurrency,
         rates_to_base: {
