@@ -32,6 +32,8 @@ The preferred manual flow is the unified private input center:
 
 ```powershell
 python .\scripts\personal_cfo_agent.py --private-input-center-form --out-dir .\reports\personal_cfo_agent\private_input_center_local
+python .\scripts\personal_cfo_agent.py --private-input-center-local-app --input-file .\private_inputs\personal_cfo_input.local.json --out-dir .\reports\personal_cfo_agent\private_input_center_local
+python .\scripts\personal_cfo_agent.py --fetch-fx-rates --base-currency SGD --fx-currencies USD,CNY,HKD --out-file .\private_inputs\fx_rates.local.json
 python .\scripts\personal_cfo_agent.py --validate-private-input-center --input-file .\private_inputs\personal_cfo_input.local.json
 python .\scripts\personal_cfo_agent.py --run-net-worth-refresh --refresh-brokers none --input-file .\private_inputs\personal_cfo_input.local.json --out-dir .\reports\personal_cfo_agent\net_worth_refresh_local
 python .\scripts\personal_cfo_agent.py --snapshot-review --refresh-dir .\reports\personal_cfo_agent\net_worth_refresh_local --out-dir .\reports\personal_cfo_agent\net_worth_refresh_local\snapshot_review
@@ -44,3 +46,9 @@ Manual-only refresh must use no external provider reads. Broker refresh requires
 explicit `--allow-live-read` and must stay on existing read-only provider paths.
 Confirmed history writes should be made only after snapshot review and dashboard
 review pass.
+
+The input form should not show Expected Sources checkboxes. New form exports use
+the complete-refresh expected-source contract by default; this is a quality gate
+only and must not trigger broker reads by itself. Public FX fetch is allowed only
+through the explicit CLI/local-app action and must not use credentials or print
+rate values.

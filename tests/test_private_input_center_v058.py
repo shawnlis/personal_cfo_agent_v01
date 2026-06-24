@@ -6,10 +6,13 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from personal_cfo_agent.models import WarningCode
 from personal_cfo_agent.private_input_center import (
+    PrivateInputCenterFxFetchResult,
     build_private_input_center_form_html,
+    fetch_public_fx_rates,
     generate_private_input_center_form,
     init_private_input_center,
     private_input_center_to_snapshots,
@@ -34,6 +37,7 @@ def test_private_input_center_cli_options_exist() -> None:
 
     assert "--private-input-center-form" in option_strings
     assert "--private-input-center-local-app" in option_strings
+    assert "--fetch-fx-rates" in option_strings
     assert "--init-private-input-center" in option_strings
     assert "--validate-private-input-center" in option_strings
     assert "--private-input-center-to-snapshots" in option_strings
@@ -82,13 +86,20 @@ def test_private_input_center_form_generation_is_static_local(tmp_path: Path) ->
     assert 'id="fx_usd_to_base"' in html
     assert 'id="fx_cny_to_base"' in html
     assert 'id="fx_hkd_to_base"' in html
+    assert "fetch latest fx rates" in html
+    assert 'const local_fx_endpoint = "";' in html
     assert "optionalamount(\"fx_usd_to_base\")" in html
-    assert "expected sources" in html
-    assert 'id="expect_ibkr"' in html
-    assert 'id="expect_moomoo"' in html
-    assert 'id="expect_tiger"' in html
-    assert 'id="expect_manual_nav"' in html
+    assert "expected sources" not in html
+    assert 'id="expect_ibkr"' not in html
+    assert 'id="expect_moomoo"' not in html
+    assert 'id="expect_tiger"' not in html
+    assert 'id="expect_manual_nav"' not in html
     assert "expected_sources" in html
+    assert 'provider: "ibkr", required: true' in html
+    assert 'provider: "moomoo", required: true' in html
+    assert 'provider: "tiger", required: true' in html
+    assert 'property_mortgage: "required"' in html
+    assert 'sg_retirement_tax: "required"' in html
     assert "value of unvested shares" in html
     assert 'id="unvested_shares_nav"' in html
     assert "webull nav" in html
@@ -110,10 +121,12 @@ def test_private_input_center_form_generation_is_static_local(tmp_path: Path) ->
 
 def test_private_input_center_form_can_embed_local_save_endpoint() -> None:
     html = build_private_input_center_form_html(
-        local_save_endpoint="http://127.0.0.1:8765/save"
+        local_save_endpoint="http://127.0.0.1:8765/save",
+        local_fx_endpoint="http://127.0.0.1:8765/fx-rates",
     )
 
     assert 'const LOCAL_SAVE_ENDPOINT = "http://127.0.0.1:8765/save";' in html
+    assert 'const LOCAL_FX_ENDPOINT = "http://127.0.0.1:8765/fx-rates";' in html
     assert "https://" not in html
     assert "sendbeacon" not in html.lower()
     assert "xmlhttprequest" not in html.lower()
@@ -302,6 +315,146 @@ def test_private_input_center_maps_cpf_ia_and_balance_to_total(
 
     assert result.generated is True
     assert rows[0]["total"] == "4000.00"
+
+
+def test_private_input_center_fetches_public_fx_rates_with_mocked_api(
+    tmp_path: Path,
+) -> None:
+    rates = {"USD": "1.35", "CNY": "0.19", "HKD": "0.17"}
+
+    def fake_urlopen(url: str, timeout: int) -> _FakeFxResponse:
+        assert timeout == 10
+        query = parse_qs(urlparse(url).query)
+        from_currency = query["from"][0]
+        to_currency = query["to"][0]
+        assert to_currency == "SGD"
+        return _FakeFxResponse(
+            {
+                "amount": 1,
+                "base": from_currency,
+                "date": "2026-06-20",
+                "rates": {"SGD": rates[from_currency]},
+            }
+        )
+
+    out_file = tmp_path / "fx_rates.local.json"
+    result = fetch_public_fx_rates(
+        base_currency="SGD",
+        currencies=["USD", "CNY", "HKD"],
+        rate_date="2026-06-20",
+        out_file=out_file,
+        urlopen_func=fake_urlopen,
+    )
+
+    assert result.generated is True
+    assert result.base_currency == "SGD"
+    assert result.source_date == "2026-06-20"
+    assert WarningCode.PRIVATE_INPUT_CENTER_FX_FETCH_OK in result.warning_codes
+    exported = json.loads(out_file.read_text(encoding="utf-8"))
+    assert exported["source_type"] == "public_fx_api_frankfurter"
+    assert exported["rates_to_base"] == {
+        "SGD": "1.00",
+        "USD": "1.35",
+        "CNY": "0.19",
+        "HKD": "0.17",
+    }
+
+
+def test_private_input_center_fx_fetch_fails_closed_without_writing(
+    tmp_path: Path,
+) -> None:
+    def fake_urlopen(url: str, timeout: int) -> _FakeFxResponse:
+        raise OSError("network unavailable")
+
+    out_file = tmp_path / "fx_rates.local.json"
+    result = fetch_public_fx_rates(
+        base_currency="SGD",
+        currencies=["USD"],
+        out_file=out_file,
+        urlopen_func=fake_urlopen,
+    )
+
+    assert result.generated is False
+    assert not out_file.exists()
+    assert WarningCode.PRIVATE_INPUT_CENTER_FX_FETCH_FAILED in result.warning_codes
+
+
+def test_private_input_center_fx_fetch_falls_back_to_open_er_api(
+    tmp_path: Path,
+) -> None:
+    def fake_urlopen(url: str, timeout: int) -> _FakeFxResponse:
+        if "frankfurter" in url:
+            raise OSError("primary source unavailable")
+        assert "open.er-api.com" in url
+        return _FakeFxResponse(
+            {
+                "result": "success",
+                "time_last_update_utc": "Sat, 20 Jun 2026 00:00:01 +0000",
+                "rates": {"SGD": "1.35"},
+            }
+        )
+
+    out_file = tmp_path / "fx_rates.local.json"
+    result = fetch_public_fx_rates(
+        base_currency="SGD",
+        currencies=["USD"],
+        out_file=out_file,
+        urlopen_func=fake_urlopen,
+    )
+
+    assert result.generated is True
+    exported = json.loads(out_file.read_text(encoding="utf-8"))
+    assert exported["source_type"] == "public_fx_api_open_er_api"
+    assert exported["rates_to_base"]["USD"] == "1.35"
+
+
+def test_fetch_fx_rates_cli_redacts_rates_and_writes_file(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    out_file = tmp_path / "fx_rates.local.json"
+
+    def fake_fetch(**kwargs) -> PrivateInputCenterFxFetchResult:
+        assert kwargs["base_currency"] == "SGD"
+        assert kwargs["currencies"] == ["USD"]
+        out_file.write_text(
+            json.dumps(
+                {
+                    "base_currency": "SGD",
+                    "rates_to_base": {"SGD": "1.00", "USD": "1.35"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return PrivateInputCenterFxFetchResult(
+            out_file=out_file,
+            generated=True,
+            base_currency="SGD",
+            currencies=["SGD", "USD"],
+            source_date="2026-06-20",
+            rates_to_base={"SGD": "1.00", "USD": "1.35"},
+            warning_codes=[WarningCode.PRIVATE_INPUT_CENTER_FX_FETCH_OK],
+        )
+
+    monkeypatch.setattr("personal_cfo_agent.runner.fetch_public_fx_rates", fake_fetch)
+
+    exit_code = main(
+        [
+            "--fetch-fx-rates",
+            "--base-currency",
+            "SGD",
+            "--fx-currencies",
+            "USD",
+            "--out-file",
+            str(out_file),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert out_file.exists()
+    assert "Currency count: 2" in captured.out
+    assert "PRIVATE_INPUT_CENTER_FX_FETCH_OK" in captured.out
+    assert "1.35" not in captured.out
 
 
 def test_private_input_center_extracts_positive_fx_rates_only(tmp_path: Path) -> None:
@@ -608,3 +761,17 @@ def _write_sgd_input(tmp_path: Path) -> Path:
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
+
+
+class _FakeFxResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def __enter__(self) -> "_FakeFxResponse":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(self._payload).encode("utf-8")

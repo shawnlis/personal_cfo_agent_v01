@@ -46,6 +46,12 @@ Provider entries may be required or optional. Manual layers currently support:
 
 Missing `expected_sources` remains compatible with older local inputs.
 
+As of the v0.6.9 input UX polish, the visible form no longer asks the user to
+choose these requirements. New form exports and the committed example input use
+a complete-refresh default: IBKR, Moomoo, Tiger, manual NAV, property/mortgage,
+and Singapore manual layers are all marked required. The contract remains a
+quality gate only; it does not trigger broker reads.
+
 ## Behavior
 
 During `--run-net-worth-refresh`, the contract is read from the private input

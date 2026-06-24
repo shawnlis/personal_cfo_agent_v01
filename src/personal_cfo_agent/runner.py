@@ -77,10 +77,12 @@ from personal_cfo_agent.normalizer import normalize_snapshots
 from personal_cfo_agent.private_input_center import (
     ExpectedSourceContract,
     PrivateInputCenterFormResult,
+    PrivateInputCenterFxFetchResult,
     PrivateInputCenterInitResult,
     PrivateInputCenterSnapshotResult,
     PrivateInputCenterValidationResult,
     generate_private_input_center_form,
+    fetch_public_fx_rates,
     init_private_input_center,
     private_input_center_to_snapshots,
     read_expected_source_contract,
@@ -757,6 +759,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Serve the unified private input center locally and save JSON to --input-file.",
     )
     parser.add_argument(
+        "--fetch-fx-rates",
+        action="store_true",
+        help="Fetch public reference FX rates into a local explicit-FX JSON file.",
+    )
+    parser.add_argument(
         "--init-private-input-center",
         action="store_true",
         help="Copy the unified private input center placeholder JSON into an ignored local file.",
@@ -824,6 +831,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=8765,
         help="Localhost port for --private-input-center-local-app.",
+    )
+    parser.add_argument(
+        "--base-currency",
+        default="SGD",
+        help="Base currency for --fetch-fx-rates.",
+    )
+    parser.add_argument(
+        "--fx-currencies",
+        default="USD,CNY,HKD",
+        help="Comma-separated currencies to convert into --base-currency for --fetch-fx-rates.",
+    )
+    parser.add_argument(
+        "--fx-rate-date",
+        default="",
+        help="Optional historical FX date in YYYY-MM-DD for --fetch-fx-rates; defaults to latest.",
     )
     parser.add_argument(
         "--overwrite",
@@ -999,6 +1021,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _private_input_center_form_cli(args, parser)
     if args.private_input_center_local_app:
         return _private_input_center_local_app_cli(args, parser)
+    if args.fetch_fx_rates:
+        return _fetch_fx_rates_cli(args, parser)
     if args.init_private_input_center:
         return _init_private_input_center_cli(args, parser)
     if args.validate_private_input_center:
@@ -1337,7 +1361,8 @@ def _private_input_center_local_app_cli(
     out_dir = args.out_dir or Path("reports/personal_cfo_agent/private_input_center_local")
     url = f"http://127.0.0.1:{args.local_app_port}/"
     print("Personal CFO Private Input Center local app v0.5.8 (offline)", flush=True)
-    print("External connections used: no", flush=True)
+    print("External account connections used: no", flush=True)
+    print("External FX request used at startup: no", flush=True)
     print("Broker live reads used: no", flush=True)
     print(f"Local URL: {url}", flush=True)
     print(f"Form output directory: {out_dir}", flush=True)
@@ -1353,6 +1378,23 @@ def _private_input_center_local_app_cli(
         print("Private input center local app stopped.", flush=True)
         return 0
     return 0
+
+
+def _fetch_fx_rates_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    _validate_private_input_center_cli_scope(args, parser, "--fetch-fx-rates")
+    if args.out_file is None:
+        parser.error("--fetch-fx-rates requires --out-file")
+    if args.input_file is not None or args.out_dir is not None:
+        parser.error("--fetch-fx-rates uses --out-file only")
+    result = fetch_public_fx_rates(
+        base_currency=args.base_currency,
+        currencies=[part.strip() for part in args.fx_currencies.split(",")],
+        rate_date=args.fx_rate_date,
+        out_file=args.out_file,
+    )
+    for line in _format_private_input_center_fx_fetch_result(result):
+        print(line)
+    return 0 if result.generated else 1
 
 
 def _init_private_input_center_cli(
@@ -2003,6 +2045,7 @@ def _validate_net_worth_refresh_cli_scope(
         or args.manual_nav_to_provider_bundle
         or args.private_input_center_form
         or args.private_input_center_local_app
+        or args.fetch_fx_rates
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -2066,6 +2109,7 @@ def _validate_net_worth_doctor_cli_scope(
         or args.manual_nav_to_provider_bundle
         or args.private_input_center_form
         or args.private_input_center_local_app
+        or args.fetch_fx_rates
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -2134,6 +2178,7 @@ def _validate_snapshot_review_cli_scope(
         or args.manual_nav_to_provider_bundle
         or args.private_input_center_form
         or args.private_input_center_local_app
+        or args.fetch_fx_rates
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -2210,6 +2255,7 @@ def _validate_snapshot_history_manager_cli_scope(
         or args.manual_nav_to_provider_bundle
         or args.private_input_center_form
         or args.private_input_center_local_app
+        or args.fetch_fx_rates
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -2278,6 +2324,7 @@ def _validate_local_workbench_cli_scope(
         or args.manual_nav_to_provider_bundle
         or args.private_input_center_form
         or args.private_input_center_local_app
+        or args.fetch_fx_rates
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -2299,6 +2346,7 @@ def _validate_private_input_center_cli_scope(
     commands = [
         args.private_input_center_form,
         args.private_input_center_local_app,
+        args.fetch_fx_rates,
         args.init_private_input_center,
         args.validate_private_input_center,
         args.private_input_center_to_snapshots,
@@ -2395,6 +2443,7 @@ def _validate_manual_nav_cli_scope(
         or args.run_manual_snapshot_chain
         or args.private_input_center_form
         or args.private_input_center_local_app
+        or args.fetch_fx_rates
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -2445,6 +2494,7 @@ def _validate_private_input_cli_scope(
         or args.sg_manual_snapshot
         or args.private_input_center_form
         or args.private_input_center_local_app
+        or args.fetch_fx_rates
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -2576,6 +2626,7 @@ def _dashboard_v4_cli(args: argparse.Namespace, parser: argparse.ArgumentParser)
         or args.manual_nav_to_provider_bundle
         or args.private_input_center_form
         or args.private_input_center_local_app
+        or args.fetch_fx_rates
         or args.init_private_input_center
         or args.validate_private_input_center
         or args.private_input_center_to_snapshots
@@ -2837,6 +2888,24 @@ def _format_private_input_center_form_result(
         "External connections used: no",
         f"Output directory: {result.output_dir}",
         f"Form file: {result.output_path.name}",
+        f"Warning codes: {warnings}",
+    ]
+
+
+def _format_private_input_center_fx_fetch_result(
+    result: PrivateInputCenterFxFetchResult,
+) -> list[str]:
+    warnings = ", ".join(code.value for code in result.warning_codes) or "None"
+    return [
+        "Personal CFO public FX fetch (explicit local file)",
+        "Broker connections used: no",
+        "External account connections used: no",
+        "Public FX API used: yes",
+        f"Output file: {result.out_file or ''}",
+        f"FX file generated: {_yes_no(result.generated)}",
+        f"Base currency: {result.base_currency}",
+        f"Currency count: {len(result.currencies)}",
+        f"Source date: {result.source_date}",
         f"Warning codes: {warnings}",
     ]
 

@@ -69,6 +69,15 @@ v0.5.7 unified manual NAV input is local-only. It generates a static HTML worksh
 
 v0.5.8 unified private input center is local-only and is the preferred manual input workflow for manual NAV, property/mortgage, CPF, SRS, tax, and HDB loan sections. It generates a static local HTML worksheet, initializes one ignored JSON file, validates counts/warnings without printing private values, and reuses existing offline snapshot modules. The worksheet may use local inline JavaScript only to build and save local JSON; it must not use external scripts, remote styles, network requests, browser automation, credential material, raw account IDs, raw account numbers, raw addresses, NRIC/FIN, government identifiers, exact local values in docs, generated report commits, money movement, tax filing, or recommendation output. It must not connect to banks, CPF, IRAS, HDB, SingPass, browsers, or external accounts.
 
+The v0.6.9 polish keeps the static `file://` form network-free but allows an
+explicit localhost app action or CLI command to fetch public reference FX rates
+into the local explicit-FX schema. Public FX fetch must not use credentials,
+broker sessions, account data, uploads, browser automation, or secret material,
+and CLI summaries must not print rate values. The main form no longer exposes
+Expected Sources checkboxes; new form exports use the complete-refresh
+expected-source contract by default while broker reads remain controlled only by
+the separate refresh command and explicit live-read approval.
+
 ## Local Net Worth Refresh Rule
 
 v0.5.9 local net worth refresh is an orchestration layer over existing private input conversion, optional supervised read-only provider refresh, account NAV merge, snapshot history, and Dashboard v3 generation. Manual-only mode must use no external provider reads. Broker refresh mode must require explicit `--allow-live-read` and must reuse only the existing read-only provider paths. It must not print exact NAV, balances, positions, raw account IDs, credentials, private inputs, or secrets. Generated outputs must stay ignored under `reports/`, private inputs must stay ignored under local private input folders, and failed broker refreshes must surface warning codes rather than being reported as clean results.

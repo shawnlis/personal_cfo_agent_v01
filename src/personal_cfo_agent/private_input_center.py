@@ -8,9 +8,13 @@ import shutil
 import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 from personal_cfo_agent.manual_nav_input import (
     ManualNavBundleResult,
@@ -34,6 +38,8 @@ TEMPLATE_DIR = REPO_ROOT / "templates" / "private_inputs"
 PRIVATE_INPUT_CENTER_EXAMPLE = TEMPLATE_DIR / "personal_cfo_input.example.json"
 PRIVATE_INPUT_CENTER_FORM_TEMPLATE = TEMPLATE_DIR / "personal_cfo_input_form.html"
 PRIVATE_INPUT_CENTER_SAVE_ENDPOINT_TOKEN = "__LOCAL_SAVE_ENDPOINT__"
+PRIVATE_INPUT_CENTER_FX_ENDPOINT_TOKEN = "__LOCAL_FX_ENDPOINT__"
+DEFAULT_FX_CURRENCIES = ("USD", "CNY", "HKD")
 
 SECTION_KEYS = (
     "manual_nav_accounts",
@@ -127,6 +133,17 @@ class PrivateInputCenterLocalSaveResult:
 
 
 @dataclass(frozen=True)
+class PrivateInputCenterFxFetchResult:
+    out_file: Path | None
+    generated: bool
+    base_currency: str
+    currencies: list[str] = field(default_factory=list)
+    source_date: str = ""
+    rates_to_base: dict[str, str] = field(default_factory=dict)
+    warning_codes: list[WarningCode] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class PrivateInputCenterSnapshotResult:
     input_file: Path
     output_dir: Path
@@ -163,11 +180,19 @@ def generate_private_input_center_form(*, out_dir: Path) -> PrivateInputCenterFo
     )
 
 
-def build_private_input_center_form_html(*, local_save_endpoint: str = "") -> str:
+def build_private_input_center_form_html(
+    *, local_save_endpoint: str = "", local_fx_endpoint: str = ""
+) -> str:
     template = PRIVATE_INPUT_CENTER_FORM_TEMPLATE.read_text(encoding="utf-8")
-    return template.replace(
-        PRIVATE_INPUT_CENTER_SAVE_ENDPOINT_TOKEN,
-        _escape_javascript_string(local_save_endpoint),
+    return (
+        template.replace(
+            PRIVATE_INPUT_CENTER_SAVE_ENDPOINT_TOKEN,
+            _escape_javascript_string(local_save_endpoint),
+        )
+        .replace(
+            PRIVATE_INPUT_CENTER_FX_ENDPOINT_TOKEN,
+            _escape_javascript_string(local_fx_endpoint),
+        )
     )
 
 
@@ -210,6 +235,193 @@ def save_private_input_center_payload(
     )
 
 
+def fetch_public_fx_rates(
+    *,
+    base_currency: str,
+    currencies: list[str] | tuple[str, ...] | None = None,
+    out_file: Path | None = None,
+    rate_date: str = "",
+    urlopen_func: Any = urlopen,
+) -> PrivateInputCenterFxFetchResult:
+    """Fetch public reference FX rates into the local explicit-FX schema.
+
+    The returned rates are currency-to-base values, matching the local
+    `rates_to_base` convention used by dashboards and refresh checks.
+    """
+
+    base = _clean(base_currency).upper()
+    requested = _currency_list(currencies or DEFAULT_FX_CURRENCIES)
+    if not _valid_currency_code(base) or not requested:
+        return PrivateInputCenterFxFetchResult(
+            out_file=out_file,
+            generated=False,
+            base_currency=base,
+            currencies=requested,
+            warning_codes=[WarningCode.PRIVATE_INPUT_CENTER_FX_FETCH_FAILED],
+        )
+
+    rates: dict[str, str] = {base: "1.00"}
+    source_dates: set[str] = set()
+    source_types: set[str] = set()
+    endpoint_date = _fx_endpoint_date(rate_date)
+    try:
+        for currency in requested:
+            if not _valid_currency_code(currency):
+                raise ValueError("invalid_currency")
+            if currency == base:
+                continue
+            rate, source_date, source_type = _fetch_reference_rate(
+                from_currency=currency,
+                to_currency=base,
+                endpoint_date=endpoint_date,
+                urlopen_func=urlopen_func,
+            )
+            if rate is None:
+                raise ValueError("missing_rate")
+            rates[currency] = format(rate, "f")
+            if source_date:
+                source_dates.add(source_date)
+            if source_type:
+                source_types.add(source_type)
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError, KeyError, TypeError):
+        return PrivateInputCenterFxFetchResult(
+            out_file=out_file,
+            generated=False,
+            base_currency=base,
+            currencies=requested,
+            warning_codes=[WarningCode.PRIVATE_INPUT_CENTER_FX_FETCH_FAILED],
+        )
+
+    source_date = sorted(source_dates)[-1] if source_dates else endpoint_date
+    payload = {
+        "base_currency": base,
+        "rates_to_base": rates,
+        "source_type": "+".join(sorted(source_types)) or "public_fx_api",
+        "source_date": source_date,
+        "review_required": True,
+    }
+    if out_file is not None:
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        out_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return PrivateInputCenterFxFetchResult(
+        out_file=out_file,
+        generated=True,
+        base_currency=base,
+        currencies=sorted(rates),
+        source_date=source_date,
+        rates_to_base=rates,
+        warning_codes=[WarningCode.PRIVATE_INPUT_CENTER_FX_FETCH_OK],
+    )
+
+
+def _fetch_reference_rate(
+    *,
+    from_currency: str,
+    to_currency: str,
+    endpoint_date: str,
+    urlopen_func: Any,
+) -> tuple[Decimal | None, str, str]:
+    try:
+        payload = _fetch_frankfurter_rate(
+            from_currency=from_currency,
+            to_currency=to_currency,
+            endpoint_date=endpoint_date,
+            urlopen_func=urlopen_func,
+        )
+        return (
+            _positive_decimal(payload.get("rates", {}).get(to_currency)),
+            _clean(payload.get("date")),
+            "public_fx_api_frankfurter",
+        )
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError, KeyError, TypeError):
+        payload = _fetch_open_er_rate(
+            from_currency=from_currency,
+            to_currency=to_currency,
+            urlopen_func=urlopen_func,
+        )
+        return (
+            _positive_decimal(payload.get("rates", {}).get(to_currency)),
+            _clean(payload.get("time_last_update_utc") or payload.get("time_last_update_unix")),
+            "public_fx_api_open_er_api",
+        )
+
+
+def _fetch_frankfurter_rate(
+    *,
+    from_currency: str,
+    to_currency: str,
+    endpoint_date: str,
+    urlopen_func: Any,
+) -> dict[str, Any]:
+    query = urlencode({"from": from_currency, "to": to_currency})
+    url = f"https://api.frankfurter.app/{endpoint_date}?{query}"
+    with urlopen_func(url, timeout=10) as response:
+        data = response.read().decode("utf-8")
+    payload = json.loads(data)
+    if not isinstance(payload, dict):
+        raise ValueError("invalid_payload")
+    return payload
+
+
+def _fetch_open_er_rate(
+    *,
+    from_currency: str,
+    to_currency: str,
+    urlopen_func: Any,
+) -> dict[str, Any]:
+    url = f"https://open.er-api.com/v6/latest/{from_currency}"
+    with urlopen_func(url, timeout=10) as response:
+        data = response.read().decode("utf-8")
+    payload = json.loads(data)
+    if not isinstance(payload, dict):
+        raise ValueError("invalid_payload")
+    if payload.get("result") != "success" or to_currency not in payload.get("rates", {}):
+        raise ValueError("missing_rate")
+    return payload
+
+
+def _fx_endpoint_date(value: str) -> str:
+    cleaned = _clean(value)
+    if not cleaned:
+        return "latest"
+    try:
+        date.fromisoformat(cleaned)
+    except ValueError:
+        return "latest"
+    return cleaned
+
+
+def _currency_list(value: object) -> list[str]:
+    if value is None:
+        return list(DEFAULT_FX_CURRENCIES)
+    if isinstance(value, str):
+        parts = value.split(",")
+    elif isinstance(value, (list, tuple, set)):
+        parts = list(value)
+    else:
+        return []
+    currencies: list[str] = []
+    for part in parts:
+        currency = _clean(part).upper()
+        if currency and currency not in currencies:
+            currencies.append(currency)
+    return currencies
+
+
+def _valid_currency_code(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z]{3}", value))
+
+
+def _positive_decimal(value: object) -> Decimal | None:
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if number <= 0:
+        return None
+    return number
+
+
 def serve_private_input_center_local_app(
     *,
     input_file: Path,
@@ -218,7 +430,11 @@ def serve_private_input_center_local_app(
     port: int = 8765,
 ) -> None:
     endpoint = f"http://{host}:{port}/save"
-    html = build_private_input_center_form_html(local_save_endpoint=endpoint)
+    fx_endpoint = f"http://{host}:{port}/fx-rates"
+    html = build_private_input_center_form_html(
+        local_save_endpoint=endpoint,
+        local_fx_endpoint=fx_endpoint,
+    )
     if out_dir is not None:
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "personal_cfo_input_form.html").write_text(html, encoding="utf-8")
@@ -236,14 +452,19 @@ def serve_private_input_center_local_app(
                     200,
                     {
                         "local_save_ready": True,
+                        "public_fx_fetch_ready": True,
                         "target_file_name": input_file.name,
                         "external_connections_used": False,
+                        "external_fx_request_used_at_startup": False,
                     },
                 )
                 return
             self._send_json(404, {"error": "not_found"})
 
         def do_POST(self) -> None:  # noqa: N802
+            if self.path == "/fx-rates":
+                self._handle_fx_rates()
+                return
             if self.path != "/save":
                 self._send_json(404, {"error": "not_found"})
                 return
@@ -283,6 +504,75 @@ def serve_private_input_center_local_app(
                 {
                     "saved": result.saved,
                     "target_file_name": input_file.name,
+                    "warning_codes": [code.value for code in result.warning_codes],
+                },
+            )
+
+        def _handle_fx_rates(self) -> None:
+            length_header = self.headers.get("Content-Length", "0")
+            try:
+                length = int(length_header)
+            except ValueError:
+                self._send_json(
+                    400,
+                    {
+                        "generated": False,
+                        "warning_codes": [
+                            WarningCode.PRIVATE_INPUT_CENTER_FX_FETCH_FAILED.value
+                        ],
+                    },
+                )
+                return
+            if length <= 0 or length > 20_000:
+                self._send_json(
+                    400,
+                    {
+                        "generated": False,
+                        "warning_codes": [
+                            WarningCode.PRIVATE_INPUT_CENTER_FX_FETCH_FAILED.value
+                        ],
+                    },
+                )
+                return
+            try:
+                request_payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            except json.JSONDecodeError:
+                self._send_json(
+                    400,
+                    {
+                        "generated": False,
+                        "warning_codes": [
+                            WarningCode.PRIVATE_INPUT_CENTER_FX_FETCH_FAILED.value
+                        ],
+                    },
+                )
+                return
+            if not isinstance(request_payload, dict):
+                self._send_json(
+                    400,
+                    {
+                        "generated": False,
+                        "warning_codes": [
+                            WarningCode.PRIVATE_INPUT_CENTER_FX_FETCH_FAILED.value
+                        ],
+                    },
+                )
+                return
+            result = fetch_public_fx_rates(
+                base_currency=_clean(request_payload.get("base_currency") or "SGD"),
+                currencies=_currency_list(request_payload.get("currencies")),
+                rate_date=_clean(request_payload.get("rate_date")),
+                out_file=None,
+            )
+            status = 200 if result.generated else 502
+            self._send_json(
+                status,
+                {
+                    "generated": result.generated,
+                    "base_currency": result.base_currency,
+                    "currencies": result.currencies,
+                    "source_date": result.source_date,
+                    "rates_to_base": result.rates_to_base if result.generated else {},
                     "warning_codes": [code.value for code in result.warning_codes],
                 },
             )
