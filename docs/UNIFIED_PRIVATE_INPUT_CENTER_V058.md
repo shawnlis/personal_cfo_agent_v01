@@ -38,7 +38,16 @@ python .\scripts\personal_cfo_agent.py `
 ```
 
 The generated form is static and local. It has no external scripts, styles, browser beacon calls, or external data transmission.
-It includes only local inline JavaScript for building the JSON preview or posting to the optional localhost save app described below. The user-facing form intentionally keeps one main save path: `Save to local JSON`.
+It includes only local inline JavaScript for building an advanced JSON preview or posting to the optional localhost save app described below. The user-facing form intentionally keeps one main save path: `Save to local JSON`.
+
+As of v0.6.9, the JSON textarea is inside an `Advanced JSON preview` panel so
+the day-to-day form stays focused on the values the user edits.
+
+The main form no longer shows `Expected Sources` checkboxes. New form exports
+use a complete-refresh contract by default: IBKR, Moomoo, Tiger, manual NAV,
+property/mortgage, and Singapore manual layers are all marked required. This is
+a data-quality gate, not a broker trigger. Broker reads still require the
+separate refresh command and explicit live-read approval.
 
 The form intentionally keeps the visible inputs short: one global snapshot date, one base currency, optional local FX rates, manual NAV rows, unvested shares, property value, mortgage balance, CPF IA, CPF Balance, SRS total, tax year, and income tax payable availability. CPF IA and CPF Balance are automatically summed into the downstream CPF `total` field so existing snapshot and dashboard schemas remain compatible. Internal hashes required by the JSON schema are generated automatically from local labels/dates; raw account IDs, raw addresses, NRIC/FIN, and government identifiers are not requested.
 
@@ -46,6 +55,20 @@ FX values are optional. Blank or zero FX entries are not treated as valid rates.
 When positive explicit rates are present in the unified input file,
 `--run-net-worth-refresh` can extract them into a local generated FX file for
 Dashboard v3/v4 and integrity checks.
+
+In local-app mode, the form can call the localhost app to fetch public reference
+FX rates and fill the FX fields. The static `file://` form still performs no
+external requests. You can also write the explicit local-FX file directly:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --fetch-fx-rates `
+  --base-currency SGD `
+  --fx-currencies USD,CNY,HKD `
+  --out-file .\private_inputs\fx_rates.local.json
+```
+
+The FX command does not print rate values.
 
 ## Open A Local Save App
 
@@ -59,7 +82,7 @@ python .\scripts\personal_cfo_agent.py `
 ```
 
 Open the printed `http://127.0.0.1:8765/` URL, edit the form, and click `Save to local JSON`.
-The app binds to localhost only, validates the JSON before writing, and returns only save status plus warning codes. It does not print values, connect to brokers, or use external services.
+The app binds to localhost only, validates the JSON before writing, and returns only save status plus warning codes. It does not print values or connect to brokers. Public FX fetch is explicit and uses no credentials or account data.
 
 ## Initialize One Local Input File
 

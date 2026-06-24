@@ -114,6 +114,10 @@ def test_dashboard_v4_generates_asset_buckets_and_outputs(tmp_path: Path) -> Non
     assert "No broker provider input folders found; live broker assets are not confirmed in this refresh." in markdown
     assert "Data Source Coverage" in html
     assert "live broker assets are not confirmed" in html
+    assert "Total assets: 211,180.00 SGD" in markdown
+    assert "Total assets: 211,180.00 SGD" in html
+    assert "Liquid investment assets: 2,700.00 SGD" in markdown
+    assert "Liquid investment assets: 2,700.00 SGD" in html
     assert "Withdrawal ladder rows" not in markdown
     assert "Withdrawal ladder rows" not in html
     assert "Uses liquid investment assets only" not in markdown

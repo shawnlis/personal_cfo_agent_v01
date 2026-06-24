@@ -76,6 +76,7 @@ The HTML and SVG outputs are static/local. They do not load external JavaScript,
 Dashboard v4 focuses on visual readability:
 
 - CFO cockpit
+- total assets and liquid investment assets surfaced near the top
 - source coverage and snapshot history review status
 - integrity status for confirmed history writes
 - fixed assets, retirement accounts, liquid investment assets, and review bucket

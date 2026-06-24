@@ -41,6 +41,28 @@ python .\scripts\personal_cfo_agent.py `
 Existing local files are not overwritten unless `--overwrite` is passed
 explicitly. The generated HTML form is static and local.
 
+For day-to-day editing with direct local save and optional public FX prefill,
+run the localhost-only app:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --private-input-center-local-app `
+  --input-file .\private_inputs\personal_cfo_input.local.json `
+  --out-dir .\reports\personal_cfo_agent\private_input_center_local
+```
+
+The static `file://` form does not make network requests. The local app can
+fetch public reference FX rates only when you click the FX button. You can also
+write a local FX file explicitly:
+
+```powershell
+python .\scripts\personal_cfo_agent.py `
+  --fetch-fx-rates `
+  --base-currency SGD `
+  --fx-currencies USD,CNY,HKD `
+  --out-file .\private_inputs\fx_rates.local.json
+```
+
 ## Validate Private Input
 
 ```powershell
@@ -54,14 +76,14 @@ codes only. It must not print exact private values.
 
 ## Expected Source Contract
 
-The unified private input can declare which broker and manual sources are
-required for a refresh. Required sources appear in the data quality provider
-gate and block confirmed history writes when missing. Optional sources are
-reported but do not block history.
+The unified private input now writes a complete-refresh expected source
+contract by default. IBKR, Moomoo, Tiger, manual NAV, property/mortgage, and
+Singapore manual layers are all marked required in new form exports.
 
-The current template includes `expected_sources` with manual NAV required and
-IBKR/Moomoo/Tiger optional by default. Edit it locally when a run must include a
-specific live broker NAV.
+Required sources appear in the data quality provider gate and block confirmed
+history writes when missing. This contract is a quality gate, not a broker
+trigger. Broker reads still require the separate refresh command and explicit
+live-read approval.
 
 ## Manual-Only Net Worth Refresh
 
@@ -186,6 +208,10 @@ python .\scripts\personal_cfo_agent.py `
 Dashboard outputs stay under ignored `reports/` paths. HTML and SVG outputs are
 static/local.
 
+The current Dashboard v4 cockpit shows total assets and liquid investment assets
+first, then source coverage, data quality, integrity status, asset buckets,
+withdrawal cashflow, FIRE target math, and bucketed history.
+
 ## Local Net Worth Doctor
 
 Use the doctor when you want to check local readiness without any live reads:
@@ -251,6 +277,8 @@ Expected source contract behavior is documented in
 `docs/EXPECTED_SOURCE_CONTRACT_V067.md`.
 Snapshot history cleanup is documented in
 `docs/SNAPSHOT_HISTORY_MANAGER_V068.md`.
+Dashboard/input UX polish is documented in
+`docs/DASHBOARD_INPUT_UX_POLISH_V069.md`.
 
 ## Validation
 

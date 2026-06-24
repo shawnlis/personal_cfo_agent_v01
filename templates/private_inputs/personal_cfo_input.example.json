@@ -8,21 +8,21 @@
     "providers": [
       {
         "provider": "ibkr",
-        "required": false
+        "required": true
       },
       {
         "provider": "moomoo",
-        "required": false
+        "required": true
       },
       {
         "provider": "tiger",
-        "required": false
+        "required": true
       }
     ],
     "manual_layers": {
       "manual_nav": "required",
-      "property_mortgage": "optional",
-      "sg_retirement_tax": "optional"
+      "property_mortgage": "required",
+      "sg_retirement_tax": "required"
     }
   },
   "fx_rates": {

@@ -147,6 +147,12 @@ _WARNING_DESCRIPTIONS: dict[str, str] = {
     WarningCode.PRIVATE_INPUT_CENTER_RAW_IDENTIFIER_DETECTED.value: (
         "A raw identifier-like field was detected and must be removed or hashed."
     ),
+    WarningCode.PRIVATE_INPUT_CENTER_FX_FETCH_OK.value: (
+        "Public reference FX rates were fetched into the explicit local-FX schema."
+    ),
+    WarningCode.PRIVATE_INPUT_CENTER_FX_FETCH_FAILED.value: (
+        "Public reference FX fetch failed; enter or review explicit FX rates manually."
+    ),
     WarningCode.NET_WORTH_DOCTOR_INPUT_MISSING.value: (
         "The doctor could not find the unified private input file."
     ),

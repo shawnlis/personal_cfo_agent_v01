@@ -390,6 +390,14 @@ def test_data_quality_reports_remain_under_ignored_reports_boundary() -> None:
 def _write_private_input(tmp_path: Path, *, private_marker: bool = False) -> Path:
     payload = json.loads(INPUT_TEMPLATE.read_text(encoding="utf-8"))
     _refresh_fixture_dates(payload)
+    payload["expected_sources"] = {
+        "providers": [],
+        "manual_layers": {
+            "manual_nav": "required",
+            "property_mortgage": "required",
+            "sg_retirement_tax": "required",
+        },
+    }
     if private_marker:
         payload["manual_nav_accounts"][0]["account_nav"] = PRIVATE_VALUE_MARKER
     path = tmp_path / "personal_cfo_input.local.json"
